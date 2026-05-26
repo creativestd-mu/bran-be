@@ -1,0 +1,7 @@
+export const NOTIFICATION_KINDS = [
+  "CONTENT_NODE_READY",
+  "CONTENT_RESOURCE_REQUESTED",
+  "CONTENT_RESOURCE_REVIEWED",
+  "IDEA_COLLABORATOR_MATCH"
+] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];

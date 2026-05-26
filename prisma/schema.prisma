@@ -1,0 +1,446 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+// ── Auth & RBAC ─────────────────────────────────────────────
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?  @db.NVarChar(500)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String? @db.NVarChar(500)
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model User {
+  id           String    @id @default(uuid())
+  googleId     String?
+  email        String    @unique
+  name         String
+  avatarUrl    String?   @db.NVarChar(1000)
+  description  String?   @db.NVarChar(2000)
+  phone        String?
+  designation  String?
+  passwordHash String?   @db.NVarChar(500)
+  roleId       String
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  role                      Role                    @relation(fields: [roleId], references: [id])
+  tasks                     Task[]
+  socialAccounts            SocialAccount[]
+  teamMemberships           TeamMember[]
+  teamLeadMemberships       TeamMember[]            @relation("TeamMemberReportsTo")
+  createdTeams              Team[]                  @relation("TeamCreatedBy")
+  projectMemberships        ProjectMember[]
+  projectLeadMemberships    ProjectMember[]         @relation("ProjectMemberReportsTo")
+  createdProjects           Project[]               @relation("ProjectCreatedBy")
+  ownedVerticals            Vertical[]              @relation("VerticalOwner")
+  createdContents           Content[]               @relation("ContentCreatedBy")
+  contentNodeAssignments    ContentNodeTeamMember[] @relation("ContentNodeTeamUser")
+  submittedContentOutputs   ContentNodeOutput[]     @relation("ContentOutputSubmittedBy")
+  reviewedContentOutputs    ContentNodeOutput[]     @relation("ContentOutputReviewedBy")
+  requestedContentResources ContentNodeResource[]   @relation("ResourceRequestedBy")
+  reviewedContentResources  ContentNodeResource[]   @relation("ResourceReviewedBy")
+  notifications             Notification[]          @relation("NotificationRecipient")
+  ideas                     Idea[]                  @relation("IdeaAuthor")
+  matchedIdeaRecommendations IdeaMatch[]            @relation("IdeaMatchTargetUser")
+
+  @@index([roleId])
+  @@index([email])
+  @@index([googleId])
+}
+
+// ── Verticals ───────────────────────────────────────────────
+
+model Vertical {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?  @db.NVarChar(2000)
+  ownerUserId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner    User?     @relation("VerticalOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teams    Team[]
+  projects Project[]
+
+  @@index([ownerUserId])
+  @@index([slug])
+}
+
+model Team {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.NVarChar(2000)
+  verticalId  String
+  createdById String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  vertical  Vertical     @relation(fields: [verticalId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy User?        @relation("TeamCreatedBy", fields: [createdById], references: [id])
+  members   TeamMember[]
+  contents  Content[]
+
+  @@index([createdById])
+  @@index([verticalId])
+  @@index([name])
+}
+
+model TeamMember {
+  id              String   @id @default(uuid())
+  teamId          String
+  userId          String
+  memberRole      String   @default("MEMBER")
+  reportsToUserId String?
+  joinedAt        DateTime @default(now())
+  isActive        Boolean  @default(true)
+
+  team      Team  @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user      User  @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reportsTo User? @relation("TeamMemberReportsTo", fields: [reportsToUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
+  @@index([reportsToUserId])
+}
+
+model Project {
+  id          String    @id @default(uuid())
+  name        String
+  description String?   @db.NVarChar(2000)
+  objectives  String?   @db.NVarChar(Max)
+  finalLink   String?   @db.NVarChar(2000)
+  verticalId  String
+  createdById String?
+  status      String    @default("ACTIVE")
+  startsAt    DateTime?
+  endsAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  vertical  Vertical        @relation(fields: [verticalId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy User?           @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  members   ProjectMember[]
+  phases    ProjectPhase[]
+  contents  Content[]
+
+  @@index([createdById])
+  @@index([verticalId])
+  @@index([status])
+  @@index([name])
+}
+
+model ProjectPhase {
+  id         String    @id @default(uuid())
+  projectId  String
+  name       String
+  objectives String?   @db.NVarChar(Max)
+  deadline   DateTime?
+  status     String    @default("PLANNED")
+  orderIndex Int       @default(0)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([projectId])
+  @@index([projectId, orderIndex])
+  @@index([deadline])
+}
+
+model ProjectMember {
+  id              String   @id @default(uuid())
+  projectId       String
+  userId          String
+  memberRole      String   @default("MEMBER")
+  reportsToUserId String?
+  joinedAt        DateTime @default(now())
+  isActive        Boolean  @default(true)
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user      User    @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reportsTo User?   @relation("ProjectMemberReportsTo", fields: [reportsToUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@index([reportsToUserId])
+}
+
+// ── Task Tracking ───────────────────────────────────────────
+
+model Task {
+  id          String    @id @default(uuid())
+  userId      String
+  title       String    @db.NVarChar(500)
+  description String?   @db.NVarChar(4000)
+  type        String    @default("GENERAL")
+  platform    String?
+  contentUrl  String?   @db.NVarChar(2000)
+  status      String    @default("PENDING")
+  metadata    String?   @db.NVarChar(Max)
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([userId, status])
+  @@index([userId, createdAt])
+  @@index([type, platform])
+}
+
+// ── Ideation ────────────────────────────────────────────────
+
+model Idea {
+  id          String    @id @default(uuid())
+  authorId    String
+  title       String    @db.NVarChar(500)
+  description String    @db.NVarChar(Max)
+  tags        String?   @db.NVarChar(2000)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  author            User       @relation("IdeaAuthor", fields: [authorId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sourceMatches     IdeaMatch[] @relation("IdeaMatchSourceIdea")
+  candidateMatches  IdeaMatch[] @relation("IdeaMatchCandidateIdea")
+
+  @@index([authorId])
+  @@index([createdAt])
+  @@index([authorId, createdAt])
+}
+
+model IdeaMatch {
+  id             String   @id @default(uuid())
+  ideaId         String
+  candidateIdeaId String
+  matchedUserId  String
+  score          Float
+  status         String   @default("SUGGESTED")
+  notifiedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  idea          Idea @relation("IdeaMatchSourceIdea", fields: [ideaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  candidateIdea Idea @relation("IdeaMatchCandidateIdea", fields: [candidateIdeaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  matchedUser   User @relation("IdeaMatchTargetUser", fields: [matchedUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([ideaId, candidateIdeaId, matchedUserId])
+  @@index([ideaId])
+  @@index([matchedUserId, createdAt])
+  @@index([score])
+}
+
+// ── Social Account Linking ──────────────────────────────────
+
+model SocialAccount {
+  id                String   @id @default(uuid())
+  userId            String
+  platform          String
+  platformAccountId String
+  handle            String?
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, platform, platformAccountId])
+  @@index([userId])
+}
+
+// ── Existing: Social Performance (Meltwater) ────────────────
+
+model InstagramPerformance {
+  id              String   @id @default(uuid())
+  source          String   @default("instagram")
+  sourceItemId    String   @unique
+  language        String
+  mentionCount    Int      @default(0)
+  estimatedViews  Int      @default(0)
+  estimatedReach  Int      @default(0)
+  engagement      Int      @default(0)
+  engagementCount Int      @default(0)
+  engagementRate  Float    @default(0)
+  sentiment       String   @default("unknown")
+  mentionedAt     DateTime
+  rawPayload      String   @db.NVarChar(Max)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([mentionedAt])
+  @@index([source, mentionedAt])
+  @@index([language, mentionedAt])
+  @@index([source, language, mentionedAt])
+}
+
+// ── Content Module ──────────────────────────────────────────
+
+model Content {
+  id          String   @id @default(uuid())
+  title       String   @db.NVarChar(500)
+  description String?  @db.NVarChar(2000)
+  type        String // 'PRODUCTION' | 'COVERAGE'
+  status      String   @default("DRAFT") // DRAFT | IN_PROGRESS | COMPLETED | ARCHIVED
+  teamId      String
+  projectId   String
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User?         @relation("ContentCreatedBy", fields: [createdById], references: [id])
+  team      Team          @relation(fields: [teamId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  nodes     ContentNode[]
+
+  @@index([createdById])
+  @@index([type])
+  @@index([status])
+  @@index([teamId])
+  @@index([projectId])
+}
+
+model ContentNode {
+  id          String    @id @default(uuid())
+  contentId   String
+  kind        String // 'SCRIPTING' | 'SHOOT' | 'EDITING' | ...
+  name        String    @db.NVarChar(500)
+  orderIndex  Int       @default(0)
+  status      String    @default("PENDING") // PENDING | IN_PROGRESS | BLOCKED | COMPLETED
+  notes       String?   @db.NVarChar(Max)
+  startsAt    DateTime?
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  content   Content                 @relation(fields: [contentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  team      ContentNodeTeamMember[]
+  outputs   ContentNodeOutput[]
+  resources ContentNodeResource[]
+
+  @@unique([contentId, orderIndex])
+  @@index([contentId, orderIndex])
+}
+
+model ContentNodeTeamMember {
+  id        String   @id @default(uuid())
+  nodeId    String
+  userId    String
+  role      String // global TeamRole enum
+  createdAt DateTime @default(now())
+
+  node ContentNode @relation(fields: [nodeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user User        @relation("ContentNodeTeamUser", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([nodeId, userId, role])
+  @@index([nodeId])
+  @@index([userId])
+}
+
+model ContentNodeOutput {
+  id                String    @id @default(uuid())
+  nodeId            String
+  label             String    @db.NVarChar(500)
+  url               String    @db.NVarChar(2000)
+  notes             String?   @db.NVarChar(Max)
+  version           Int       @default(1)
+  submittedByUserId String?
+  approvalState     String    @default("PENDING") // PENDING | IN_REVIEW | CHANGES_REQUESTED | APPROVED | REJECTED
+  reviewNote        String?   @db.NVarChar(2000)
+  reviewedByUserId  String?
+  reviewedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  node        ContentNode @relation(fields: [nodeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  submittedBy User?       @relation("ContentOutputSubmittedBy", fields: [submittedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewedBy  User?       @relation("ContentOutputReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([nodeId])
+  @@index([nodeId, approvalState])
+}
+
+model ContentNodeResource {
+  id                String    @id @default(uuid())
+  nodeId            String
+  name              String    @db.NVarChar(500)
+  sourceType        String    @default("IN_HOUSE") // IN_HOUSE | RENTAL
+  cost              Decimal?  @db.Decimal(18, 2)
+  quantity          Int       @default(1)
+  currency          String?
+  notes             String?   @db.NVarChar(Max)
+  // Rental-only review workflow. IN_HOUSE rows stay APPROVED implicitly.
+  approvalState     String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewNote        String?   @db.NVarChar(2000)
+  requestedByUserId String?
+  reviewedByUserId  String?
+  reviewedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  node        ContentNode @relation(fields: [nodeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  requestedBy User?       @relation("ResourceRequestedBy", fields: [requestedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewedBy  User?       @relation("ResourceReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([nodeId])
+  @@index([nodeId, sourceType])
+  @@index([nodeId, approvalState])
+}
+
+// ── Notifications ───────────────────────────────────────────
+
+model Notification {
+  id          String    @id @default(uuid())
+  userId      String
+  kind        String // e.g. CONTENT_NODE_READY
+  title       String    @db.NVarChar(500)
+  body        String?   @db.NVarChar(Max)
+  // JSON-encoded structured payload (output, fromNode, toNode, contentId, ...)
+  data        String?   @db.NVarChar(Max)
+  // Idempotency key so the same trigger never produces duplicate rows.
+  dedupeKey   String?   @db.NVarChar(500)
+  readAt      DateTime?
+  emailSentAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}

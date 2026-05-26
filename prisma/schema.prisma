@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlserver"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -12,7 +12,7 @@ datasource db {
 model Role {
   id          String   @id @default(uuid())
   name        String   @unique
-  description String?  @db.NVarChar(500)
+  description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -23,7 +23,7 @@ model Role {
 model Permission {
   id          String  @id @default(uuid())
   name        String  @unique
-  description String? @db.NVarChar(500)
+  description String?
 
   roles RolePermission[]
 }
@@ -43,11 +43,11 @@ model User {
   googleId     String?
   email        String    @unique
   name         String
-  avatarUrl    String?   @db.NVarChar(1000)
-  description  String?   @db.NVarChar(2000)
+  avatarUrl    String?
+  description  String?
   phone        String?
   designation  String?
-  passwordHash String?   @db.NVarChar(500)
+  passwordHash String?
   roleId       String
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
@@ -85,7 +85,7 @@ model Vertical {
   id          String   @id @default(uuid())
   name        String   @unique
   slug        String   @unique
-  description String?  @db.NVarChar(2000)
+  description String?
   ownerUserId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -101,7 +101,7 @@ model Vertical {
 model Team {
   id          String   @id @default(uuid())
   name        String
-  description String?  @db.NVarChar(2000)
+  description String?
   verticalId  String
   createdById String?
   isActive    Boolean  @default(true)
@@ -140,9 +140,9 @@ model TeamMember {
 model Project {
   id          String    @id @default(uuid())
   name        String
-  description String?   @db.NVarChar(2000)
-  objectives  String?   @db.NVarChar(Max)
-  finalLink   String?   @db.NVarChar(2000)
+  description String?
+  objectives  String?
+  finalLink   String?
   verticalId  String
   createdById String?
   status      String    @default("ACTIVE")
@@ -167,7 +167,7 @@ model ProjectPhase {
   id         String    @id @default(uuid())
   projectId  String
   name       String
-  objectives String?   @db.NVarChar(Max)
+  objectives String?
   deadline   DateTime?
   status     String    @default("PLANNED")
   orderIndex Int       @default(0)
@@ -205,13 +205,13 @@ model ProjectMember {
 model Task {
   id          String    @id @default(uuid())
   userId      String
-  title       String    @db.NVarChar(500)
-  description String?   @db.NVarChar(4000)
+  title       String
+  description String?
   type        String    @default("GENERAL")
   platform    String?
-  contentUrl  String?   @db.NVarChar(2000)
+  contentUrl  String?
   status      String    @default("PENDING")
-  metadata    String?   @db.NVarChar(Max)
+  metadata    String?
   dueDate     DateTime?
   completedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -231,9 +231,9 @@ model Task {
 model Idea {
   id          String    @id @default(uuid())
   authorId    String
-  title       String    @db.NVarChar(500)
-  description String    @db.NVarChar(Max)
-  tags        String?   @db.NVarChar(2000)
+  title       String
+  description String
+  tags        String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -298,7 +298,7 @@ model InstagramPerformance {
   engagementRate  Float    @default(0)
   sentiment       String   @default("unknown")
   mentionedAt     DateTime
-  rawPayload      String   @db.NVarChar(Max)
+  rawPayload      String
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -312,8 +312,8 @@ model InstagramPerformance {
 
 model Content {
   id          String   @id @default(uuid())
-  title       String   @db.NVarChar(500)
-  description String?  @db.NVarChar(2000)
+  title       String
+  description String?
   type        String // 'PRODUCTION' | 'COVERAGE'
   status      String   @default("DRAFT") // DRAFT | IN_PROGRESS | COMPLETED | ARCHIVED
   teamId      String
@@ -338,10 +338,10 @@ model ContentNode {
   id          String    @id @default(uuid())
   contentId   String
   kind        String // 'SCRIPTING' | 'SHOOT' | 'EDITING' | ...
-  name        String    @db.NVarChar(500)
+  name        String
   orderIndex  Int       @default(0)
   status      String    @default("PENDING") // PENDING | IN_PROGRESS | BLOCKED | COMPLETED
-  notes       String?   @db.NVarChar(Max)
+  notes       String?
   startsAt    DateTime?
   dueDate     DateTime?
   completedAt DateTime?
@@ -375,13 +375,13 @@ model ContentNodeTeamMember {
 model ContentNodeOutput {
   id                String    @id @default(uuid())
   nodeId            String
-  label             String    @db.NVarChar(500)
-  url               String    @db.NVarChar(2000)
-  notes             String?   @db.NVarChar(Max)
+  label             String
+  url               String
+  notes             String?
   version           Int       @default(1)
   submittedByUserId String?
   approvalState     String    @default("PENDING") // PENDING | IN_REVIEW | CHANGES_REQUESTED | APPROVED | REJECTED
-  reviewNote        String?   @db.NVarChar(2000)
+  reviewNote        String?
   reviewedByUserId  String?
   reviewedAt        DateTime?
   createdAt         DateTime  @default(now())
@@ -398,15 +398,15 @@ model ContentNodeOutput {
 model ContentNodeResource {
   id                String    @id @default(uuid())
   nodeId            String
-  name              String    @db.NVarChar(500)
+  name              String
   sourceType        String    @default("IN_HOUSE") // IN_HOUSE | RENTAL
   cost              Decimal?  @db.Decimal(18, 2)
   quantity          Int       @default(1)
   currency          String?
-  notes             String?   @db.NVarChar(Max)
+  notes             String?
   // Rental-only review workflow. IN_HOUSE rows stay APPROVED implicitly.
   approvalState     String    @default("PENDING") // PENDING | APPROVED | REJECTED
-  reviewNote        String?   @db.NVarChar(2000)
+  reviewNote        String?
   requestedByUserId String?
   reviewedByUserId  String?
   reviewedAt        DateTime?
@@ -428,12 +428,12 @@ model Notification {
   id          String    @id @default(uuid())
   userId      String
   kind        String // e.g. CONTENT_NODE_READY
-  title       String    @db.NVarChar(500)
-  body        String?   @db.NVarChar(Max)
+  title       String
+  body        String?
   // JSON-encoded structured payload (output, fromNode, toNode, contentId, ...)
-  data        String?   @db.NVarChar(Max)
+  data        String?
   // Idempotency key so the same trigger never produces duplicate rows.
-  dedupeKey   String?   @db.NVarChar(500)
+  dedupeKey   String?
   readAt      DateTime?
   emailSentAt DateTime?
   createdAt   DateTime  @default(now())

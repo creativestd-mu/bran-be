@@ -15,18 +15,15 @@ function buildDatabaseUrlFromParts(): string {
   const dbName = process.env.DB_NAME;
   const user = process.env.DB_USER;
   const password = process.env.DB_PASSWORD;
-  const encrypt = process.env.DB_ENCRYPT ?? "true";
-  const trustServerCertificate = process.env.DB_TRUST_SERVER_CERTIFICATE ?? "true";
+  const sslMode = process.env.DB_SSLMODE;
 
   if (!host || !dbPort || !dbName || !user || !password) {
     return "";
   }
 
-  return (
-    `sqlserver://${host}:${dbPort};database=${dbName};` +
-    `user=${encodeURIComponent(user)};password=${encodeURIComponent(password)};` +
-    `encrypt=${encrypt};trustServerCertificate=${trustServerCertificate}`
-  );
+  const credentials = `${encodeURIComponent(user)}:${encodeURIComponent(password)}`;
+  const baseUrl = `postgresql://${credentials}@${host}:${dbPort}/${dbName}`;
+  return sslMode ? `${baseUrl}?sslmode=${encodeURIComponent(sslMode)}` : baseUrl;
 }
 
 function parseCsv(value: string | undefined): string[] {

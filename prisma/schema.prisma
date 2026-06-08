@@ -73,6 +73,9 @@ model User {
   notifications             Notification[]          @relation("NotificationRecipient")
   ideas                     Idea[]                  @relation("IdeaAuthor")
   matchedIdeaRecommendations IdeaMatch[]            @relation("IdeaMatchTargetUser")
+  adhocWork                 AdhocWork[]
+  aiQueries                 AiQuery[]               @relation("AiQueryRequester")
+  workUnits                 WorkUnit[]              @relation("WorkUnitOwner")
 
   @@index([roleId])
   @@index([email])
@@ -224,6 +227,89 @@ model Task {
   @@index([userId, status])
   @@index([userId, createdAt])
   @@index([type, platform])
+}
+
+// ── Adhoc Work ──────────────────────────────────────────────
+
+model AdhocWork {
+  id          String   @id @default(uuid())
+  userId      String
+  description String   @db.Text
+  output      String?  @db.Text
+  effortHours Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+// ── Work Units ──────────────────────────────────────────────
+
+model WorkUnit {
+  id         String    @id @default(uuid())
+  userId     String
+  title      String    @db.VarChar(500)
+  context    String    @db.Text
+  status     String    @default("OPEN") // OPEN | CLOSED
+  isPrivate  Boolean   @default(false)
+  closedAt   DateTime?
+  nextDueAt  DateTime?
+  firstDueAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user  User       @relation("WorkUnitOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  steps WorkStep[]
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([isPrivate])
+  @@index([nextDueAt])
+  @@index([firstDueAt])
+  @@index([closedAt])
+}
+
+model WorkStep {
+  id          String    @id @default(uuid())
+  workUnitId  String
+  description String    @db.Text
+  deadline    DateTime?
+  done        Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  workUnit WorkUnit @relation(fields: [workUnitId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([workUnitId])
+  @@index([deadline])
+}
+
+// ── AI Query History & Cache ────────────────────────────────
+
+model AiQuery {
+  id              String    @id @default(uuid())
+  userId          String
+  rawQuery        String    @db.Text
+  normalizedQuery String    @db.VarChar(1000)
+  scope           String // 'user' | 'team'
+  targetUserId    String?
+  targetName      String?
+  rangeFrom       DateTime
+  rangeTo         DateTime
+  report          String    @db.Text
+  meta            String?   @db.Text
+  cached          Boolean   @default(false)
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  user User @relation("AiQueryRequester", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, createdAt])
+  @@index([scope, targetUserId, rangeFrom, rangeTo])
+  @@index([normalizedQuery])
 }
 
 // ── Ideation ────────────────────────────────────────────────

@@ -82,6 +82,11 @@ export const env = {
   ideaMatchThreshold: parsePositiveNumber(process.env.IDEA_MATCH_THRESHOLD, 0.6),
   ideaMatchMaxRecommendations: parsePositiveNumber(process.env.IDEA_MATCH_MAX_RECOMMENDATIONS, 5),
   ideaNotifyThreshold: parsePositiveNumber(process.env.IDEA_NOTIFY_THRESHOLD, 0.75),
+  aiQueryCacheTtlMinutes: parsePositiveNumber(process.env.AI_QUERY_CACHE_TTL_MINUTES, 10),
+  aiQueryCacheSemanticThreshold: parsePositiveNumber(
+    process.env.AI_QUERY_CACHE_SEMANTIC_THRESHOLD,
+    0.92
+  ),
   apifyToken: process.env.APIFY_TOKEN ?? "",
   apifyInstagramActorId: process.env.APIFY_INSTAGRAM_ACTOR_ID ?? "apify/instagram-post-scraper",
   youtubeApiKey: process.env.YOUTUBE_API_KEY ?? "",

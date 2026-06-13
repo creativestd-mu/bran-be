@@ -60,12 +60,20 @@ const ROLES: { name: string; description: string; permissions: string[] }[] = [
   {
     name: "content_creator",
     description: "Can create and manage own tasks and query AI",
-    permissions: ["create_tasks", "manage_ideation", "query_ai"]
+    permissions: ["create_tasks", "manage_ideation", "query_ai", "view_reports"]
   }
 ];
 
 const ADMIN_EMAIL = "admin@bran.app";
 const ADMIN_PASSWORD = "admin@123";
+
+const GOOGLE_ADMIN_USERS: { email: string; name: string; role: string }[] = [
+  {
+    email: "arun.rengaswamy@mastersunion.org",
+    name: "Arun Rengaswamy",
+    role: "admin"
+  }
+];
 
 const VERTICALS = [
   {
@@ -122,6 +130,24 @@ async function main() {
     console.log(`    Assigned ${assignments.length} permissions`);
   }
 
+  console.log("\nEnsuring query_ai permission on active roles...");
+  const queryAiPermissionId = permissionRecords["query_ai"];
+  if (queryAiPermissionId) {
+    const aiEnabledRoles = ["superadmin", "admin", "chief_of_staff", "manager", "content_creator"];
+    for (const roleName of aiEnabledRoles) {
+      const roleId = roleRecords[roleName];
+      if (!roleId) continue;
+      await prisma.rolePermission.upsert({
+        where: {
+          roleId_permissionId: { roleId, permissionId: queryAiPermissionId }
+        },
+        update: {},
+        create: { roleId, permissionId: queryAiPermissionId }
+      });
+      console.log(`  query_ai -> ${roleName}`);
+    }
+  }
+
   console.log("\nSeeding admin user...");
   const adminRoleId = roleRecords["admin"];
   const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
@@ -140,6 +166,27 @@ async function main() {
 
   console.log(`  Admin user: ${admin.email} (${admin.id})`);
   console.log(`  Password: ${ADMIN_PASSWORD}`);
+
+  console.log("\nSeeding Google-login admin users...");
+  for (const googleAdmin of GOOGLE_ADMIN_USERS) {
+    const roleId = roleRecords[googleAdmin.role];
+    if (!roleId) {
+      throw new Error(`Role not found for Google admin seed: ${googleAdmin.role}`);
+    }
+
+    const user = await prisma.user.upsert({
+      where: { email: googleAdmin.email },
+      update: { name: googleAdmin.name, roleId, isActive: true },
+      create: {
+        email: googleAdmin.email,
+        name: googleAdmin.name,
+        roleId,
+        isActive: true
+      }
+    });
+
+    console.log(`  Google admin: ${user.email} (${user.id}) — role: ${googleAdmin.role}`);
+  }
 
   console.log("\nSeeding verticals (owners will be assigned later)...");
   for (const v of VERTICALS) {

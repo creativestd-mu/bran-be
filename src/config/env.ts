@@ -78,6 +78,7 @@ export const env = {
   pineconeApiKey: process.env.PINECONE_API_KEY ?? "",
   pineconeIndex: process.env.PINECONE_INDEX ?? "bran-performance",
   sarvamApiKey: process.env.SARVAM_API_KEY ?? "",
+  audioStorageDir: process.env.AUDIO_STORAGE_DIR ?? "data/audio",
   ideaMatchTopK: parsePositiveNumber(process.env.IDEA_MATCH_TOP_K, 25),
   ideaMatchThreshold: parsePositiveNumber(process.env.IDEA_MATCH_THRESHOLD, 0.6),
   ideaMatchMaxRecommendations: parsePositiveNumber(process.env.IDEA_MATCH_MAX_RECOMMENDATIONS, 5),
@@ -87,6 +88,7 @@ export const env = {
     process.env.AI_QUERY_CACHE_SEMANTIC_THRESHOLD,
     0.92
   ),
+  appTimezone: process.env.APP_TIMEZONE ?? "Asia/Kolkata",
   apifyToken: process.env.APIFY_TOKEN ?? "",
   apifyInstagramActorId: process.env.APIFY_INSTAGRAM_ACTOR_ID ?? "apify/instagram-post-scraper",
   youtubeApiKey: process.env.YOUTUBE_API_KEY ?? "",

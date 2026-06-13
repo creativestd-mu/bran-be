@@ -1,6 +1,7 @@
 import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../utils/httpError";
+import { endOfDayInTimezone, startOfDayInTimezone } from "../../utils/timezone";
 import { findTasksByUserAndDateRange } from "../tasks/tasks.repository";
 import { findAdhocWorkByUserAndDateRange } from "../adhoc-work/adhoc-work.repository";
 import { findWorkUnitsByUserAndDateRange } from "../work/work.repository";
@@ -73,19 +74,15 @@ async function resolveRequestingUser(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Time-range parsing
+// Time-range parsing (calendar days use APP_TIMEZONE, default Asia/Kolkata)
 // ────────────────────────────────────────────────────────────────────────────
 
 function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+  return startOfDayInTimezone(d);
 }
 
 function endOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
+  return endOfDayInTimezone(d);
 }
 
 function parseTimeRange(query: string): { from: Date; to: Date } {
@@ -865,6 +862,10 @@ export function _parseQueryIntentForTests(
   requestingUser?: CachedUser | null
 ): QueryIntent {
   return parseQueryIntent(query, users, requestingUser);
+}
+
+export function _parseTimeRangeForTests(query: string): { from: Date; to: Date } {
+  return parseTimeRange(query);
 }
 
 // Exported for tests / cache invalidation hooks

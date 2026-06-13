@@ -20,6 +20,7 @@ import { notificationsRouter } from "../../../modules/notifications/notification
 import { ideationRouter } from "../../../modules/ideation/ideation.routes";
 import { adhocWorkRouter } from "../../../modules/adhoc-work/adhoc-work.routes";
 import { workRouter } from "../../../modules/work/work.routes";
+import { voiceRecordingRouter } from "../../../modules/voice-recording/voice-recording.routes";
 
 const v1Router = Router();
 
@@ -41,7 +42,9 @@ v1Router.use("/contents", contentRouter);
 v1Router.use("/notifications", notificationsRouter);
 v1Router.use("/ideation", ideationRouter);
 v1Router.use("/adhoc-work", adhocWorkRouter);
+v1Router.use("/adhoc-works", adhocWorkRouter);
 v1Router.use("/work", workRouter);
+v1Router.use("/voice-recordings", voiceRecordingRouter);
 
 // Existing Meltwater-based routes
 v1Router.use("/instagram", instagramRouter);

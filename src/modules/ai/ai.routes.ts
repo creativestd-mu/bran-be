@@ -7,7 +7,8 @@ import { param } from "../../utils/param";
 import { authenticate } from "../auth/auth.middleware";
 import { requirePermission } from "../auth/auth.guard";
 import { getMyAiQuery, listMyAiQueries, processAiQuery } from "./ai.service";
-import { isSupportedAudioMime, translateAudioWithSarvam } from "./ai.sarvam";
+import { isSupportedAudioMime } from "./ai.sarvam";
+import { transcribeAndArchiveVoiceRecording } from "../voice-recording/voice-recording.service";
 
 const aiRouter = Router();
 
@@ -84,14 +85,23 @@ aiRouter.post(
       const body = audioTranslateBodySchema.safeParse(req.body);
       const prompt = body.success ? body.data.prompt : undefined;
 
-      const result = await translateAudioWithSarvam({
+      const { recording, sarvam } = await transcribeAndArchiveVoiceRecording({
+        userId: req.user!.userId,
+        source: "ai_translate",
         fileBuffer: req.file.buffer,
         originalname: req.file.originalname,
         mimetype: req.file.mimetype,
         prompt
       });
 
-      res.status(200).json({ success: true, data: result });
+      res.status(200).json({
+        success: true,
+        data: {
+          ...sarvam,
+          audioRecordingId: recording.id,
+          audioRecording: recording
+        }
+      });
     } catch (error) {
       next(error);
     }

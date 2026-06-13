@@ -76,6 +76,7 @@ model User {
   adhocWork                 AdhocWork[]
   aiQueries                 AiQuery[]               @relation("AiQueryRequester")
   workUnits                 WorkUnit[]              @relation("WorkUnitOwner")
+  voiceRecordings           VoiceRecording[]        @relation("VoiceRecordingOwner")
 
   @@index([roleId])
   @@index([email])
@@ -246,23 +247,52 @@ model AdhocWork {
   @@index([userId, createdAt])
 }
 
+// ── Voice Recordings (platform-wide audio + transcript archive) ──
+
+model VoiceRecording {
+  id                  String   @id @default(uuid())
+  userId              String
+  source              String // work | ai_translate
+  originalFilename    String   @db.VarChar(500)
+  mimeType            String   @db.VarChar(100)
+  fileSizeBytes       Int
+  storagePath         String   @db.VarChar(1000)
+  transcript          String?  @db.Text
+  sarvamRequestId     String?  @db.VarChar(200)
+  languageCode        String?  @db.VarChar(20)
+  languageProbability Float?
+  status              String   @default("COMPLETED") // COMPLETED | FAILED
+  errorMessage        String?  @db.Text
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user      User       @relation("VoiceRecordingOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  workUnits WorkUnit[]
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([source])
+}
+
 // ── Work Units ──────────────────────────────────────────────
 
 model WorkUnit {
-  id         String    @id @default(uuid())
-  userId     String
-  title      String    @db.VarChar(500)
-  context    String    @db.Text
-  status     String    @default("OPEN") // OPEN | CLOSED
-  isPrivate  Boolean   @default(false)
-  closedAt   DateTime?
-  nextDueAt  DateTime?
-  firstDueAt DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id                String    @id @default(uuid())
+  userId            String
+  audioRecordingId  String?
+  title             String    @db.VarChar(500)
+  context           String    @db.Text
+  status            String    @default("OPEN") // OPEN | CLOSED
+  isPrivate         Boolean   @default(false)
+  closedAt          DateTime?
+  nextDueAt         DateTime?
+  firstDueAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  user  User       @relation("WorkUnitOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  steps WorkStep[]
+  user           User            @relation("WorkUnitOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  audioRecording VoiceRecording? @relation(fields: [audioRecordingId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  steps          WorkStep[]
 
   @@index([userId])
   @@index([userId, createdAt])
@@ -271,6 +301,7 @@ model WorkUnit {
   @@index([nextDueAt])
   @@index([firstDueAt])
   @@index([closedAt])
+  @@index([audioRecordingId])
 }
 
 model WorkStep {

@@ -1,4 +1,5 @@
 import { HttpError } from "../../utils/httpError";
+import { parseApiDateBoundary } from "../../utils/timezone";
 import { indexAdhocWorkForSearch } from "../ai/ai.service";
 import {
   createAdhocWork as createAdhocWorkInDb,
@@ -8,13 +9,22 @@ import {
   updateAdhocWork as updateAdhocWorkInDb
 } from "./adhoc-work.repository";
 
-function parseOptionalDate(value?: string): Date | undefined {
+function parseRangeFrom(value?: string): Date | undefined {
   if (!value) return undefined;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
+  try {
+    return parseApiDateBoundary(value, "start");
+  } catch {
     throw new HttpError(400, `Invalid date: ${value}`);
   }
-  return parsed;
+}
+
+function parseRangeTo(value?: string): Date | undefined {
+  if (!value) return undefined;
+  try {
+    return parseApiDateBoundary(value, "end");
+  } catch {
+    throw new HttpError(400, `Invalid date: ${value}`);
+  }
 }
 
 export async function createAdhocWork(
@@ -54,8 +64,8 @@ export async function listAdhocWork(options: {
 
   const { items, total } = await findAdhocWorkEntries({
     userId: options.userId,
-    from: parseOptionalDate(options.from),
-    to: parseOptionalDate(options.to),
+    from: parseRangeFrom(options.from),
+    to: parseRangeTo(options.to),
     page,
     pageSize
   });

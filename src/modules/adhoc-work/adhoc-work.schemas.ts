@@ -14,8 +14,20 @@ export const updateAdhocWorkSchema = z.object({
 
 export const listAdhocWorkQuerySchema = z.object({
   userId: z.string().uuid().optional(),
-  from: z.string().datetime().optional(),
-  to: z.string().datetime().optional(),
+  from: z
+    .string()
+    .refine(
+      (val) => !Number.isNaN(new Date(val).getTime()) || /^\d{4}-\d{2}-\d{2}$/.test(val),
+      "Invalid from date"
+    )
+    .optional(),
+  to: z
+    .string()
+    .refine(
+      (val) => !Number.isNaN(new Date(val).getTime()) || /^\d{4}-\d{2}-\d{2}$/.test(val),
+      "Invalid to date"
+    )
+    .optional(),
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional()
 });

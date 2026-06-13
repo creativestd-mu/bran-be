@@ -1,6 +1,7 @@
 import { HttpError } from "../../utils/httpError";
+import { parseApiDateBoundary } from "../../utils/timezone";
 import { indexWorkUnitForSearch } from "../ai/ai.service";
-import { translateAudioWithSarvam } from "../ai/ai.sarvam";
+import { transcribeAndArchiveVoiceRecording } from "../voice-recording/voice-recording.service";
 import {
   computeDueFields,
   formatWorkUnitForResponse,
@@ -38,6 +39,24 @@ function parseOptionalDate(value?: string | null): Date | null | undefined {
   return parsed;
 }
 
+function parseRangeFrom(value?: string): Date | undefined {
+  if (!value) return undefined;
+  try {
+    return parseApiDateBoundary(value, "start");
+  } catch {
+    throw new HttpError(400, `Invalid date: ${value}`);
+  }
+}
+
+function parseRangeTo(value?: string): Date | undefined {
+  if (!value) return undefined;
+  try {
+    return parseApiDateBoundary(value, "end");
+  } catch {
+    throw new HttpError(400, `Invalid date: ${value}`);
+  }
+}
+
 function canViewAll(roleName: string): boolean {
   return roleName === "admin" || roleName === "manager" || roleName === "superadmin";
 }
@@ -66,6 +85,39 @@ export function assertCanModify(
   if (unit.userId !== viewerUserId && !canViewAll(roleName)) {
     throw new HttpError(403, "Not authorized to modify this work unit");
   }
+}
+
+const CLOSED_LOCK_MESSAGE = "Closed work unit is locked. Reopen it before editing.";
+
+function isPureReopenRequest(data: {
+  status?: string;
+  title?: string;
+  context?: string;
+  isPrivate?: boolean;
+  steps?: unknown;
+}): boolean {
+  return (
+    data.status === "OPEN" &&
+    data.title === undefined &&
+    data.context === undefined &&
+    data.isPrivate === undefined &&
+    data.steps === undefined
+  );
+}
+
+function assertNotLockedClosedUnit(
+  status: string,
+  data: {
+    status?: string;
+    title?: string;
+    context?: string;
+    isPrivate?: boolean;
+    steps?: unknown;
+  }
+): void {
+  if (status !== "CLOSED") return;
+  if (isPureReopenRequest(data)) return;
+  throw new HttpError(409, CLOSED_LOCK_MESSAGE);
 }
 
 function mapSteps(
@@ -109,6 +161,7 @@ export async function createWorkUnit(
     context: string;
     status?: string;
     isPrivate?: boolean;
+    audioRecordingId?: string | null;
     steps?: Array<{ description: string; deadline?: string | null; done?: boolean }>;
   }
 ) {
@@ -120,6 +173,7 @@ export async function createWorkUnit(
 
   const unit = await createWorkUnitInDb({
     userId,
+    audioRecordingId: data.audioRecordingId,
     title: data.title,
     context: data.context,
     isPrivate: data.isPrivate ?? false,
@@ -155,8 +209,8 @@ export async function listWorkUnits(options: {
   const { items, total } = await findWorkUnits({
     userId: filterUserId,
     status: options.status,
-    from: parseOptionalDate(options.from) ?? undefined,
-    to: parseOptionalDate(options.to) ?? undefined,
+    from: parseRangeFrom(options.from),
+    to: parseRangeTo(options.to),
     isPrivateVisibleForUserId: options.viewerUserId,
     page,
     pageSize
@@ -184,6 +238,7 @@ export async function updateWorkUnit(
   const existingRaw = await findWorkUnitById(id);
   if (!existingRaw) throw new HttpError(404, "Work unit not found");
   assertCanModify(existingRaw, viewerUserId, roleName);
+  assertNotLockedClosedUnit(existingRaw.status, data);
 
   const mappedSteps = data.steps !== undefined ? mapSteps(data.steps) : undefined;
   const lifecycle = buildWorkUnitWriteFields({
@@ -209,6 +264,9 @@ export async function updateWorkUnit(
 export async function removeWorkUnit(id: string, viewerUserId: string, roleName: string) {
   const existing = await getWorkUnitById(id);
   assertCanModify(existing, viewerUserId, roleName);
+  if (existing.status === "CLOSED") {
+    throw new HttpError(409, CLOSED_LOCK_MESSAGE);
+  }
   await deleteWorkUnitInDb(id);
 }
 
@@ -218,13 +276,15 @@ export async function createWorkUnitsFromAudio(
   originalname: string,
   mimetype: string
 ) {
-  const { transcript } = await translateAudioWithSarvam({
+  const { recording, sarvam } = await transcribeAndArchiveVoiceRecording({
+    userId,
+    source: "work",
     fileBuffer,
     originalname,
     mimetype
   });
 
-  const extracted = await extractWorkUnitsFromTranscript(transcript);
+  const extracted = await extractWorkUnitsFromTranscript(sarvam.transcript);
   const workUnits = [];
 
   for (const unit of extracted) {
@@ -233,6 +293,7 @@ export async function createWorkUnitsFromAudio(
       context: unit.context,
       status: unit.status,
       isPrivate: false,
+      audioRecordingId: recording.id,
       steps: unit.steps.map((step) => ({
         description: step.description,
         deadline: step.deadline
@@ -241,7 +302,11 @@ export async function createWorkUnitsFromAudio(
     workUnits.push(created);
   }
 
-  return { transcript, workUnits };
+  return {
+    transcript: sarvam.transcript,
+    audioRecording: recording,
+    workUnits
+  };
 }
 
 export async function getMyDeadlines(userId: string, date?: string) {

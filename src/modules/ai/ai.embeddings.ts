@@ -509,6 +509,9 @@ ${context.socialStats.map((s) => `- ${s.source}: ${s.estimatedViews} views, ${s.
     "3) **Metrics** (bullet list of the key numbers), 4) **Concerns / Next Steps** (only if relevant). " +
     "Include adhoc work (tasks logged outside content nodes) alongside regular tasks when summarizing accomplishments and effort. " +
     "Include work units (open/closed tasks with next steps and deadlines) and call out upcoming deadlines when relevant. " +
+    "For ALL numeric totals (task counts, adhoc entries, work units, completion rates, platform breakdowns), use ONLY the " +
+    "authoritative statistics blocks provided below — never count items in the task/adhoc/work lists yourself because those " +
+    "lists may be truncated for length. " +
     "Do not repeat the raw task list. Skip a section if there is nothing meaningful to say. Use markdown.";
 
   const userPrompt = `Query: "${context.query}"

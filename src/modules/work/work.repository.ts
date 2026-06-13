@@ -30,6 +30,7 @@ function listOrderBy(status?: string): Prisma.WorkUnitOrderByWithRelationInput[]
 
 export async function createWorkUnit(data: {
   userId: string;
+  audioRecordingId?: string | null;
   title: string;
   context: string;
   status: string;
@@ -42,6 +43,7 @@ export async function createWorkUnit(data: {
   return prisma.workUnit.create({
     data: {
       userId: data.userId,
+      audioRecordingId: data.audioRecordingId ?? null,
       title: data.title,
       context: data.context,
       status: data.status,
@@ -77,22 +79,35 @@ export async function findWorkUnits(options: {
   page: number;
   pageSize: number;
 }) {
-  const where: Record<string, unknown> = {};
+  const where: Prisma.WorkUnitWhereInput = {};
 
   if (options.userId) where.userId = options.userId;
   if (options.status) where.status = options.status;
 
   if (options.from || options.to) {
-    const dateFilter: Record<string, Date> = {};
+    const dateFilter: Prisma.DateTimeFilter = {};
     if (options.from) dateFilter.gte = options.from;
     if (options.to) dateFilter.lte = options.to;
-    where.createdAt = dateFilter;
+
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+      {
+        OR: [
+          { createdAt: dateFilter },
+          { nextDueAt: dateFilter },
+          { firstDueAt: dateFilter },
+          { steps: { some: { deadline: dateFilter } } }
+        ]
+      }
+    ];
   }
 
   if (options.isPrivateVisibleForUserId) {
-    where.OR = [
-      { isPrivate: false },
-      { userId: options.isPrivateVisibleForUserId }
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+      {
+        OR: [{ isPrivate: false }, { userId: options.isPrivateVisibleForUserId }]
+      }
     ];
   }
 

@@ -696,7 +696,8 @@ async function fetchKpiContext(userId: string): Promise<KpiAiContextItem[]> {
 
   return items.map((kpi) => ({
     title: kpi.title,
-    description: kpi.description
+    description: kpi.description,
+    isKey: kpi.isKey
   }));
 }
 

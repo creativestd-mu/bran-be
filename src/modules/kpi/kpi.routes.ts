@@ -4,12 +4,14 @@ import { param } from "../../utils/param";
 import { authenticate } from "../auth/auth.middleware";
 import {
   createUserKpiSchema,
+  batchCreateUserKpisSchema,
   listUserKpisQuerySchema,
   updateUserKpiSchema
 } from "./kpi.schemas";
 import {
   assertCanManageUserKpis,
   assertCanViewUserKpi,
+  batchCreateUserKpis,
   createUserKpi,
   getUserKpiById,
   listUserKpis,
@@ -20,6 +22,17 @@ import {
 const kpiRouter = Router();
 
 kpiRouter.use(authenticate);
+
+kpiRouter.post("/batch", async (req, res, next) => {
+  try {
+    assertCanManageUserKpis(req.user!.roleName);
+    const payload = batchCreateUserKpisSchema.parse(req.body);
+    const kpis = await batchCreateUserKpis(req.user!.userId, payload);
+    res.status(201).json({ success: true, data: kpis });
+  } catch (error) {
+    next(error);
+  }
+});
 
 kpiRouter.post("/", async (req, res, next) => {
   try {
@@ -40,6 +53,7 @@ kpiRouter.get("/", async (req, res, next) => {
       viewerRole: req.user!.roleName,
       userId: query.userId,
       isActive: query.isActive,
+      isKey: query.isKey,
       page: query.page,
       pageSize: query.pageSize
     });

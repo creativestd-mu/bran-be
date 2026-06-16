@@ -49,4 +49,5 @@ export type VisionAiContextItem = {
 export type KpiAiContextItem = {
   title: string;
   description: string;
+  isKey: boolean;
 };

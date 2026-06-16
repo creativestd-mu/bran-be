@@ -13,6 +13,7 @@ export async function createUserKpi(data: {
   description: string;
   sortOrder?: number;
   isActive?: boolean;
+  isKey?: boolean;
   createdById: string;
 }) {
   return prisma.userKpi.create({
@@ -22,10 +23,40 @@ export async function createUserKpi(data: {
       description: data.description,
       sortOrder: data.sortOrder ?? 0,
       isActive: data.isActive ?? true,
+      isKey: data.isKey ?? false,
       createdById: data.createdById
     },
     include: kpiInclude
   });
+}
+
+export async function createManyUserKpis(
+  items: Array<{
+    userId: string;
+    title: string;
+    description: string;
+    sortOrder?: number;
+    isActive?: boolean;
+    isKey?: boolean;
+    createdById: string;
+  }>
+) {
+  return prisma.$transaction(
+    items.map((item) =>
+      prisma.userKpi.create({
+        data: {
+          userId: item.userId,
+          title: item.title,
+          description: item.description,
+          sortOrder: item.sortOrder ?? 0,
+          isActive: item.isActive ?? true,
+          isKey: item.isKey ?? false,
+          createdById: item.createdById
+        },
+        include: kpiInclude
+      })
+    )
+  );
 }
 
 export async function findUserKpiById(id: string) {
@@ -38,16 +69,19 @@ export async function findUserKpiById(id: string) {
 export async function findUserKpis(options: {
   userId?: string;
   isActive?: boolean;
+  isKey?: boolean;
   page: number;
   pageSize: number;
 }) {
   const where: {
     userId?: string;
     isActive?: boolean;
+    isKey?: boolean;
   } = {};
 
   if (options.userId) where.userId = options.userId;
   if (options.isActive !== undefined) where.isActive = options.isActive;
+  if (options.isKey !== undefined) where.isKey = options.isKey;
 
   const [items, total] = await Promise.all([
     prisma.userKpi.findMany({
@@ -55,7 +89,12 @@ export async function findUserKpis(options: {
       include: kpiInclude,
       skip: (options.page - 1) * options.pageSize,
       take: options.pageSize,
-      orderBy: [{ userId: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
+      orderBy: [
+        { userId: "asc" },
+        { isKey: "desc" },
+        { sortOrder: "asc" },
+        { createdAt: "asc" }
+      ]
     }),
     prisma.userKpi.count({ where })
   ]);
@@ -70,6 +109,7 @@ export async function updateUserKpi(
     description?: string;
     sortOrder?: number;
     isActive?: boolean;
+    isKey?: boolean;
   }
 ) {
   return prisma.userKpi.update({

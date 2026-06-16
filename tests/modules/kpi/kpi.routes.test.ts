@@ -19,4 +19,13 @@ describe("KPI routes", () => {
 
     expect(response.status).toBe(401);
   });
+
+  it("blocks unauthenticated KPI batch creation", async () => {
+    const response = await request(app).post("/en/v1/kpis/batch").send({
+      userId: "00000000-0000-0000-0000-000000000001",
+      items: [{ title: "Key KRA", description: "Outcome", isKey: true }]
+    });
+
+    expect(response.status).toBe(401);
+  });
 });

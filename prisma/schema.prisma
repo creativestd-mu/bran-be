@@ -264,6 +264,7 @@ model UserKpi {
   description String   @db.Text
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
+  isKey       Boolean  @default(false)
   createdById String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -275,6 +276,7 @@ model UserKpi {
   @@index([createdById])
   @@index([userId, isActive])
   @@index([userId, sortOrder])
+  @@index([userId, isKey])
 }
 
 // ── Vision documents (team / org direction, short or long term) ──

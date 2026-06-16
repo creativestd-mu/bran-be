@@ -455,6 +455,7 @@ export async function generatePerformanceReport(context: {
   kpis?: Array<{
     title: string;
     description: string;
+    isKey?: boolean;
   }>;
 }) {
   const tasksList = context.tasks
@@ -549,13 +550,16 @@ ${visionList}`
       : "";
 
   const kpiList = (context.kpis ?? [])
-    .map((kpi) => `- "${kpi.title}": ${kpi.description}`)
+    .map((kpi) => {
+      const keyLabel = kpi.isKey ? "[KEY] " : "";
+      return `- ${keyLabel}"${kpi.title}": ${kpi.description}`;
+    })
     .join("\n");
 
   const kpiSection =
     context.kpis && context.kpis.length > 0
       ? `
-Individual KPIs (expected outcomes):
+Individual KPIs / KRAs (expected outcomes; KEY items are highest priority):
 ${kpiList}`
       : "";
 

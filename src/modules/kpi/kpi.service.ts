@@ -1,6 +1,7 @@
 import { HttpError } from "../../utils/httpError";
 import {
   createUserKpi as createUserKpiInDb,
+  createManyUserKpis as createManyUserKpisInDb,
   deleteUserKpi as deleteUserKpiInDb,
   findUserKpiById,
   findUserKpis,
@@ -39,6 +40,7 @@ export async function createUserKpi(
     description: string;
     sortOrder?: number;
     isActive?: boolean;
+    isKey?: boolean;
   }
 ) {
   if (!(await userExists(data.userId))) {
@@ -49,6 +51,32 @@ export async function createUserKpi(
     ...data,
     createdById
   });
+}
+
+export async function batchCreateUserKpis(
+  createdById: string,
+  data: {
+    userId: string;
+    items: Array<{
+      title: string;
+      description: string;
+      sortOrder?: number;
+      isActive?: boolean;
+      isKey?: boolean;
+    }>;
+  }
+) {
+  if (!(await userExists(data.userId))) {
+    throw new HttpError(404, "User not found");
+  }
+
+  return createManyUserKpisInDb(
+    data.items.map((item) => ({
+      ...item,
+      userId: data.userId,
+      createdById
+    }))
+  );
 }
 
 export async function getUserKpiById(id: string) {
@@ -62,6 +90,7 @@ export async function listUserKpis(options: {
   viewerRole: string;
   userId?: string;
   isActive?: boolean;
+  isKey?: boolean;
   page?: number;
   pageSize?: number;
 }) {
@@ -75,6 +104,7 @@ export async function listUserKpis(options: {
   const { items, total } = await findUserKpis({
     userId: filterUserId,
     isActive: options.isActive,
+    isKey: options.isKey,
     page,
     pageSize
   });
@@ -93,6 +123,7 @@ export async function updateUserKpi(
     description?: string;
     sortOrder?: number;
     isActive?: boolean;
+    isKey?: boolean;
   }
 ) {
   await getUserKpiById(id);

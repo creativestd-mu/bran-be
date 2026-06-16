@@ -17,7 +17,7 @@ import {
   saveVisionDocument
 } from "./vision.storage";
 
-const VISION_MANAGER_ROLES = new Set(["admin", "chief_of_staff"]);
+const VISION_MANAGER_ROLES = new Set(["admin", "chief_of_staff", "superadmin"]);
 
 export function canManageVisions(roleName: string): boolean {
   return VISION_MANAGER_ROLES.has(roleName);

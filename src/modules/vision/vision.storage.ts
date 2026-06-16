@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { PDFParse } from "pdf-parse";
+
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { isSupportedVisionMime } from "./vision.constants";
@@ -91,18 +93,48 @@ export function displayFilename(originalFilename: string): string {
 
 const MAX_DOCUMENT_TEXT_FOR_AI = 6000;
 
-export function readVisionDocumentText(storagePath: string, mimeType: string): string | null {
-  if (mimeType.toLowerCase() !== "text/plain") {
-    return null;
-  }
+function trimForAi(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  return trimmed.length > MAX_DOCUMENT_TEXT_FOR_AI
+    ? `${trimmed.slice(0, MAX_DOCUMENT_TEXT_FOR_AI)}…`
+    : trimmed;
+}
+
+async function readPlainTextFile(absolutePath: string): Promise<string | null> {
+  const text = fs.readFileSync(absolutePath, "utf8");
+  return trimForAi(text);
+}
+
+async function readPdfText(absolutePath: string): Promise<string | null> {
+  const buffer = fs.readFileSync(absolutePath);
+  const parser = new PDFParse({ data: buffer });
 
   try {
+    const result = await parser.getText();
+    return trimForAi(result.text);
+  } finally {
+    await parser.destroy();
+  }
+}
+
+export async function readVisionDocumentText(
+  storagePath: string,
+  mimeType: string
+): Promise<string | null> {
+  try {
     const absolutePath = resolveVisionDocumentAbsolutePath(storagePath);
-    const text = fs.readFileSync(absolutePath, "utf8").trim();
-    if (!text) return null;
-    return text.length > MAX_DOCUMENT_TEXT_FOR_AI
-      ? `${text.slice(0, MAX_DOCUMENT_TEXT_FOR_AI)}…`
-      : text;
+    const mime = mimeType.toLowerCase();
+
+    if (mime === "text/plain") {
+      return await readPlainTextFile(absolutePath);
+    }
+
+    if (mime === "application/pdf") {
+      return await readPdfText(absolutePath);
+    }
+
+    return null;
   } catch {
     return null;
   }

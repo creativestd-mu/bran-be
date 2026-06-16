@@ -669,19 +669,21 @@ async function fetchVisionContext(options: {
     limit: 10
   });
 
-  return rows.map((vision) => ({
-    id: vision.id,
-    title: vision.title,
-    description: vision.description,
-    horizon: vision.horizon,
-    durationMonths: vision.durationMonths,
-    startsAt: vision.startsAt,
-    endsAt: vision.endsAt,
-    scope: vision.scope,
-    teams: vision.teams.map(({ team }) => team.name),
-    users: vision.users.map(({ user }) => user.name),
-    documentExcerpt: readVisionDocumentText(vision.storagePath, vision.mimeType)
-  }));
+  return Promise.all(
+    rows.map(async (vision) => ({
+      id: vision.id,
+      title: vision.title,
+      description: vision.description,
+      horizon: vision.horizon,
+      durationMonths: vision.durationMonths,
+      startsAt: vision.startsAt,
+      endsAt: vision.endsAt,
+      scope: vision.scope,
+      teams: vision.teams.map(({ team }) => team.name),
+      users: vision.users.map(({ user }) => user.name),
+      documentExcerpt: await readVisionDocumentText(vision.storagePath, vision.mimeType)
+    }))
+  );
 }
 
 async function fetchKpiContext(userId: string): Promise<KpiAiContextItem[]> {

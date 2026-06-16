@@ -24,6 +24,7 @@ import { voiceRecordingRouter } from "../../../modules/voice-recording/voice-rec
 import { kpiRouter } from "../../../modules/kpi/kpi.routes";
 import { visionRouter } from "../../../modules/vision/vision.routes";
 import { navigationRouter } from "../../../modules/navigation/navigation.routes";
+import { utilitiesRouter } from "../../../modules/utilities/utilities.routes";
 
 const v1Router = Router();
 
@@ -51,6 +52,7 @@ v1Router.use("/voice-recordings", voiceRecordingRouter);
 v1Router.use("/kpis", kpiRouter);
 v1Router.use("/visions", visionRouter);
 v1Router.use("/navigation", navigationRouter);
+v1Router.use("/utilities", utilitiesRouter);
 
 // Existing Meltwater-based routes
 v1Router.use("/instagram", instagramRouter);

@@ -37,6 +37,7 @@
     "morgan": "^1.10.1",
     "multer": "^2.1.1",
     "nodemailer": "^8.0.6",
+    "pdf-parse": "^2.4.5",
     "sarvamai": "^1.1.7",
     "zod": "^4.3.6"
   },
@@ -51,6 +52,7 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^25.5.2",
     "@types/nodemailer": "^8.0.0",
+    "@types/pdf-parse": "^1.1.5",
     "@types/supertest": "^7.2.0",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",

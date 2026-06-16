@@ -77,6 +77,12 @@ model User {
   aiQueries                 AiQuery[]               @relation("AiQueryRequester")
   workUnits                 WorkUnit[]              @relation("WorkUnitOwner")
   voiceRecordings           VoiceRecording[]        @relation("VoiceRecordingOwner")
+  kpis                      UserKpi[]               @relation("UserKpiOwner")
+  createdUserKpis           UserKpi[]               @relation("UserKpiCreatedBy")
+  visionAssignments         VisionUser[]
+  createdVisions            Vision[]                @relation("VisionCreatedBy")
+  navSearchLogs             NavSearchLog[]
+  pageVisits                UserPageVisit[]
 
   @@index([roleId])
   @@index([email])
@@ -116,6 +122,7 @@ model Team {
   createdBy User?        @relation("TeamCreatedBy", fields: [createdById], references: [id])
   members   TeamMember[]
   contents  Content[]
+  visions   VisionTeam[]
 
   @@index([createdById])
   @@index([verticalId])
@@ -245,6 +252,79 @@ model AdhocWork {
 
   @@index([userId])
   @@index([userId, createdAt])
+}
+
+// ── User KPIs (expected outcomes per user, set by admin / chief of staff) ──
+
+model UserKpi {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String   @db.VarChar(500)
+  description String   @db.Text
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User @relation("UserKpiOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  createdBy User @relation("UserKpiCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([userId])
+  @@index([createdById])
+  @@index([userId, isActive])
+  @@index([userId, sortOrder])
+}
+
+// ── Vision documents (team / org direction, short or long term) ──
+
+model Vision {
+  id               String   @id @default(uuid())
+  title            String   @db.VarChar(500)
+  description      String?  @db.Text
+  horizon          String   // SHORT_TERM | LONG_TERM
+  durationMonths   Int
+  startsAt         DateTime
+  endsAt           DateTime
+  scope            String   // ALL | SPECIFIC
+  originalFilename String   @db.VarChar(500)
+  mimeType         String   @db.VarChar(100)
+  fileSizeBytes    Int
+  storagePath      String   @db.VarChar(1000)
+  createdById      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdBy User         @relation("VisionCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  teams     VisionTeam[]
+  users     VisionUser[]
+
+  @@index([horizon])
+  @@index([scope])
+  @@index([startsAt, endsAt])
+  @@index([createdById])
+}
+
+model VisionTeam {
+  visionId String
+  teamId   String
+
+  vision Vision @relation(fields: [visionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([visionId, teamId])
+  @@index([teamId])
+}
+
+model VisionUser {
+  visionId String
+  userId   String
+
+  vision Vision @relation(fields: [visionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([visionId, userId])
+  @@index([userId])
 }
 
 // ── Voice Recordings (platform-wide audio + transcript archive) ──
@@ -537,6 +617,36 @@ model ContentNodeResource {
   @@index([nodeId])
   @@index([nodeId, sourceType])
   @@index([nodeId, approvalState])
+}
+
+// ── Navigation analytics (client nav search + page visits) ──
+
+model NavSearchLog {
+  id           String   @id @default(uuid())
+  userId       String
+  query        String   @db.VarChar(500)
+  selectedPath String?  @db.VarChar(500)
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, createdAt])
+}
+
+model UserPageVisit {
+  id            String   @id @default(uuid())
+  userId        String
+  path          String   @db.VarChar(500)
+  visitCount    Int      @default(1)
+  lastVisitedAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([userId, path])
+  @@index([userId, visitCount])
+  @@index([userId, lastVisitedAt])
 }
 
 // ── Notifications ───────────────────────────────────────────

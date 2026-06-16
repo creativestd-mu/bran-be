@@ -4,7 +4,16 @@ import { HttpError } from "../../utils/httpError";
 import { endOfDayInTimezone, startOfDayInTimezone } from "../../utils/timezone";
 import { findTasksByUserAndDateRange } from "../tasks/tasks.repository";
 import { findAdhocWorkByUserAndDateRange } from "../adhoc-work/adhoc-work.repository";
+import { findUserKpis } from "../kpi/kpi.repository";
 import { findWorkUnitsByUserAndDateRange } from "../work/work.repository";
+import { findVisionsForAiContext } from "../vision/vision.repository";
+import { readVisionDocumentText } from "../vision/vision.storage";
+import {
+  isVisionGuidanceQuery,
+  parseVisionQueryHints,
+  type KpiAiContextItem,
+  type VisionAiContextItem
+} from "./ai.guidance";
 import {
   semanticSearchTasks,
   semanticSearchAdhocWork,
@@ -427,9 +436,13 @@ export async function processAiQuery(query: string, requestingUserId?: string) {
   const targetUserId = scope === "team" ? null : (intent.userId as string);
   const targetName = scope === "team" ? "Team" : (intent.userName as string);
   const { from: rangeFrom, to: rangeTo } = intent.timeRange;
+  const guidanceQuery = isVisionGuidanceQuery(rawQuery);
+  const visionHints = parseVisionQueryHints(rawQuery);
 
   // ── Cache: reuse a prior answer for this exact range/scope/subject ────────
-  const cachedRow = await findCachedAnswer({
+  const cachedRow = guidanceQuery
+    ? null
+    : await findCachedAnswer({
     normalizedQuery,
     scope,
     targetUserId,
@@ -465,13 +478,34 @@ export async function processAiQuery(query: string, requestingUserId?: string) {
   const userIds = scope === "team" ? users.map((u) => u.id) : [targetUserId as string];
   const displayName = targetName;
 
+  const visionContextUserId =
+    scope === "user" ? (targetUserId as string) : requestingUserId ?? undefined;
+
   // Fan out all I/O in parallel — this is the biggest win for latency.
-  const [tasksByUser, adhocByUser, workByUser, socialStats, semanticContext] = await Promise.all([
+  const [
+    tasksByUser,
+    adhocByUser,
+    workByUser,
+    socialStats,
+    semanticContext,
+    visions,
+    kpis
+  ] = await Promise.all([
     fetchTasksForUsers(userIds, rangeFrom, rangeTo),
     fetchAdhocWorkForUsers(userIds, rangeFrom, rangeTo),
     fetchWorkUnitsForUsers(userIds, rangeFrom, rangeTo, requestingUserId),
     fetchSocialStats(rangeFrom, rangeTo),
-    fetchSemanticContext(normalizedQuery, scope === "user" ? (targetUserId as string) : undefined)
+    fetchSemanticContext(normalizedQuery, scope === "user" ? (targetUserId as string) : undefined),
+    guidanceQuery
+      ? fetchVisionContext({
+          scope,
+          forUserId: visionContextUserId,
+          hints: visionHints
+        })
+      : Promise.resolve([]),
+    guidanceQuery && scope === "user" && targetUserId
+      ? fetchKpiContext(targetUserId)
+      : Promise.resolve([])
   ]);
 
   const tasks = tasksByUser.flat();
@@ -514,7 +548,10 @@ export async function processAiQuery(query: string, requestingUserId?: string) {
     adhocStats,
     workStats,
     socialStats,
-    semanticContext
+    semanticContext,
+    guidanceQuery,
+    visions,
+    kpis
   });
 
   const meta = {
@@ -527,6 +564,9 @@ export async function processAiQuery(query: string, requestingUserId?: string) {
     taskCount: tasks.length,
     adhocWorkCount: adhocWork.length,
     workUnitCount: workUnits.length,
+    visionCount: visions.length,
+    kpiCount: kpis.length,
+    guidanceQuery,
     hadSemanticContext: semanticContext.length > 0,
     truncatedTasks: tasks.length > MAX_TASKS_FOR_LLM,
     truncatedAdhocWork: adhocWork.length > MAX_ADHOC_FOR_LLM,
@@ -614,6 +654,48 @@ async function fetchSocialStats(from: Date, to: Date) {
       estimatedReach: true
     }
   });
+}
+
+async function fetchVisionContext(options: {
+  scope: "user" | "team";
+  forUserId?: string;
+  hints: ReturnType<typeof parseVisionQueryHints>;
+}): Promise<VisionAiContextItem[]> {
+  const rows = await findVisionsForAiContext({
+    teamScope: options.scope === "team",
+    forUserId: options.scope === "user" ? options.forUserId : undefined,
+    maxDurationMonths: options.hints.maxDurationMonths,
+    horizon: options.hints.horizon,
+    limit: 10
+  });
+
+  return rows.map((vision) => ({
+    id: vision.id,
+    title: vision.title,
+    description: vision.description,
+    horizon: vision.horizon,
+    durationMonths: vision.durationMonths,
+    startsAt: vision.startsAt,
+    endsAt: vision.endsAt,
+    scope: vision.scope,
+    teams: vision.teams.map(({ team }) => team.name),
+    users: vision.users.map(({ user }) => user.name),
+    documentExcerpt: readVisionDocumentText(vision.storagePath, vision.mimeType)
+  }));
+}
+
+async function fetchKpiContext(userId: string): Promise<KpiAiContextItem[]> {
+  const { items } = await findUserKpis({
+    userId,
+    isActive: true,
+    page: 1,
+    pageSize: 20
+  });
+
+  return items.map((kpi) => ({
+    title: kpi.title,
+    description: kpi.description
+  }));
 }
 
 async function fetchSemanticContext(

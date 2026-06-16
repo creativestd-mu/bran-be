@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { prisma } from "../../lib/prisma";
+import { getMostVisitedPages } from "../navigation/navigation.service";
 
 const googleClient = new OAuth2Client();
 
@@ -70,13 +71,15 @@ export function verifyJwt(token: string): JwtPayload {
   }
 }
 
-function buildAuthResponse(user: { id: string; email: string; name: string; avatarUrl: string | null; roleId: string; role: { name: string } }) {
+async function buildAuthResponse(user: { id: string; email: string; name: string; avatarUrl: string | null; roleId: string; role: { name: string } }) {
   const token = signJwt({
     userId: user.id,
     email: user.email,
     roleId: user.roleId,
     roleName: user.role.name
   });
+
+  const mostVisitedPages = await getMostVisitedPages(user.id);
 
   return {
     token,
@@ -86,7 +89,8 @@ function buildAuthResponse(user: { id: string; email: string; name: string; avat
       name: user.name,
       avatarUrl: user.avatarUrl,
       role: user.role.name
-    }
+    },
+    mostVisitedPages
   };
 }
 
@@ -149,7 +153,7 @@ export async function googleSignIn(idToken: string) {
     throw new HttpError(403, "Account is deactivated");
   }
 
-  return buildAuthResponse(user);
+  return await buildAuthResponse(user);
 }
 
 export async function emailPasswordLogin(email: string, password: string) {
@@ -176,7 +180,7 @@ export async function emailPasswordLogin(email: string, password: string) {
     data: { lastLoginAt: new Date() }
   });
 
-  return buildAuthResponse(user);
+  return await buildAuthResponse(user);
 }
 
 export async function hashPassword(password: string): Promise<string> {

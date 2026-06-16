@@ -72,6 +72,11 @@ const GOOGLE_ADMIN_USERS: { email: string; name: string; role: string }[] = [
     email: "arun.rengaswamy@mastersunion.org",
     name: "Arun Rengaswamy",
     role: "admin"
+  },
+  {
+    email: "dhananjay.jain@mastersunion.org",
+    name: "Dhananjay Jain",
+    role: "admin"
   }
 ];
 

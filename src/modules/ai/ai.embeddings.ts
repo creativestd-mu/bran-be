@@ -439,6 +439,23 @@ export async function generatePerformanceReport(context: {
     closedUnits: number;
     upcomingDeadlines: number;
   };
+  guidanceQuery?: boolean;
+  visions?: Array<{
+    title: string;
+    description: string | null;
+    horizon: string;
+    durationMonths: number;
+    startsAt: Date;
+    endsAt: Date;
+    scope: string;
+    teams: string[];
+    users: string[];
+    documentExcerpt: string | null;
+  }>;
+  kpis?: Array<{
+    title: string;
+    description: string;
+  }>;
 }) {
   const tasksList = context.tasks
     .map(
@@ -503,20 +520,68 @@ Content Performance (from social media):
 ${context.socialStats.map((s) => `- ${s.source}: ${s.estimatedViews} views, ${s.estimatedReach} reach, ${s.engagement} engagement`).join("\n")}`
       : "";
 
-  const systemPrompt =
-    "You are a concise team performance analyst. Produce a short, scannable report (max ~200 words) with these sections in order: " +
-    "1) **Summary** (1–2 sentences), 2) **Highlights** (bullet list of concrete accomplishments), " +
-    "3) **Metrics** (bullet list of the key numbers), 4) **Concerns / Next Steps** (only if relevant). " +
-    "Include adhoc work (tasks logged outside content nodes) alongside regular tasks when summarizing accomplishments and effort. " +
-    "Include work units (open/closed tasks with next steps and deadlines) and call out upcoming deadlines when relevant. " +
-    "For ALL numeric totals (task counts, adhoc entries, work units, completion rates, platform breakdowns), use ONLY the " +
-    "authoritative statistics blocks provided below — never count items in the task/adhoc/work lists yourself because those " +
-    "lists may be truncated for length. " +
-    "Do not repeat the raw task list. Skip a section if there is nothing meaningful to say. Use markdown.";
+  const visionList = (context.visions ?? [])
+    .map((vision) => {
+      const period = `${vision.startsAt.toISOString().split("T")[0]} – ${vision.endsAt.toISOString().split("T")[0]}`;
+      const involvement =
+        vision.scope === "ALL"
+          ? "everyone"
+          : [
+              vision.teams.length > 0 ? `teams: ${vision.teams.join(", ")}` : null,
+              vision.users.length > 0 ? `individuals: ${vision.users.join(", ")}` : null
+            ]
+              .filter(Boolean)
+              .join("; ");
+      const parts = [
+        `- [${vision.horizon} | ${vision.durationMonths} months | ${period} | ${involvement}] "${vision.title}"`
+      ];
+      if (vision.description) parts.push(`  Summary: ${vision.description}`);
+      if (vision.documentExcerpt) parts.push(`  Document excerpt: ${vision.documentExcerpt}`);
+      return parts.join("\n");
+    })
+    .join("\n");
+
+  const visionSection =
+    context.visions && context.visions.length > 0
+      ? `
+Organizational / Team Vision Documents:
+${visionList}`
+      : "";
+
+  const kpiList = (context.kpis ?? [])
+    .map((kpi) => `- "${kpi.title}": ${kpi.description}`)
+    .join("\n");
+
+  const kpiSection =
+    context.kpis && context.kpis.length > 0
+      ? `
+Individual KPIs (expected outcomes):
+${kpiList}`
+      : "";
+
+  const guidanceMode = context.guidanceQuery === true;
+
+  const systemPrompt = guidanceMode
+    ? "You are a strategic career and team coach for a content organization. The user is asking for guidance, priorities, or direction — not a retrospective task report. " +
+      "Use the Vision documents and KPIs as the primary north star. Cross-reference recent tasks, adhoc work, and work units only to show alignment gaps or proof of progress. " +
+      "Produce a short, actionable answer (max ~250 words) with: 1) **Vision alignment** (what the org/team vision says), 2) **Focus now** (concrete priorities tied to vision/KPIs), " +
+      "3) **Gaps / opportunities** (what they are doing vs what they should), 4) **Next steps** (specific actions). " +
+      "If the question is about salary or career growth, tie recommendations to measurable outcomes from vision/KPIs and current work — do not give generic financial advice. Use markdown."
+    : "You are a concise team performance analyst. Produce a short, scannable report (max ~200 words) with these sections in order: " +
+      "1) **Summary** (1–2 sentences), 2) **Highlights** (bullet list of concrete accomplishments), " +
+      "3) **Metrics** (bullet list of the key numbers), 4) **Concerns / Next Steps** (only if relevant). " +
+      "Include adhoc work (tasks logged outside content nodes) alongside regular tasks when summarizing accomplishments and effort. " +
+      "Include work units (open/closed tasks with next steps and deadlines) and call out upcoming deadlines when relevant. " +
+      "For ALL numeric totals (task counts, adhoc entries, work units, completion rates, platform breakdowns), use ONLY the " +
+      "authoritative statistics blocks provided below — never count items in the task/adhoc/work lists yourself because those " +
+      "lists may be truncated for length. " +
+      "Do not repeat the raw task list. Skip a section if there is nothing meaningful to say. Use markdown.";
 
   const userPrompt = `Query: "${context.query}"
 
 Report for: ${context.userName}
+${visionSection}
+${kpiSection}
 
 Tasks:
 ${tasksList || "No tasks found for this period."}

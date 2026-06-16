@@ -79,6 +79,7 @@ export const env = {
   pineconeIndex: process.env.PINECONE_INDEX ?? "bran-performance",
   sarvamApiKey: process.env.SARVAM_API_KEY ?? "",
   audioStorageDir: process.env.AUDIO_STORAGE_DIR ?? "data/audio",
+  visionStorageDir: process.env.VISION_STORAGE_DIR ?? "data/visions",
   ideaMatchTopK: parsePositiveNumber(process.env.IDEA_MATCH_TOP_K, 25),
   ideaMatchThreshold: parsePositiveNumber(process.env.IDEA_MATCH_THRESHOLD, 0.6),
   ideaMatchMaxRecommendations: parsePositiveNumber(process.env.IDEA_MATCH_MAX_RECOMMENDATIONS, 5),

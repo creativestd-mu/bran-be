@@ -2,6 +2,7 @@ import {
   _parseQueryIntentForTests,
   _parseTimeRangeForTests
 } from "../../../src/modules/ai/ai.service";
+import { isVisionGuidanceQuery, parseVisionQueryHints } from "../../../src/modules/ai/ai.guidance";
 import {
   isSameCalendarDayInTimezone,
   parseApiDateBoundary,
@@ -67,5 +68,27 @@ describe("AI time range parsing — timezone", () => {
     const start = startOfDayInTimezone(ref, "Asia/Kolkata");
     const end = endOfDayInTimezone(ref, "Asia/Kolkata");
     expect(isSameCalendarDayInTimezone(start, end, "Asia/Kolkata")).toBe(true);
+  });
+});
+
+describe("AI vision guidance detection", () => {
+  it("detects focus and career guidance queries", () => {
+    expect(isVisionGuidanceQuery("what should I focus on this month")).toBe(true);
+    expect(isVisionGuidanceQuery("how can I increase my salary by 40%")).toBe(true);
+    expect(isVisionGuidanceQuery("what more should I do")).toBe(true);
+  });
+
+  it("detects team vision queries", () => {
+    expect(isVisionGuidanceQuery("what is the vision of our team in one next year")).toBe(true);
+  });
+
+  it("does not flag plain performance retrospectives", () => {
+    expect(isVisionGuidanceQuery("show me the task report for yesterday")).toBe(false);
+  });
+
+  it("parses one-year horizon hints", () => {
+    const hints = parseVisionQueryHints("what is our team vision for the next year");
+    expect(hints.maxDurationMonths).toBe(12);
+    expect(hints.horizon).toBe("LONG_TERM");
   });
 });

@@ -21,6 +21,9 @@ import { ideationRouter } from "../../../modules/ideation/ideation.routes";
 import { adhocWorkRouter } from "../../../modules/adhoc-work/adhoc-work.routes";
 import { workRouter } from "../../../modules/work/work.routes";
 import { voiceRecordingRouter } from "../../../modules/voice-recording/voice-recording.routes";
+import { kpiRouter } from "../../../modules/kpi/kpi.routes";
+import { visionRouter } from "../../../modules/vision/vision.routes";
+import { navigationRouter } from "../../../modules/navigation/navigation.routes";
 
 const v1Router = Router();
 
@@ -45,6 +48,9 @@ v1Router.use("/adhoc-work", adhocWorkRouter);
 v1Router.use("/adhoc-works", adhocWorkRouter);
 v1Router.use("/work", workRouter);
 v1Router.use("/voice-recordings", voiceRecordingRouter);
+v1Router.use("/kpis", kpiRouter);
+v1Router.use("/visions", visionRouter);
+v1Router.use("/navigation", navigationRouter);
 
 // Existing Meltwater-based routes
 v1Router.use("/instagram", instagramRouter);

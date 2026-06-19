@@ -41,10 +41,6 @@ const audioUpload = multer({
   }
 });
 
-function canViewAll(roleName: string): boolean {
-  return roleName === "admin" || roleName === "manager" || roleName === "superadmin";
-}
-
 workRouter.post(
   "/audio",
   requirePermission("create_tasks"),
@@ -91,13 +87,9 @@ workRouter.get("/deadlines", async (req, res, next) => {
 workRouter.get("/", async (req, res, next) => {
   try {
     const query = listWorkUnitsQuerySchema.parse(req.query);
-    const viewAll = canViewAll(req.user!.roleName);
-    const filterUserId = viewAll ? query.userId : req.user!.userId;
 
     const result = await listWorkUnits({
       viewerUserId: req.user!.userId,
-      viewerRole: req.user!.roleName,
-      userId: filterUserId,
       status: query.status,
       from: query.from,
       to: query.to,
@@ -114,7 +106,7 @@ workRouter.get("/", async (req, res, next) => {
 workRouter.get("/:id", async (req, res, next) => {
   try {
     const unit = await getWorkUnitById(param(req.params.id));
-    assertCanView(unit, req.user!.userId, req.user!.roleName);
+    assertCanView(unit, req.user!.userId);
     res.status(200).json({ success: true, data: unit });
   } catch (error) {
     next(error);

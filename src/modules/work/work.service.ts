@@ -63,13 +63,9 @@ function canViewAll(roleName: string): boolean {
 
 export function assertCanView(
   unit: { userId: string; isPrivate: boolean },
-  viewerUserId: string,
-  roleName: string
+  viewerUserId: string
 ): void {
-  if (unit.isPrivate && unit.userId !== viewerUserId) {
-    throw new HttpError(403, "Not authorized to view this work unit");
-  }
-  if (unit.userId !== viewerUserId && !canViewAll(roleName)) {
+  if (unit.userId !== viewerUserId) {
     throw new HttpError(403, "Not authorized to view this work unit");
   }
 }
@@ -197,8 +193,6 @@ export async function getWorkUnitById(id: string) {
 
 export async function listWorkUnits(options: {
   viewerUserId: string;
-  viewerRole: string;
-  userId?: string;
   status?: string;
   from?: string;
   to?: string;
@@ -208,16 +202,11 @@ export async function listWorkUnits(options: {
   const page = Math.max(1, Number(options.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(options.pageSize) || 20));
 
-  const filterUserId = canViewAll(options.viewerRole)
-    ? options.userId
-    : options.viewerUserId;
-
   const { items, total } = await findWorkUnits({
-    userId: filterUserId,
+    userId: options.viewerUserId,
     status: options.status,
     from: parseRangeFrom(options.from),
     to: parseRangeTo(options.to),
-    isPrivateVisibleForUserId: options.viewerUserId,
     page,
     pageSize
   });

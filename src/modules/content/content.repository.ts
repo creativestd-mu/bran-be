@@ -14,7 +14,25 @@ const teamPreview = {
 
 const resourceInclude = {
   requestedBy: userPreview,
-  reviewedBy: userPreview
+  reviewedBy: userPreview,
+  inventoryItem: {
+    select: {
+      id: true,
+      name: true,
+      category: true,
+      serialNumber: true,
+      status: true
+    }
+  },
+  inventoryReservation: {
+    select: {
+      id: true,
+      status: true,
+      reservedFrom: true,
+      dueBackAt: true,
+      returnedAt: true
+    }
+  }
 } satisfies Prisma.ContentNodeResourceInclude;
 
 const nodeInclude = {
@@ -306,6 +324,7 @@ export async function createResource(data: {
   nodeId: string;
   name: string;
   sourceType: string;
+  inventoryItemId?: string | null;
   cost?: Prisma.Decimal | number | string | null;
   quantity?: number;
   currency?: string | null;
@@ -331,6 +350,7 @@ export async function updateResource(
   data: {
     name?: string;
     sourceType?: string;
+    inventoryItemId?: string | null;
     cost?: Prisma.Decimal | number | string | null;
     quantity?: number;
     currency?: string | null;

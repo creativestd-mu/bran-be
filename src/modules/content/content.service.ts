@@ -1,5 +1,10 @@
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
+import {
+  cancelReservationForResource,
+  syncReservationForResource,
+  syncReservationsForNode
+} from "../inventory/inventory.reservations";
 import { findUserByEmail } from "../users/users.repository";
 import {
   notifyNextStepReady,
@@ -322,6 +327,9 @@ export async function updateNodeService(
     notes: input.notes,
     startsAt: parseOptionalDate(input.startsAt),
     dueDate: parseOptionalDate(input.dueDate)
+  }).then(async (updated) => {
+    await syncReservationsForNode(nodeId);
+    return updated;
   });
 }
 
@@ -615,13 +623,14 @@ export async function createResourceService(input: {
   nodeId: string;
   name: string;
   sourceType?: string;
+  inventoryItemId?: string;
   cost?: number | string | null;
   quantity?: number;
   currency?: string | null;
   notes?: string;
   requestedByUserId?: string;
 }) {
-  await loadNodeOrThrow(input.nodeId);
+  const node = await loadNodeOrThrow(input.nodeId);
   const sourceType = (input.sourceType ?? "IN_HOUSE") as ResourceSourceType;
   assertEnum(RESOURCE_SOURCE_TYPES, sourceType, "resource sourceType");
 
@@ -635,6 +644,7 @@ export async function createResourceService(input: {
     nodeId: input.nodeId,
     name: input.name,
     sourceType,
+    inventoryItemId: input.inventoryItemId ?? null,
     cost,
     quantity: input.quantity,
     currency,
@@ -642,6 +652,15 @@ export async function createResourceService(input: {
     approvalState,
     requestedByUserId: input.requestedByUserId ?? null
   });
+
+  if (input.inventoryItemId) {
+    await syncReservationForResource({
+      resourceId: created.id,
+      node,
+      inventoryItemId: input.inventoryItemId,
+      createdById: input.requestedByUserId
+    });
+  }
 
   // Fire-and-forget: notify the vertical head only for RENTAL requests.
   // Failures are intentionally swallowed so a flaky email transport never
@@ -741,6 +760,7 @@ export async function updateResourceService(
   input: {
     name?: string;
     sourceType?: string;
+    inventoryItemId?: string | null;
     cost?: number | string | null;
     quantity?: number;
     currency?: string | null;
@@ -749,6 +769,8 @@ export async function updateResourceService(
 ) {
   const resource = await getResourceById(resourceId);
   if (!resource) throw new HttpError(404, "Resource not found");
+
+  const node = await loadNodeOrThrow(resource.nodeId);
 
   const nextSourceType = (input.sourceType ?? resource.sourceType) as ResourceSourceType;
   if (input.sourceType) {
@@ -790,6 +812,7 @@ export async function updateResourceService(
   const updated = await updateResource(resourceId, {
     name: input.name,
     sourceType: input.sourceType ? nextSourceType : undefined,
+    inventoryItemId: input.inventoryItemId,
     cost: normalisedCost,
     quantity: input.quantity,
     currency: normalisedCurrency,
@@ -799,6 +822,14 @@ export async function updateResourceService(
     reviewedByUserId: resetReviewFields ? null : undefined,
     reviewedAt: resetReviewFields ? null : undefined
   });
+
+  if (input.inventoryItemId !== undefined) {
+    await syncReservationForResource({
+      resourceId: updated.id,
+      node,
+      inventoryItemId: input.inventoryItemId
+    });
+  }
 
   // An IN_HOUSE → RENTAL flip produces a fresh rental request that needs
   // the same fan-out as creation. We trigger on the resulting state, not
@@ -814,6 +845,7 @@ export async function updateResourceService(
 export async function deleteResourceService(resourceId: string) {
   const resource = await getResourceById(resourceId);
   if (!resource) throw new HttpError(404, "Resource not found");
+  await cancelReservationForResource(resourceId);
   return deleteResource(resourceId);
 }
 

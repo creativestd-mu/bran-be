@@ -25,6 +25,28 @@ export function requirePermission(...permissions: string[]) {
   };
 }
 
+export function requireAnyPermission(...permissions: string[]) {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      throw new HttpError(401, "Authentication required");
+    }
+
+    const rolePermissions = await prisma.rolePermission.findMany({
+      where: { roleId: req.user.roleId },
+      include: { permission: true }
+    });
+
+    const userPermissions = new Set(rolePermissions.map((rp) => rp.permission.name));
+    const hasAny = permissions.some((p) => userPermissions.has(p));
+
+    if (!hasAny) {
+      throw new HttpError(403, "Insufficient permissions");
+    }
+
+    next();
+  };
+}
+
 export function requireRole(...roleNames: string[]) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {

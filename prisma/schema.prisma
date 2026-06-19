@@ -70,6 +70,7 @@ model User {
   reviewedContentOutputs    ContentNodeOutput[]     @relation("ContentOutputReviewedBy")
   requestedContentResources ContentNodeResource[]   @relation("ResourceRequestedBy")
   reviewedContentResources  ContentNodeResource[]   @relation("ResourceReviewedBy")
+  inventoryReservations     InventoryReservation[]  @relation("InventoryReservationCreatedBy")
   notifications             Notification[]          @relation("NotificationRecipient")
   ideas                     Idea[]                  @relation("IdeaAuthor")
   matchedIdeaRecommendations IdeaMatch[]            @relation("IdeaMatchTargetUser")
@@ -124,6 +125,7 @@ model Team {
   members   TeamMember[]
   contents  Content[]
   visions   VisionTeam[]
+  inventoryTeams InventoryItemTeam[]
 
   @@index([createdById])
   @@index([verticalId])
@@ -552,6 +554,7 @@ model ContentNode {
   team      ContentNodeTeamMember[]
   outputs   ContentNodeOutput[]
   resources ContentNodeResource[]
+  inventoryReservations InventoryReservation[]
 
   @@unique([contentId, orderIndex])
   @@index([contentId, orderIndex])
@@ -600,6 +603,7 @@ model ContentNodeResource {
   nodeId            String
   name              String
   sourceType        String    @default("IN_HOUSE") // IN_HOUSE | RENTAL
+  inventoryItemId   String?
   cost              Decimal?  @db.Decimal(18, 2)
   quantity          Int       @default(1)
   currency          String?
@@ -613,13 +617,77 @@ model ContentNodeResource {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  node        ContentNode @relation(fields: [nodeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  requestedBy User?       @relation("ResourceRequestedBy", fields: [requestedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reviewedBy  User?       @relation("ResourceReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  node            ContentNode           @relation(fields: [nodeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  inventoryItem   InventoryItem?          @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  inventoryReservation InventoryReservation?
+  requestedBy     User?                 @relation("ResourceRequestedBy", fields: [requestedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewedBy      User?                 @relation("ResourceReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([nodeId])
   @@index([nodeId, sourceType])
   @@index([nodeId, approvalState])
+  @@index([inventoryItemId])
+}
+
+// ── Inventory (equipment catalog + shoot reservations) ──
+
+model InventoryItem {
+  id           String   @id @default(uuid())
+  name         String   @db.VarChar(500)
+  description  String?  @db.Text
+  category     String?  @db.VarChar(200)
+  serialNumber String?  @db.VarChar(200)
+  status       String   @default("AVAILABLE") // AVAILABLE | IN_USE | MAINTENANCE | RETIRED
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  teams        InventoryItemTeam[]
+  reservations InventoryReservation[]
+  resources    ContentNodeResource[]
+
+  @@index([status])
+  @@index([isActive])
+  @@index([category])
+  @@index([name])
+}
+
+model InventoryItemTeam {
+  inventoryItemId String
+  teamId          String
+  isPrimary       Boolean  @default(false)
+  assignedAt      DateTime @default(now())
+
+  item InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  team Team          @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([inventoryItemId, teamId])
+  @@index([teamId])
+}
+
+model InventoryReservation {
+  id                    String    @id @default(uuid())
+  inventoryItemId       String
+  contentNodeId         String
+  contentNodeResourceId String    @unique
+  reservedFrom          DateTime
+  dueBackAt             DateTime
+  returnedAt            DateTime?
+  status                String    @default("ACTIVE") // ACTIVE | RETURNED | OVERDUE | CANCELLED
+  notes                 String?   @db.Text
+  createdById           String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  item      InventoryItem       @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  node      ContentNode         @relation(fields: [contentNodeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  resource  ContentNodeResource @relation(fields: [contentNodeResourceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  createdBy User?               @relation("InventoryReservationCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([inventoryItemId, status])
+  @@index([contentNodeId])
+  @@index([dueBackAt])
+  @@index([status, dueBackAt])
 }
 
 // ── Thumbnail generator utility ──

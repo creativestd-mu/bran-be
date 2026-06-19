@@ -19,6 +19,10 @@ const PERMISSIONS = [
   { name: "approve_resources", description: "Approve / reject Content node outputs" },
   { name: "manage_ideation", description: "Create ideas and view collaborator recommendations" },
   {
+    name: "manage_inventory",
+    description: "Create and manage equipment inventory and team ownership"
+  },
+  {
     name: "approve_rental_resources",
     description: "Approve / reject rental resource requests on content nodes (vertical heads + admins)"
   }
@@ -54,7 +58,8 @@ const ROLES: { name: string; description: string; permissions: string[] }[] = [
       "manage_projects",
       "manage_content",
       "approve_resources",
-      "manage_ideation"
+      "manage_ideation",
+      "manage_inventory"
     ]
   },
   {

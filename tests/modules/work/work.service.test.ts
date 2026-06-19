@@ -22,7 +22,19 @@ describe("work unit closed lock helpers", () => {
 
   it("blocks viewing private units for other users", () => {
     expect(() =>
-      assertCanView({ userId: ownerId, isPrivate: true }, otherId)
+      assertCanView({ userId: ownerId, isPrivate: true }, otherId, "content_creator")
     ).toThrow(HttpError);
+  });
+
+  it("blocks viewing other users public units without elevated role", () => {
+    expect(() =>
+      assertCanView({ userId: ownerId, isPrivate: false }, otherId, "content_creator")
+    ).toThrow(HttpError);
+  });
+
+  it("allows admin to view other users public units", () => {
+    expect(() =>
+      assertCanView({ userId: ownerId, isPrivate: false }, otherId, "admin")
+    ).not.toThrow();
   });
 });

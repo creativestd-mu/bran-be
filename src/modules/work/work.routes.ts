@@ -92,7 +92,7 @@ workRouter.get("/", async (req, res, next) => {
   try {
     const query = listWorkUnitsQuerySchema.parse(req.query);
     const viewAll = canViewAll(req.user!.roleName);
-    const filterUserId = viewAll ? query.userId : undefined;
+    const filterUserId = viewAll ? query.userId : req.user!.userId;
 
     const result = await listWorkUnits({
       viewerUserId: req.user!.userId,
@@ -114,7 +114,7 @@ workRouter.get("/", async (req, res, next) => {
 workRouter.get("/:id", async (req, res, next) => {
   try {
     const unit = await getWorkUnitById(param(req.params.id));
-    assertCanView(unit, req.user!.userId);
+    assertCanView(unit, req.user!.userId, req.user!.roleName);
     res.status(200).json({ success: true, data: unit });
   } catch (error) {
     next(error);

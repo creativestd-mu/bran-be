@@ -116,6 +116,7 @@ const createResourceSchema = z
   .object({
     name: z.string().min(1),
     sourceType: z.enum(RESOURCE_SOURCE_TYPES).optional(),
+    inventoryItemId: z.string().uuid().optional(),
     cost: z.number().nonnegative().nullable().optional(),
     quantity: z.number().int().positive().optional(),
     currency: z.string().min(1).max(8).nullable().optional(),
@@ -129,6 +130,7 @@ const createResourceSchema = z
 const updateResourceSchema = z.object({
   name: z.string().min(1).optional(),
   sourceType: z.enum(RESOURCE_SOURCE_TYPES).optional(),
+  inventoryItemId: z.string().uuid().nullable().optional(),
   cost: z.number().nonnegative().nullable().optional(),
   quantity: z.number().int().positive().optional(),
   currency: z.string().min(1).max(8).nullable().optional(),

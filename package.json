@@ -23,9 +23,10 @@
   "description": "Basic Node.js backend with language + versioned APIs",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.87.0",
+    "@aws-sdk/client-s3": "^3.1073.0",
     "@google/generative-ai": "^0.24.1",
-    "@pinecone-database/pinecone": "^7.1.0",
     "@prisma/client": "^6.19.3",
+    "@qdrant/js-client-rest": "^1.18.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",

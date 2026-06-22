@@ -1,10 +1,14 @@
-import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { PDFParse } from "pdf-parse";
 
-import { env } from "../../config/env";
+import {
+  deleteStoredFile,
+  openStoredFileReadStream,
+  readStoredFileBuffer,
+  saveStoredFile
+} from "../../lib/file-storage";
 import { HttpError } from "../../utils/httpError";
 import { isSupportedVisionMime } from "./vision.constants";
 
@@ -33,54 +37,34 @@ function extensionForMime(mimetype: string, originalname: string): string {
   return map[mimetype.toLowerCase()] ?? ".bin";
 }
 
-export function saveVisionDocument(params: {
+export async function saveVisionDocument(params: {
   visionId: string;
   fileBuffer: Buffer;
   originalname: string;
   mimetype: string;
-}): string {
+}): Promise<string> {
   if (!isSupportedVisionMime(params.mimetype)) {
     throw new HttpError(400, `Unsupported document format: ${params.mimetype}`);
   }
 
   const ext = extensionForMime(params.mimetype, params.originalname);
   const safeName = `${params.visionId}${ext}`;
-  const relativeDir = params.visionId;
-  const absoluteDir = path.join(env.visionStorageDir, relativeDir);
+  const relativePath = path.join(params.visionId, safeName);
 
-  fs.mkdirSync(absoluteDir, { recursive: true });
-  const absolutePath = path.join(absoluteDir, safeName);
-  fs.writeFileSync(absolutePath, params.fileBuffer);
-
-  return path.join(relativeDir, safeName);
+  return saveStoredFile({
+    root: "visions",
+    relativePath,
+    buffer: params.fileBuffer,
+    contentType: params.mimetype
+  });
 }
 
-export function resolveVisionDocumentAbsolutePath(storagePath: string): string {
-  const absolutePath = path.resolve(env.visionStorageDir, storagePath);
-  const storageRoot = path.resolve(env.visionStorageDir);
-
-  if (!absolutePath.startsWith(storageRoot + path.sep) && absolutePath !== storageRoot) {
-    throw new HttpError(400, "Invalid vision document path");
-  }
-
-  if (!fs.existsSync(absolutePath)) {
-    throw new HttpError(404, "Vision document not found");
-  }
-
-  return absolutePath;
+export function openVisionDocumentReadStream(storagePath: string) {
+  return openStoredFileReadStream("visions", storagePath);
 }
 
-export function deleteVisionDocument(storagePath: string): void {
-  try {
-    const absolutePath = resolveVisionDocumentAbsolutePath(storagePath);
-    fs.unlinkSync(absolutePath);
-    const dir = path.dirname(absolutePath);
-    if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
-      fs.rmdirSync(dir);
-    }
-  } catch {
-    // Best-effort cleanup when the file is already gone.
-  }
+export async function deleteVisionDocument(storagePath: string): Promise<void> {
+  await deleteStoredFile("visions", storagePath);
 }
 
 export function newVisionId(): string {
@@ -101,13 +85,11 @@ function trimForAi(text: string): string | null {
     : trimmed;
 }
 
-async function readPlainTextFile(absolutePath: string): Promise<string | null> {
-  const text = fs.readFileSync(absolutePath, "utf8");
-  return trimForAi(text);
+async function readPlainTextBuffer(buffer: Buffer): Promise<string | null> {
+  return trimForAi(buffer.toString("utf8"));
 }
 
-async function readPdfText(absolutePath: string): Promise<string | null> {
-  const buffer = fs.readFileSync(absolutePath);
+async function readPdfText(buffer: Buffer): Promise<string | null> {
   const parser = new PDFParse({ data: buffer });
 
   try {
@@ -123,15 +105,15 @@ export async function readVisionDocumentText(
   mimeType: string
 ): Promise<string | null> {
   try {
-    const absolutePath = resolveVisionDocumentAbsolutePath(storagePath);
+    const buffer = await readStoredFileBuffer("visions", storagePath);
     const mime = mimeType.toLowerCase();
 
     if (mime === "text/plain") {
-      return await readPlainTextFile(absolutePath);
+      return await readPlainTextBuffer(buffer);
     }
 
     if (mime === "application/pdf") {
-      return await readPdfText(absolutePath);
+      return await readPdfText(buffer);
     }
 
     return null;

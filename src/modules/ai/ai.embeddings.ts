@@ -2,7 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 import { env } from "../../config/env";
-import { upsertVectors, queryVectors } from "./ai.pinecone";
+import { generateEmbedding } from "./ai.gemini-embeddings";
+import { upsertVectors, queryVectors } from "./ai.qdrant";
 
 let anthropicClient: Anthropic | null = null;
 let geminiClient: GoogleGenerativeAI | null = null;
@@ -34,27 +35,6 @@ function getAiProvider(): AiProvider {
   return provider === "gemini" ? "gemini" : "anthropic";
 }
 
-const EMBEDDING_DIMENSION = 1024;
-
-/**
- * Generate a simple hash-based embedding for text.
- * For production, replace with a proper embedding model (e.g. OpenAI text-embedding-3-small).
- * This is a deterministic placeholder that enables the Pinecone pipeline to work end-to-end.
- */
-export function generateSimpleEmbedding(text: string): number[] {
-  const vec = new Array<number>(EMBEDDING_DIMENSION).fill(0);
-  const normalized = text.toLowerCase();
-
-  for (let i = 0; i < normalized.length; i++) {
-    const charCode = normalized.charCodeAt(i);
-    const idx = (charCode * (i + 1)) % EMBEDDING_DIMENSION;
-    vec[idx] += 1;
-  }
-
-  const magnitude = Math.sqrt(vec.reduce((sum, val) => sum + val * val, 0)) || 1;
-  return vec.map((val) => val / magnitude);
-}
-
 export async function embedAndUpsertTask(task: {
   id: string;
   userId: string;
@@ -78,7 +58,7 @@ export async function embedAndUpsertTask(task: {
     .filter(Boolean)
     .join(". ");
 
-  const values = generateSimpleEmbedding(textToEmbed);
+  const values = await generateEmbedding(textToEmbed, "RETRIEVAL_DOCUMENT");
 
   await upsertVectors("tasks", [
     {
@@ -103,7 +83,7 @@ export async function semanticSearchTasks(
   filters?: { userId?: string; from?: string; to?: string },
   topK: number = 10
 ) {
-  const vector = generateSimpleEmbedding(query);
+  const vector = await generateEmbedding(query, "RETRIEVAL_QUERY");
 
   const filter: Record<string, unknown> = {};
   if (filters?.userId) {
@@ -133,7 +113,7 @@ export async function embedAndUpsertAdhocWork(entry: {
     .filter(Boolean)
     .join(". ");
 
-  const values = generateSimpleEmbedding(textToEmbed);
+  const values = await generateEmbedding(textToEmbed, "RETRIEVAL_DOCUMENT");
 
   await upsertVectors("adhoc-work", [
     {
@@ -160,7 +140,7 @@ export async function semanticSearchAdhocWork(
   filters?: { userId?: string },
   topK: number = 5
 ) {
-  const vector = generateSimpleEmbedding(query);
+  const vector = await generateEmbedding(query, "RETRIEVAL_QUERY");
 
   const filter: Record<string, unknown> = {};
   if (filters?.userId) {
@@ -205,7 +185,7 @@ export async function embedAndUpsertWorkUnit(unit: {
     .filter(Boolean)
     .join(". ");
 
-  const values = generateSimpleEmbedding(textToEmbed);
+  const values = await generateEmbedding(textToEmbed, "RETRIEVAL_DOCUMENT");
 
   await upsertVectors("work-units", [
     {
@@ -230,7 +210,7 @@ export async function semanticSearchWorkUnits(
   filters?: { userId?: string },
   topK: number = 5
 ) {
-  const vector = generateSimpleEmbedding(query);
+  const vector = await generateEmbedding(query, "RETRIEVAL_QUERY");
 
   const filter: Record<string, unknown> = {
     isPrivate: { $eq: false }
@@ -258,7 +238,7 @@ export async function embedAndUpsertAiQuery(entry: {
   expiresAt?: Date | null;
   createdAt: Date;
 }) {
-  const values = generateSimpleEmbedding(entry.normalizedQuery);
+  const values = await generateEmbedding(entry.normalizedQuery, "RETRIEVAL_DOCUMENT");
 
   await upsertVectors("ai-queries", [
     {
@@ -294,7 +274,7 @@ export async function semanticSearchAiQueryCache(params: {
   now?: Date;
 }): Promise<{ aiQueryId: string; score: number } | null> {
   const nowMs = (params.now ?? new Date()).getTime();
-  const vector = generateSimpleEmbedding(params.normalizedQuery);
+  const vector = await generateEmbedding(params.normalizedQuery, "RETRIEVAL_QUERY");
 
   const filter: Record<string, unknown> = {
     scope: { $eq: params.scope },
@@ -353,7 +333,7 @@ export async function embedAndUpsertIdea(idea: IdeaEmbeddingInput) {
     authorName: idea.authorName,
     createdAt: idea.createdAt
   });
-  const values = generateSimpleEmbedding(textToEmbed);
+  const values = await generateEmbedding(textToEmbed, "RETRIEVAL_DOCUMENT");
 
   await upsertVectors("ideas", [
     {
@@ -384,7 +364,7 @@ export async function semanticSearchIdeas(query: IdeaSearchInput | string, topK:
           createdAt: query.createdAt
         });
 
-  const vector = generateSimpleEmbedding(textToEmbed);
+  const vector = await generateEmbedding(textToEmbed, "RETRIEVAL_QUERY");
   const results = await queryVectors("ideas", vector, topK);
   return results.matches ?? [];
 }

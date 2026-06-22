@@ -1,7 +1,9 @@
-import fs from "node:fs";
 import path from "node:path";
 
-import { env } from "../../../config/env";
+import {
+  openStoredFileReadStream,
+  saveStoredFile
+} from "../../../lib/file-storage";
 import { HttpError } from "../../../utils/httpError";
 import { isSupportedThumbnailMime } from "./thumbnail-generator.constants";
 
@@ -18,57 +20,46 @@ function extensionForMime(mimetype: string, originalname: string): string {
   return map[mimetype.toLowerCase()] ?? ".img";
 }
 
-export function saveReferenceThumbnail(params: {
+export async function saveReferenceThumbnail(params: {
   generationId: string;
   index: number;
   fileBuffer: Buffer;
   originalname: string;
   mimetype: string;
-}): string {
+}): Promise<string> {
   if (!isSupportedThumbnailMime(params.mimetype)) {
     throw new HttpError(400, `Unsupported image format: ${params.mimetype}`);
   }
 
   const ext = extensionForMime(params.mimetype, params.originalname);
-  const relativeDir = params.generationId;
-  const absoluteDir = path.join(env.thumbnailStorageDir, relativeDir, "references");
-
-  fs.mkdirSync(absoluteDir, { recursive: true });
   const filename = `ref-${params.index}${ext}`;
-  const absolutePath = path.join(absoluteDir, filename);
-  fs.writeFileSync(absolutePath, params.fileBuffer);
+  const relativePath = path.join(params.generationId, "references", filename);
 
-  return path.join(relativeDir, "references", filename);
+  return saveStoredFile({
+    root: "thumbnails",
+    relativePath,
+    buffer: params.fileBuffer,
+    contentType: params.mimetype
+  });
 }
 
-export function saveGeneratedThumbnail(params: {
+export async function saveGeneratedThumbnail(params: {
   generationId: string;
   fileBuffer: Buffer;
   mimetype: string;
-}): string {
+}): Promise<string> {
   const ext = extensionForMime(params.mimetype, "generated.png");
-  const relativeDir = params.generationId;
-  const absoluteDir = path.join(env.thumbnailStorageDir, relativeDir);
-
-  fs.mkdirSync(absoluteDir, { recursive: true });
   const filename = `generated${ext}`;
-  const absolutePath = path.join(absoluteDir, filename);
-  fs.writeFileSync(absolutePath, params.fileBuffer);
+  const relativePath = path.join(params.generationId, filename);
 
-  return path.join(relativeDir, filename);
+  return saveStoredFile({
+    root: "thumbnails",
+    relativePath,
+    buffer: params.fileBuffer,
+    contentType: params.mimetype
+  });
 }
 
-export function resolveThumbnailAbsolutePath(storagePath: string): string {
-  const absolutePath = path.resolve(env.thumbnailStorageDir, storagePath);
-  const storageRoot = path.resolve(env.thumbnailStorageDir);
-
-  if (!absolutePath.startsWith(storageRoot + path.sep) && absolutePath !== storageRoot) {
-    throw new HttpError(400, "Invalid storage path");
-  }
-
-  if (!fs.existsSync(absolutePath)) {
-    throw new HttpError(404, "File not found");
-  }
-
-  return absolutePath;
+export function openThumbnailReadStream(storagePath: string) {
+  return openStoredFileReadStream("thumbnails", storagePath);
 }

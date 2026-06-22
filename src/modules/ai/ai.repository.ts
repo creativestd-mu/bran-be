@@ -41,7 +41,7 @@ export async function findAiQueryById(id: string) {
 /**
  * Exact-match cache lookup. Matches a previously-saved answer for the SAME
  * resolved date range, scope, subject, and normalized query text — and only
- * if it has not expired. This works without Pinecone and is the reliable
+ * if it has not expired. This works without Qdrant and is the reliable
  * fallback for the semantic cache.
  */
 export async function findReusableAiQuery(params: {

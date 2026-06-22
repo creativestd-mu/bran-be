@@ -10,7 +10,7 @@ import {
 import {
   displayFilename,
   newRecordingId,
-  resolveVoiceRecordingAbsolutePath,
+  openVoiceRecordingReadStream,
   saveVoiceRecordingFile
 } from "./voice-recording.storage";
 
@@ -30,7 +30,7 @@ export async function archiveVoiceRecording(params: {
   errorMessage?: string | null;
 }) {
   const recordingId = newRecordingId();
-  const storagePath = saveVoiceRecordingFile({
+  const storagePath = await saveVoiceRecordingFile({
     userId: params.userId,
     recordingId,
     fileBuffer: params.fileBuffer,
@@ -64,7 +64,7 @@ export async function transcribeAndArchiveVoiceRecording(params: {
   prompt?: string;
 }) {
   const recordingId = newRecordingId();
-  const storagePath = saveVoiceRecordingFile({
+  const storagePath = await saveVoiceRecordingFile({
     userId: params.userId,
     recordingId,
     fileBuffer: params.fileBuffer,
@@ -153,6 +153,6 @@ export async function listVoiceRecordingsForViewer(options: {
   };
 }
 
-export function getVoiceRecordingFilePath(storagePath: string): string {
-  return resolveVoiceRecordingAbsolutePath(storagePath);
+export function openVoiceRecordingFileStream(storagePath: string) {
+  return openVoiceRecordingReadStream(storagePath);
 }

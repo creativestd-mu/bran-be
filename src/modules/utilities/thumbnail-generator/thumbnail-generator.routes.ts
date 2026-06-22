@@ -83,12 +83,12 @@ thumbnailGeneratorRouter.get("/", async (req, res, next) => {
 
 thumbnailGeneratorRouter.get("/:id/image", async (req, res, next) => {
   try {
-    const { absolutePath, mimeType } = await resolveGeneratedThumbnailDownload(
+    const { stream, mimeType } = await resolveGeneratedThumbnailDownload(
       param(req.params.id),
       req.user!.userId
     );
     res.setHeader("Content-Type", mimeType);
-    res.sendFile(absolutePath);
+    stream.pipe(res);
   } catch (error) {
     next(error);
   }

@@ -12,7 +12,7 @@ import {
   listThumbnailGenerationsByUser
 } from "./thumbnail-generator.repository";
 import {
-  resolveThumbnailAbsolutePath,
+  openThumbnailReadStream,
   saveGeneratedThumbnail,
   saveReferenceThumbnail
 } from "./thumbnail-generator.storage";
@@ -76,14 +76,16 @@ export async function generateThumbnailPlan(
   });
 
   const generationId = randomUUID();
-  const referencePaths = input.referenceFiles.map((file, index) =>
-    saveReferenceThumbnail({
-      generationId,
-      index: index + 1,
-      fileBuffer: file.buffer,
-      originalname: file.originalname,
-      mimetype: file.mimetype
-    })
+  const referencePaths = await Promise.all(
+    input.referenceFiles.map((file, index) =>
+      saveReferenceThumbnail({
+        generationId,
+        index: index + 1,
+        fileBuffer: file.buffer,
+        originalname: file.originalname,
+        mimetype: file.mimetype
+      })
+    )
   );
 
   let generatedImagePath: string | null = null;
@@ -92,7 +94,7 @@ export async function generateThumbnailPlan(
 
   const generatedImage = await generateThumbnailImage(plan, references);
   if (generatedImage) {
-    generatedImagePath = saveGeneratedThumbnail({
+    generatedImagePath = await saveGeneratedThumbnail({
       generationId,
       fileBuffer: generatedImage.buffer,
       mimetype: generatedImage.mimetype
@@ -172,7 +174,7 @@ export async function resolveGeneratedThumbnailDownload(id: string, userId: stri
   }
 
   return {
-    absolutePath: resolveThumbnailAbsolutePath(row.generatedImagePath),
+    stream: await openThumbnailReadStream(row.generatedImagePath),
     mimeType: row.generatedMimeType ?? "image/png"
   };
 }

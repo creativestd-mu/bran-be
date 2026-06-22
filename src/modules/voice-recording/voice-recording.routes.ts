@@ -1,5 +1,4 @@
 import { Router } from "express";
-import fs from "node:fs";
 
 import { param } from "../../utils/param";
 import { authenticate } from "../auth/auth.middleware";
@@ -7,8 +6,8 @@ import { listVoiceRecordingsQuerySchema } from "./voice-recording.schemas";
 import {
   assertCanAccessRecording,
   getVoiceRecordingById,
-  getVoiceRecordingFilePath,
-  listVoiceRecordingsForViewer
+  listVoiceRecordingsForViewer,
+  openVoiceRecordingFileStream
 } from "./voice-recording.service";
 
 const voiceRecordingRouter = Router();
@@ -47,13 +46,13 @@ voiceRecordingRouter.get("/:id/audio", async (req, res, next) => {
     const recording = await getVoiceRecordingById(param(req.params.id));
     assertCanAccessRecording(recording, req.user!.userId, req.user!.roleName);
 
-    const filePath = getVoiceRecordingFilePath(recording.storagePath);
+    const stream = await openVoiceRecordingFileStream(recording.storagePath);
     res.setHeader("Content-Type", recording.mimeType);
     res.setHeader(
       "Content-Disposition",
       `inline; filename="${recording.originalFilename.replace(/"/g, "")}"`
     );
-    fs.createReadStream(filePath).pipe(res);
+    stream.pipe(res);
   } catch (error) {
     next(error);
   }

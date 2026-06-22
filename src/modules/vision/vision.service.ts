@@ -13,7 +13,7 @@ import {
   deleteVisionDocument,
   displayFilename,
   newVisionId,
-  resolveVisionDocumentAbsolutePath,
+  openVisionDocumentReadStream,
   saveVisionDocument
 } from "./vision.storage";
 
@@ -121,7 +121,7 @@ export async function createVision(
   const endsAt = addMonths(startsAt, data.durationMonths);
   const visionId = newVisionId();
 
-  const storagePath = saveVisionDocument({
+  const storagePath = await saveVisionDocument({
     visionId,
     fileBuffer: file.buffer,
     originalname: file.originalname,
@@ -232,12 +232,12 @@ export async function updateVision(
   } = {};
 
   if (file) {
-    deleteVisionDocument(existing.storagePath);
+    await deleteVisionDocument(existing.storagePath);
     storageUpdate = {
       originalFilename: displayFilename(file.originalname),
       mimeType: file.mimetype,
       fileSizeBytes: file.size,
-      storagePath: saveVisionDocument({
+      storagePath: await saveVisionDocument({
         visionId: id,
         fileBuffer: file.buffer,
         originalname: file.originalname,
@@ -273,7 +273,7 @@ export async function removeVision(id: string) {
   if (!existing) throw new HttpError(404, "Vision not found");
 
   await deleteVisionInDb(id);
-  deleteVisionDocument(existing.storagePath);
+  await deleteVisionDocument(existing.storagePath);
 }
 
 export async function resolveVisionDocumentForDownload(id: string) {
@@ -281,6 +281,6 @@ export async function resolveVisionDocumentForDownload(id: string) {
   if (!vision) throw new HttpError(404, "Vision not found");
   return {
     vision,
-    absolutePath: resolveVisionDocumentAbsolutePath(vision.storagePath)
+    stream: await openVisionDocumentReadStream(vision.storagePath)
   };
 }

@@ -1,8 +1,7 @@
-import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { env } from "../../config/env";
+import { saveStoredFile, openStoredFileReadStream, deleteStoredFile } from "../../lib/file-storage";
 import { HttpError } from "../../utils/httpError";
 
 function sanitizeFilename(name: string): string {
@@ -28,38 +27,27 @@ function extensionForMime(mimetype: string, originalname: string): string {
   return map[mimetype.toLowerCase()] ?? ".bin";
 }
 
-export function saveVoiceRecordingFile(params: {
+export async function saveVoiceRecordingFile(params: {
   userId: string;
   recordingId: string;
   fileBuffer: Buffer;
   originalname: string;
   mimetype: string;
-}): string {
+}): Promise<string> {
   const ext = extensionForMime(params.mimetype, params.originalname);
   const safeName = `${params.recordingId}${ext}`;
-  const relativeDir = path.join(params.userId, params.recordingId);
-  const absoluteDir = path.join(env.audioStorageDir, relativeDir);
+  const relativePath = path.join(params.userId, params.recordingId, safeName);
 
-  fs.mkdirSync(absoluteDir, { recursive: true });
-  const absolutePath = path.join(absoluteDir, safeName);
-  fs.writeFileSync(absolutePath, params.fileBuffer);
-
-  return path.join(relativeDir, safeName);
+  return saveStoredFile({
+    root: "audio",
+    relativePath,
+    buffer: params.fileBuffer,
+    contentType: params.mimetype
+  });
 }
 
-export function resolveVoiceRecordingAbsolutePath(storagePath: string): string {
-  const absolutePath = path.resolve(env.audioStorageDir, storagePath);
-  const storageRoot = path.resolve(env.audioStorageDir);
-
-  if (!absolutePath.startsWith(storageRoot + path.sep) && absolutePath !== storageRoot) {
-    throw new HttpError(400, "Invalid audio storage path");
-  }
-
-  if (!fs.existsSync(absolutePath)) {
-    throw new HttpError(404, "Audio file not found");
-  }
-
-  return absolutePath;
+export function openVoiceRecordingReadStream(storagePath: string) {
+  return openStoredFileReadStream("audio", storagePath);
 }
 
 export function newRecordingId(): string {

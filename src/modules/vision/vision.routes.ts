@@ -75,8 +75,13 @@ visionRouter.get("/:id/document", async (req, res, next) => {
   try {
     const id = param(req.params.id);
     await assertCanViewVision(id, req.user!.userId, req.user!.roleName);
-    const { vision, absolutePath } = await resolveVisionDocumentForDownload(id);
-    res.download(absolutePath, vision.originalFilename);
+    const { vision, stream } = await resolveVisionDocumentForDownload(id);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${vision.originalFilename.replace(/"/g, "")}"`
+    );
+    res.setHeader("Content-Type", vision.mimeType);
+    stream.pipe(res);
   } catch (error) {
     next(error);
   }

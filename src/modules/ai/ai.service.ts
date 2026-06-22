@@ -340,7 +340,7 @@ async function findCachedAnswer(params: {
   rangeTo: Date;
 }) {
   // Prefer the semantic global cache (matches reworded questions); fall back to
-  // the exact DB lookup so repeats still hit when Pinecone is unavailable.
+  // the exact DB lookup so repeats still hit when Qdrant is unavailable.
   try {
     const match = await semanticSearchAiQueryCache({
       normalizedQuery: params.normalizedQuery,
@@ -357,7 +357,7 @@ async function findCachedAnswer(params: {
       }
     }
   } catch {
-    // Pinecone not configured / unreachable — degrade to exact lookup.
+    // Qdrant not configured / unreachable — degrade to exact lookup.
   }
 
   return findReusableAiQuery({
@@ -739,7 +739,7 @@ async function fetchSemanticContext(
 
     return [...taskContext, ...adhocContext, ...workContext];
   } catch {
-    // Pinecone may not be configured / reachable; degrade gracefully.
+    // Qdrant may not be configured / reachable; degrade gracefully.
     return [];
   }
 }

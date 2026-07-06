@@ -14,6 +14,7 @@ import {
 } from "./work.schemas";
 import {
   assertCanView,
+  checkOverdueAndNotify,
   createWorkUnit,
   createWorkUnitsFromAudio,
   getMyDeadlines,
@@ -69,6 +70,15 @@ workRouter.post("/", requirePermission("create_tasks"), async (req, res, next) =
     const payload = createWorkUnitSchema.parse(req.body);
     const unit = await createWorkUnit(req.user!.userId, payload);
     res.status(201).json({ success: true, data: unit });
+  } catch (error) {
+    next(error);
+  }
+});
+
+workRouter.post("/overdue-check", async (req, res, next) => {
+  try {
+    const count = await checkOverdueAndNotify(req.user!.userId);
+    res.status(200).json({ success: true, data: { overdueSteps: count } });
   } catch (error) {
     next(error);
   }

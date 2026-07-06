@@ -5,7 +5,8 @@ import { WORK_STATUSES } from "./work.constants";
 const stepSchema = z.object({
   description: z.string().trim().min(1).max(2000),
   deadline: z.string().datetime().nullable().optional(),
-  done: z.boolean().optional()
+  done: z.boolean().optional(),
+  assigneeId: z.string().uuid().nullable().optional()
 });
 
 export const createWorkUnitSchema = z.object({
@@ -13,6 +14,8 @@ export const createWorkUnitSchema = z.object({
   context: z.string().trim().min(1).max(8000),
   status: z.enum(WORK_STATUSES).optional(),
   isPrivate: z.boolean().optional(),
+  projectId: z.string().uuid().nullable().optional(),
+  assignedToUserId: z.string().uuid().nullable().optional(),
   steps: z.array(stepSchema).max(50).optional()
 });
 
@@ -21,6 +24,7 @@ export const updateWorkUnitSchema = z.object({
   context: z.string().trim().min(1).max(8000).optional(),
   status: z.enum(WORK_STATUSES).optional(),
   isPrivate: z.boolean().optional(),
+  projectId: z.string().uuid().nullable().optional(),
   steps: z.array(stepSchema).max(50).optional()
 });
 

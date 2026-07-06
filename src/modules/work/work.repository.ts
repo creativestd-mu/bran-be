@@ -6,7 +6,12 @@ const userSelect = { id: true, name: true, email: true } as const;
 
 const workUnitInclude = {
   user: { select: userSelect },
-  steps: { orderBy: { deadline: "asc" as const } }
+  createdBy: { select: userSelect },
+  project: { select: { id: true, name: true, status: true } },
+  steps: {
+    orderBy: { deadline: "asc" as const },
+    include: { assignee: { select: userSelect } }
+  }
 } as const;
 
 function listOrderBy(status?: string): Prisma.WorkUnitOrderByWithRelationInput[] {
@@ -30,6 +35,8 @@ function listOrderBy(status?: string): Prisma.WorkUnitOrderByWithRelationInput[]
 
 export async function createWorkUnit(data: {
   userId: string;
+  createdById?: string | null;
+  projectId?: string | null;
   audioRecordingId?: string | null;
   title: string;
   context: string;
@@ -38,11 +45,13 @@ export async function createWorkUnit(data: {
   closedAt?: Date | null;
   nextDueAt?: Date | null;
   firstDueAt?: Date | null;
-  steps: Array<{ description: string; deadline?: Date | null; done?: boolean }>;
+  steps: Array<{ description: string; deadline?: Date | null; done?: boolean; assigneeId?: string | null }>;
 }) {
   return prisma.workUnit.create({
     data: {
       userId: data.userId,
+      createdById: data.createdById ?? null,
+      projectId: data.projectId ?? null,
       audioRecordingId: data.audioRecordingId ?? null,
       title: data.title,
       context: data.context,
@@ -55,7 +64,8 @@ export async function createWorkUnit(data: {
         create: data.steps.map((step) => ({
           description: step.description,
           deadline: step.deadline ?? null,
-          done: step.done ?? false
+          done: step.done ?? false,
+          assigneeId: step.assigneeId ?? null
         }))
       }
     },
@@ -81,7 +91,9 @@ export async function findWorkUnits(options: {
 }) {
   const where: Prisma.WorkUnitWhereInput = {};
 
-  if (options.userId) where.userId = options.userId;
+  if (options.userId) {
+    where.OR = [{ userId: options.userId }, { createdById: options.userId }];
+  }
   if (options.status) where.status = options.status;
 
   if (options.from || options.to) {
@@ -132,10 +144,11 @@ export async function updateWorkUnit(
     context?: string;
     status?: string;
     isPrivate?: boolean;
+    projectId?: string | null;
     closedAt?: Date | null;
     nextDueAt?: Date | null;
     firstDueAt?: Date | null;
-    steps?: Array<{ description: string; deadline?: Date | null; done?: boolean }>;
+    steps?: Array<{ description: string; deadline?: Date | null; done?: boolean; assigneeId?: string | null }>;
   }
 ) {
   const { steps, ...scalarFields } = data;
@@ -151,7 +164,8 @@ export async function updateWorkUnit(
             create: steps.map((step) => ({
               description: step.description,
               deadline: step.deadline ?? null,
-              done: step.done ?? false
+              done: step.done ?? false,
+              assigneeId: step.assigneeId ?? null
             }))
           }
         }
@@ -192,6 +206,23 @@ export async function findWorkStepsByUserAndDeadlineRange(userId: string, from: 
       workUnit: {
         select: { id: true, title: true, status: true, isPrivate: true }
       }
+    },
+    orderBy: { deadline: "asc" }
+  });
+}
+
+export async function findOverdueStepsForUser(userId: string, now: Date) {
+  return prisma.workStep.findMany({
+    where: {
+      done: false,
+      deadline: { lt: now },
+      OR: [
+        { workUnit: { userId } },
+        { assigneeId: userId }
+      ]
+    },
+    include: {
+      workUnit: { select: { id: true, title: true, userId: true } }
     },
     orderBy: { deadline: "asc" }
   });

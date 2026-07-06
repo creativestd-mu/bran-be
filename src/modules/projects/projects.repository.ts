@@ -21,6 +21,71 @@ export async function createProject(data: {
   });
 }
 
+export async function listProjectsForUser(userId: string) {
+  return prisma.project.findMany({
+    where: {
+      OR: [
+        { createdById: userId },
+        { members: { some: { userId, isActive: true } } }
+      ]
+    },
+    include: {
+      _count: { select: { members: true } },
+      createdBy: { select: { id: true, name: true, email: true } },
+      vertical: { select: { id: true, name: true, slug: true } },
+      phases: { orderBy: { orderIndex: "asc" } },
+      members: {
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+          reportsTo: { select: { id: true, name: true, email: true } }
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+}
+
+export async function listProjectSummariesForUser(userId: string) {
+  return prisma.project.findMany({
+    where: {
+      OR: [
+        { createdById: userId },
+        { members: { some: { userId, isActive: true } } }
+      ]
+    },
+    select: {
+      id: true,
+      name: true
+    },
+    orderBy: { name: "asc" }
+  });
+}
+
+export async function listAllProjectSummaries() {
+  return prisma.project.findMany({
+    select: {
+      id: true,
+      name: true
+    },
+    orderBy: { name: "asc" }
+  });
+}
+
+export async function userIsInvolvedInProject(projectId: string, userId: string) {
+  const project = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      OR: [
+        { createdById: userId },
+        { members: { some: { userId, isActive: true } } }
+      ]
+    },
+    select: { id: true }
+  });
+
+  return Boolean(project);
+}
+
 export async function listProjects() {
   return prisma.project.findMany({
     include: {

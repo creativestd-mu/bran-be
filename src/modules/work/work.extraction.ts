@@ -6,11 +6,13 @@ import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { WORK_STATUSES } from "./work.constants";
 
-export type ExtractedStep = { description: string; deadline: string | null };
+export type ExtractedStep = { description: string; deadline: string | null; assigneeName?: string | null };
 export type ExtractedWorkUnit = {
   title: string;
   context: string;
   status: "OPEN" | "CLOSED";
+  projectName?: string | null;
+  assigneeName?: string | null;
   steps: ExtractedStep[];
 };
 
@@ -47,11 +49,14 @@ const extractedResponseSchema = z.object({
       title: z.string().trim().min(1),
       context: z.string().trim().min(1),
       status: z.enum(WORK_STATUSES).optional(),
+      projectName: z.string().trim().min(1).nullable().optional(),
+      assigneeName: z.string().trim().min(1).nullable().optional(),
       steps: z
         .array(
           z.object({
             description: z.string().trim().min(1),
-            deadline: z.string().nullable().optional()
+            deadline: z.string().nullable().optional(),
+            assigneeName: z.string().trim().min(1).nullable().optional()
           })
         )
         .optional()
@@ -106,13 +111,39 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
 
 export async function extractWorkUnitsFromTranscript(
   transcript: string,
-  now: Date = new Date()
+  options?: {
+    now?: Date;
+    availableProjects?: Array<{ id: string; name: string }>;
+    availableUsers?: Array<{ id: string; name: string }>;
+  }
 ): Promise<ExtractedWorkUnit[]> {
+  const now = options?.now ?? new Date();
+  const availableProjects = options?.availableProjects ?? [];
+  const availableUsers = options?.availableUsers ?? [];
+
+  const projectHint =
+    availableProjects.length > 0
+      ? `Available projects for this user (use projectName only when the transcript clearly refers to one): ${availableProjects
+          .map((project) => project.name)
+          .join(", ")}. `
+      : "";
+
+  const teamHint =
+    availableUsers.length > 0
+      ? `Team members (use assigneeName only when the transcript clearly mentions a person by name for a task or step): ${availableUsers
+          .map((u) => u.name)
+          .join(", ")}. `
+      : "";
+
   const systemPrompt =
     "You extract structured work units from spoken meeting notes or voice memos. " +
     "Return STRICT JSON only (no markdown, no prose) with shape: " +
-    '{ "workUnits": [ { "title": string, "context": string, "status": "OPEN"|"CLOSED", "steps": [ { "description": string, "deadline": string|null } ] } ] }. ' +
+    '{ "workUnits": [ { "title": string, "context": string, "status": "OPEN"|"CLOSED", "projectName": string|null, "assigneeName": string|null, "steps": [ { "description": string, "deadline": string|null, "assigneeName": string|null } ] } ] }. ' +
     "Rules: one transcript may contain MULTIPLE work units; status must be OPEN unless clearly finished; " +
+    projectHint +
+    "projectName must be null unless the transcript clearly mentions one of the available projects; never invent a project name; " +
+    teamHint +
+    "assigneeName at the work unit level means the whole task is for that person; assigneeName on a step means only that step is for them; set to null if unclear; only use exact names from the team members list; " +
     "deadline must be ISO-8601 resolved relative to the provided current date-time: use full datetime (YYYY-MM-DDTHH:mm:ss.sssZ) when a time is mentioned, otherwise date-only (YYYY-MM-DD), or null if none mentioned; " +
     "the first step should capture the action already taken or meeting held when relevant, and follow-up actions become subsequent steps.";
 
@@ -136,11 +167,14 @@ export async function extractWorkUnitsFromTranscript(
     title: unit.title,
     context: unit.context,
     status: unit.status ?? "OPEN",
+    projectName: unit.projectName ?? null,
+    assigneeName: unit.assigneeName ?? null,
     steps: (unit.steps ?? [])
       .filter((step) => step.description.trim().length > 0)
       .map((step) => ({
         description: step.description.trim(),
-        deadline: parseDeadlineToIso(step.deadline ?? null)
+        deadline: parseDeadlineToIso(step.deadline ?? null),
+        assigneeName: step.assigneeName ?? null
       }))
   }));
 }

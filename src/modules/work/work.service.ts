@@ -1,6 +1,11 @@
 import { HttpError } from "../../utils/httpError";
 import { parseApiDateBoundary } from "../../utils/timezone";
 import { indexWorkUnitForSearch } from "../ai/ai.service";
+import {
+  notifyWorkUnitAssigned,
+  notifyWorkStepAssigned,
+  notifyWorkStepOverdue
+} from "../notifications/notifications.service";
 import { transcribeAndArchiveVoiceRecording } from "../voice-recording/voice-recording.service";
 import {
   computeDueFields,
@@ -8,14 +13,18 @@ import {
   resolveStatusAndClosedAt
 } from "./work.due-fields";
 import { extractWorkUnitsFromTranscript } from "./work.extraction";
+import { resolveProjectIdFromExtraction } from "./work.project-matching";
 import {
   createWorkUnit as createWorkUnitInDb,
   deleteWorkUnit as deleteWorkUnitInDb,
+  findOverdueStepsForUser,
   findWorkStepsByUserAndDeadlineRange,
   findWorkUnitById,
   findWorkUnits,
   updateWorkUnit as updateWorkUnitInDb
 } from "./work.repository";
+import { listAllProjectSummaries } from "../projects/projects.repository";
+import { prisma } from "../../lib/prisma";
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -121,12 +130,13 @@ function assertNotLockedClosedUnit(
 }
 
 function mapSteps(
-  steps?: Array<{ description: string; deadline?: string | null; done?: boolean }>
+  steps?: Array<{ description: string; deadline?: string | null; done?: boolean; assigneeId?: string | null }>
 ) {
   return (steps ?? []).map((step) => ({
     description: step.description,
     deadline: parseOptionalDate(step.deadline) ?? null,
-    done: step.done ?? false
+    done: step.done ?? false,
+    assigneeId: step.assigneeId ?? null
   }));
 }
 
@@ -154,25 +164,39 @@ function buildWorkUnitWriteFields(options: {
   };
 }
 
+async function resolveProjectIdForUser(
+  projectId: string | null | undefined
+): Promise<string | null> {
+  if (!projectId) {
+    return null;
+  }
+  return projectId;
+}
+
 export async function createWorkUnit(
-  userId: string,
+  creatorUserId: string,
   data: {
     title: string;
     context: string;
     status?: string;
     isPrivate?: boolean;
+    projectId?: string | null;
+    assignedToUserId?: string | null;
     audioRecordingId?: string | null;
-    steps?: Array<{ description: string; deadline?: string | null; done?: boolean }>;
+    steps?: Array<{ description: string; deadline?: string | null; done?: boolean; assigneeId?: string | null }>;
   }
 ) {
+  const ownerUserId = data.assignedToUserId ?? creatorUserId;
+  const createdById = ownerUserId !== creatorUserId ? creatorUserId : null;
+
   const steps = mapSteps(data.steps);
-  const lifecycle = buildWorkUnitWriteFields({
-    explicitStatus: data.status,
-    steps
-  });
+  const lifecycle = buildWorkUnitWriteFields({ explicitStatus: data.status, steps });
+  const projectId = await resolveProjectIdForUser(data.projectId);
 
   const unit = await createWorkUnitInDb({
-    userId,
+    userId: ownerUserId,
+    createdById,
+    projectId,
     audioRecordingId: data.audioRecordingId,
     title: data.title,
     context: data.context,
@@ -180,6 +204,43 @@ export async function createWorkUnit(
     ...lifecycle,
     steps
   });
+
+  // Notify the assignee when a work unit is created for them by someone else.
+  if (createdById) {
+    const creator = await prisma.user.findUnique({
+      where: { id: creatorUserId },
+      select: { id: true, name: true }
+    });
+    if (creator) {
+      void notifyWorkUnitAssigned({
+        workUnitId: unit.id,
+        workUnitTitle: unit.title,
+        assignedToUserId: ownerUserId,
+        createdByUser: creator
+      });
+    }
+  }
+
+  // Notify step assignees (skip the work unit owner — they'll see it anyway).
+  for (const step of unit.steps) {
+    const assigneeId = (step as { assigneeId?: string | null }).assigneeId;
+    if (assigneeId && assigneeId !== ownerUserId) {
+      const assignedBy = await prisma.user.findUnique({
+        where: { id: creatorUserId },
+        select: { id: true, name: true }
+      });
+      if (assignedBy) {
+        void notifyWorkStepAssigned({
+          workUnitId: unit.id,
+          workUnitTitle: unit.title,
+          stepDescription: step.description,
+          stepDeadline: step.deadline,
+          assignedToUserId: assigneeId,
+          assignedByUser: assignedBy
+        });
+      }
+    }
+  }
 
   void indexWorkUnitForSearch(unit.id);
   return formatWorkUnitForResponse(unit);
@@ -227,13 +288,21 @@ export async function updateWorkUnit(
     context?: string;
     status?: string;
     isPrivate?: boolean;
-    steps?: Array<{ description: string; deadline?: string | null; done?: boolean }>;
+    projectId?: string | null;
+    steps?: Array<{ description: string; deadline?: string | null; done?: boolean; assigneeId?: string | null }>;
   }
 ) {
   const existingRaw = await findWorkUnitById(id);
   if (!existingRaw) throw new HttpError(404, "Work unit not found");
   assertCanModify(existingRaw, viewerUserId, roleName);
   assertNotLockedClosedUnit(existingRaw.status, data);
+
+  // Snapshot existing step assignees so we can detect new assignments.
+  const previousAssigneeIds = new Set(
+    existingRaw.steps
+      .map((s) => (s as { assigneeId?: string | null }).assigneeId)
+      .filter(Boolean) as string[]
+  );
 
   const mappedSteps = data.steps !== undefined ? mapSteps(data.steps) : undefined;
   const lifecycle = buildWorkUnitWriteFields({
@@ -243,14 +312,39 @@ export async function updateWorkUnit(
     steps: mappedSteps ?? existingRaw.steps,
     stepsUpdated: mappedSteps !== undefined
   });
+  const projectId =
+    data.projectId !== undefined ? await resolveProjectIdForUser(data.projectId) : undefined;
 
   const unit = await updateWorkUnitInDb(id, {
     title: data.title,
     context: data.context,
     isPrivate: data.isPrivate,
+    projectId,
     ...lifecycle,
     steps: mappedSteps
   });
+
+  // Notify any newly-assigned step assignees.
+  if (mappedSteps) {
+    const assignedBy = await prisma.user.findUnique({
+      where: { id: viewerUserId },
+      select: { id: true, name: true }
+    });
+    if (assignedBy) {
+      for (const step of mappedSteps) {
+        if (step.assigneeId && !previousAssigneeIds.has(step.assigneeId)) {
+          void notifyWorkStepAssigned({
+            workUnitId: id,
+            workUnitTitle: unit!.title,
+            stepDescription: step.description,
+            stepDeadline: step.deadline ?? null,
+            assignedToUserId: step.assigneeId,
+            assignedByUser: assignedBy
+          });
+        }
+      }
+    }
+  }
 
   void indexWorkUnitForSearch(unit!.id);
   return formatWorkUnitForResponse(unit!);
@@ -279,19 +373,44 @@ export async function createWorkUnitsFromAudio(
     mimetype
   });
 
-  const extracted = await extractWorkUnitsFromTranscript(sarvam.transcript);
+  const [availableProjects, availableUsers] = await Promise.all([
+    listAllProjectSummaries(),
+    prisma.user.findMany({
+      where: { isActive: true, id: { not: userId } },
+      select: { id: true, name: true }
+    })
+  ]);
+
+  const extracted = await extractWorkUnitsFromTranscript(sarvam.transcript, {
+    availableProjects,
+    availableUsers
+  });
+
   const workUnits = [];
 
   for (const unit of extracted) {
+    const projectId = resolveProjectIdFromExtraction({
+      projectName: unit.projectName,
+      title: unit.title,
+      context: unit.context,
+      transcript: sarvam.transcript,
+      projects: availableProjects
+    });
+
+    const assignedToUserId = resolveUserIdFromName(unit.assigneeName, availableUsers) ?? null;
+
     const created = await createWorkUnit(userId, {
       title: unit.title,
       context: unit.context,
       status: unit.status,
       isPrivate: false,
+      projectId,
+      assignedToUserId,
       audioRecordingId: recording.id,
       steps: unit.steps.map((step) => ({
         description: step.description,
-        deadline: step.deadline
+        deadline: step.deadline,
+        assigneeId: resolveUserIdFromName(step.assigneeName, availableUsers)
       }))
     });
     workUnits.push(created);
@@ -324,4 +443,78 @@ export async function getMyDeadlines(userId: string, date?: string) {
       workUnit: step.workUnit
     }))
   };
+}
+
+/**
+ * Fuzzy match a person name extracted from audio against the users list.
+ * Returns the user ID of the best match or null.
+ */
+export function resolveUserIdFromName(
+  name: string | null | undefined,
+  users: Array<{ id: string; name: string }>
+): string | null {
+  if (!name?.trim() || users.length === 0) return null;
+
+  const normTarget = name.trim().toLowerCase();
+
+  // Exact match
+  const exact = users.find((u) => u.name.toLowerCase() === normTarget);
+  if (exact) return exact.id;
+
+  // Full name contains target or target contains a word from the full name
+  for (const user of users) {
+    const normUser = user.name.toLowerCase();
+    if (normUser.includes(normTarget) || normTarget.includes(normUser)) {
+      return user.id;
+    }
+    // First-name match
+    const firstName = normUser.split(" ")[0];
+    if (firstName && normTarget === firstName) return user.id;
+  }
+
+  return null;
+}
+
+/**
+ * Find all overdue incomplete steps that belong to or are assigned to `userId`
+ * and create one notification per step per day. Idempotent via dedupeKey.
+ * Returns the count of steps found to be overdue.
+ */
+export async function checkOverdueAndNotify(userId: string): Promise<number> {
+  const now = new Date();
+  const overdueSteps = await findOverdueStepsForUser(userId, now);
+  if (overdueSteps.length === 0) return 0;
+
+  const overdueDate = now.toISOString().slice(0, 10);
+
+  for (const step of overdueSteps) {
+    if (!step.deadline) continue;
+
+    // Notify the work unit owner
+    void notifyWorkStepOverdue({
+      workUnitId: step.workUnit.id,
+      workUnitTitle: step.workUnit.title,
+      stepId: step.id,
+      stepDescription: step.description,
+      stepDeadline: step.deadline,
+      recipientUserId: step.workUnit.userId,
+      overdueDate
+    });
+
+    // If there is a step-level assignee distinct from the work unit owner, notify them too
+    const assigneeId = (step as { assigneeId?: string | null }).assigneeId;
+    if (assigneeId && assigneeId !== step.workUnit.userId) {
+      void notifyWorkStepOverdue({
+        workUnitId: step.workUnit.id,
+        workUnitTitle: step.workUnit.title,
+        stepId: step.id,
+        stepDescription: step.description,
+        stepDeadline: step.deadline,
+        recipientUserId: assigneeId,
+        overdueDate
+      });
+    }
+  }
+
+  return overdueSteps.length;
 }

@@ -21,7 +21,6 @@ import {
 const projectsRouter = Router();
 
 projectsRouter.use(authenticate);
-projectsRouter.use(requirePermission("manage_projects"));
 
 const createProjectSchema = z.object({
   name: z.string().min(1),
@@ -34,7 +33,7 @@ const createProjectSchema = z.object({
   status: z.string().optional()
 });
 
-projectsRouter.post("/", async (req, res, next) => {
+projectsRouter.post("/", requirePermission("manage_projects"), async (req, res, next) => {
   try {
     const payload = createProjectSchema.parse(req.body);
     const project = await createTemporaryProject({ ...payload, createdById: req.user?.userId });
@@ -44,7 +43,7 @@ projectsRouter.post("/", async (req, res, next) => {
   }
 });
 
-projectsRouter.get("/", async (_req, res, next) => {
+projectsRouter.get("/", async (req, res, next) => {
   try {
     const projects = await listTemporaryProjects();
     res.status(200).json({ success: true, data: projects });
@@ -73,7 +72,7 @@ const updateProjectSchema = z.object({
   status: z.string().optional()
 });
 
-projectsRouter.put("/:id", async (req, res, next) => {
+projectsRouter.put("/:id", requirePermission("manage_projects"), async (req, res, next) => {
   try {
     const payload = updateProjectSchema.parse(req.body);
     const project = await updateTemporaryProject(param(req.params.id), payload);
@@ -83,7 +82,7 @@ projectsRouter.put("/:id", async (req, res, next) => {
   }
 });
 
-projectsRouter.delete("/:id", async (req, res, next) => {
+projectsRouter.delete("/:id", requirePermission("manage_projects"), async (req, res, next) => {
   try {
     await removeTemporaryProject(param(req.params.id));
     res.status(200).json({ success: true, message: "Project deleted" });
@@ -98,7 +97,7 @@ const addMemberSchema = z.object({
   reportsToUserId: z.string().uuid().optional()
 });
 
-projectsRouter.post("/:id/members", async (req, res, next) => {
+projectsRouter.post("/:id/members", requirePermission("manage_projects"), async (req, res, next) => {
   try {
     const payload = addMemberSchema.parse(req.body);
     const member = await addMemberToProject({
@@ -117,24 +116,32 @@ const updateMemberSchema = z.object({
   isActive: z.boolean().optional()
 });
 
-projectsRouter.put("/members/:memberId", async (req, res, next) => {
-  try {
-    const payload = updateMemberSchema.parse(req.body);
-    const member = await updateProjectMemberHierarchy(param(req.params.memberId), payload);
-    res.status(200).json({ success: true, data: member });
-  } catch (error) {
-    next(error);
+projectsRouter.put(
+  "/members/:memberId",
+  requirePermission("manage_projects"),
+  async (req, res, next) => {
+    try {
+      const payload = updateMemberSchema.parse(req.body);
+      const member = await updateProjectMemberHierarchy(param(req.params.memberId), payload);
+      res.status(200).json({ success: true, data: member });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
-projectsRouter.delete("/members/:memberId", async (req, res, next) => {
-  try {
-    await removeMemberFromProject(param(req.params.memberId));
-    res.status(200).json({ success: true, message: "Project member removed" });
-  } catch (error) {
-    next(error);
+projectsRouter.delete(
+  "/members/:memberId",
+  requirePermission("manage_projects"),
+  async (req, res, next) => {
+    try {
+      await removeMemberFromProject(param(req.params.memberId));
+      res.status(200).json({ success: true, message: "Project member removed" });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 const createPhaseSchema = z.object({
   name: z.string().min(1),
@@ -144,7 +151,7 @@ const createPhaseSchema = z.object({
   orderIndex: z.number().int().min(0).optional()
 });
 
-projectsRouter.post("/:id/phases", async (req, res, next) => {
+projectsRouter.post("/:id/phases", requirePermission("manage_projects"), async (req, res, next) => {
   try {
     const payload = createPhaseSchema.parse(req.body);
     const phase = await addPhaseToProject({
@@ -165,23 +172,31 @@ const updatePhaseSchema = z.object({
   orderIndex: z.number().int().min(0).optional()
 });
 
-projectsRouter.put("/phases/:phaseId", async (req, res, next) => {
-  try {
-    const payload = updatePhaseSchema.parse(req.body);
-    const phase = await updateProjectPhaseDetails(param(req.params.phaseId), payload);
-    res.status(200).json({ success: true, data: phase });
-  } catch (error) {
-    next(error);
+projectsRouter.put(
+  "/phases/:phaseId",
+  requirePermission("manage_projects"),
+  async (req, res, next) => {
+    try {
+      const payload = updatePhaseSchema.parse(req.body);
+      const phase = await updateProjectPhaseDetails(param(req.params.phaseId), payload);
+      res.status(200).json({ success: true, data: phase });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
-projectsRouter.delete("/phases/:phaseId", async (req, res, next) => {
-  try {
-    await removeProjectPhaseById(param(req.params.phaseId));
-    res.status(200).json({ success: true, message: "Project phase removed" });
-  } catch (error) {
-    next(error);
+projectsRouter.delete(
+  "/phases/:phaseId",
+  requirePermission("manage_projects"),
+  async (req, res, next) => {
+    try {
+      await removeProjectPhaseById(param(req.params.phaseId));
+      res.status(200).json({ success: true, message: "Project phase removed" });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 export { projectsRouter };

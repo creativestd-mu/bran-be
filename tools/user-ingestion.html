@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bran — User Ingestion</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0f1117;
+    --surface:  #1a1d27;
+    --border:   #2a2d3a;
+    --muted:    #4a4f6a;
+    --text:     #e2e4f0;
+    --sub:      #8b90a8;
+    --accent:   #6c63ff;
+    --accent-h: #857bff;
+    --danger:   #ef4444;
+    --success:  #22c55e;
+    --warn:     #f59e0b;
+    --radius:   8px;
+    --font: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* ── Top bar ─────────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-brand {
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: -0.3px;
+    color: var(--text);
+    margin-right: 8px;
+  }
+  .topbar-brand span { color: var(--accent); }
+  .topbar input[type="text"] {
+    flex: 0 0 260px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .topbar input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+  }
+  .status-dot.ok   { background: var(--success); }
+  .status-dot.err  { background: var(--danger); }
+  .status-label { color: var(--sub); font-size: 13px; }
+  .topbar-spacer { flex: 1; }
+
+  /* ── Buttons ─────────────────────────────────────────── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--radius);
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font);
+    transition: opacity .15s, background .15s;
+    white-space: nowrap;
+  }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary  { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-h); }
+  .btn-ghost    { background: transparent; color: var(--sub); border: 1px solid var(--border); }
+  .btn-ghost:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+  .btn-danger   { background: transparent; color: var(--danger); border: 1px solid var(--border); }
+  .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,.08); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+  /* ── Layout ──────────────────────────────────────────── */
+  .layout { display: flex; height: calc(100vh - 53px); }
+
+  .sidebar {
+    width: 200px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 20px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 20px;
+    cursor: pointer;
+    color: var(--sub);
+    font-size: 13px;
+    font-weight: 500;
+    transition: color .15s, background .15s;
+    border-left: 2px solid transparent;
+  }
+  .sidebar-item:hover { color: var(--text); background: rgba(255,255,255,.03); }
+  .sidebar-item.active { color: var(--text); border-left-color: var(--accent); background: rgba(108,99,255,.08); }
+  .sidebar-item svg { opacity: .6; flex-shrink: 0; }
+  .sidebar-item.active svg { opacity: 1; }
+
+  .main { flex: 1; overflow-y: auto; padding: 32px 36px; }
+
+  /* ── Panels ──────────────────────────────────────────── */
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .panel-header { margin-bottom: 28px; }
+  .panel-title { font-size: 18px; font-weight: 600; letter-spacing: -0.4px; margin-bottom: 4px; }
+  .panel-sub   { color: var(--sub); font-size: 13px; }
+
+  /* ── Login panel ─────────────────────────────────────── */
+  .login-card {
+    max-width: 400px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin-top: 8px;
+  }
+  .login-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 20px; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 12px; color: var(--sub); font-weight: 500; text-transform: uppercase; letter-spacing: .5px; }
+  .field input, .field select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: var(--font);
+    width: 100%;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .field select option { background: var(--surface); }
+
+  /* ── Section ─────────────────────────────────────────── */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  .section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-head-title { font-size: 14px; font-weight: 600; }
+  .section-head-sub   { font-size: 12px; color: var(--sub); margin-top: 2px; }
+  .section-body { padding: 18px; }
+
+  /* ── User table ──────────────────────────────────────── */
+  .user-rows { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .user-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 180px 140px 32px;
+    gap: 8px;
+    align-items: center;
+  }
+  .user-row input, .user-row select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 7px 9px;
+    font-size: 13px;
+    font-family: var(--font);
+    width: 100%;
+  }
+  .user-row input:focus, .user-row select:focus { outline: none; border-color: var(--accent); }
+  .user-row input.err { border-color: var(--danger); }
+  .row-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr 180px 140px 32px;
+    gap: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .row-header span { font-size: 11px; color: var(--sub); font-weight: 500; text-transform: uppercase; letter-spacing: .5px; padding: 0 2px; }
+  .del-btn {
+    width: 28px; height: 28px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: color .15s, border-color .15s;
+    flex-shrink: 0;
+  }
+  .del-btn:hover { color: var(--danger); border-color: var(--danger); }
+
+  /* ── Hierarchy builder ───────────────────────────────── */
+  .member-rows { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .member-row {
+    display: grid;
+    grid-template-columns: 220px 160px 220px 32px;
+    gap: 8px;
+    align-items: center;
+  }
+  .member-row input, .member-row select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 7px 9px;
+    font-size: 13px;
+    font-family: var(--font);
+    width: 100%;
+  }
+  .member-row input:focus, .member-row select:focus { outline: none; border-color: var(--accent); }
+  .member-header {
+    display: grid;
+    grid-template-columns: 220px 160px 220px 32px;
+    gap: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+  .member-header span { font-size: 11px; color: var(--sub); font-weight: 500; text-transform: uppercase; letter-spacing: .5px; padding: 0 2px; }
+
+  /* ── Hierarchy preview ───────────────────────────────── */
+  .tree-preview {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--sub);
+    min-height: 80px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .tree-line { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  .tree-line .name { color: var(--text); }
+  .tree-line .role-tag { color: var(--accent); font-size: 11px; }
+  .tree-indent { display: inline-block; width: 20px; color: var(--border); }
+
+  /* ── Log ─────────────────────────────────────────────── */
+  .log {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    max-height: 220px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .log-line { display: flex; gap: 10px; align-items: flex-start; }
+  .log-ts   { color: var(--muted); flex-shrink: 0; }
+  .log-ok   { color: var(--success); }
+  .log-err  { color: var(--danger); }
+  .log-info { color: var(--sub); }
+  .log-warn { color: var(--warn); }
+
+  /* ── Tag / pill ──────────────────────────────────────── */
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .tag-ok   { background: rgba(34,197,94,.12);   color: var(--success); }
+  .tag-err  { background: rgba(239,68,68,.12);   color: var(--danger); }
+  .tag-blue { background: rgba(108,99,255,.15);  color: var(--accent); }
+  .tag-warn { background: rgba(245,158,11,.12);  color: var(--warn); }
+
+  /* ── Progress bar ────────────────────────────────────── */
+  .progress-wrap { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 12px; }
+  .progress-bar  { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s; }
+
+  /* ── Divider ─────────────────────────────────────────── */
+  .divider { height: 1px; background: var(--border); margin: 16px 0; }
+
+  /* ── Summary grid ────────────────────────────────────── */
+  .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .summary-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .summary-card .val { font-size: 24px; font-weight: 700; letter-spacing: -1px; }
+  .summary-card .lbl { font-size: 12px; color: var(--sub); margin-top: 2px; }
+  .summary-card.ok  .val { color: var(--success); }
+  .summary-card.err .val { color: var(--danger); }
+  .summary-card.neu .val { color: var(--text); }
+
+  /* ── Misc ────────────────────────────────────────────── */
+  .flex { display: flex; align-items: center; gap: 10px; }
+  .flex-end { justify-content: flex-end; }
+  .mt-2 { margin-top: 8px; }
+  .mt-3 { margin-top: 12px; }
+  .text-sub { color: var(--sub); font-size: 12px; }
+
+  .empty {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 24px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ───────────────────────────────────────────────── -->
+<div class="topbar">
+  <span class="topbar-brand">bran <span>/</span> user ingestion</span>
+  <input type="text" id="baseUrl" value="http://localhost:4001" placeholder="Base URL" />
+  <div class="status-dot" id="statusDot"></div>
+  <span class="status-label" id="statusLabel">not connected</span>
+  <div class="topbar-spacer"></div>
+  <span id="loggedInAs" class="text-sub"></span>
+  <button class="btn btn-ghost btn-sm" id="logoutBtn" style="display:none" onclick="logout()">Sign out</button>
+</div>
+
+<!-- ── Layout ────────────────────────────────────────────────── -->
+<div class="layout">
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-item active" data-panel="login" onclick="showPanel('login')">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M15 3h6v18h-6M10 17l5-5-5-5M15 12H3"/>
+      </svg>
+      Connect
+    </div>
+    <div class="sidebar-item" data-panel="users" onclick="showPanel('users')">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+      </svg>
+      Create Users
+    </div>
+    <div class="sidebar-item" data-panel="hierarchy" onclick="showPanel('hierarchy')">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="2" width="6" height="6" rx="1"/>
+        <rect x="16" y="2" width="6" height="6" rx="1"/>
+        <rect x="9" y="16" width="6" height="6" rx="1"/>
+        <path d="M5 8v4h14V8M12 12v4"/>
+      </svg>
+      Team Hierarchy
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- ── Connect panel ───────────────────────────────── -->
+    <div class="panel active" id="panel-login">
+      <div class="panel-header">
+        <div class="panel-title">Connect to Bran</div>
+        <div class="panel-sub">Sign in with an admin account to start ingesting users.</div>
+      </div>
+
+      <div class="login-card">
+        <h3>Admin sign-in</h3>
+        <div class="field">
+          <label>Email</label>
+          <input type="email" id="loginEmail" value="admin@bran.app" placeholder="admin@bran.app" />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="loginPassword" value="admin@123" placeholder="••••••••" />
+        </div>
+        <div class="mt-3">
+          <button class="btn btn-primary" onclick="doLogin()" id="loginBtn">Sign in</button>
+        </div>
+        <div id="loginError" style="color:var(--danger);font-size:12px;margin-top:10px;display:none"></div>
+      </div>
+
+      <div id="loginSuccess" style="display:none;margin-top:20px">
+        <div class="section">
+          <div class="section-head">
+            <div>
+              <div class="section-head-title">Connected</div>
+              <div class="section-head-sub" id="connectedAs"></div>
+            </div>
+            <span class="tag tag-ok">authenticated</span>
+          </div>
+          <div class="section-body">
+            <div class="summary-grid">
+              <div class="summary-card neu">
+                <div class="val" id="rolesCount">—</div>
+                <div class="lbl">roles loaded</div>
+              </div>
+              <div class="summary-card neu">
+                <div class="val" id="verticalsCount">—</div>
+                <div class="lbl">verticals</div>
+              </div>
+              <div class="summary-card neu">
+                <div class="val" id="usersCount">—</div>
+                <div class="lbl">existing users</div>
+              </div>
+            </div>
+            <div class="flex">
+              <button class="btn btn-primary" onclick="showPanel('users')">Create users →</button>
+              <button class="btn btn-ghost" onclick="showPanel('hierarchy')">Set up hierarchy →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Create Users panel ──────────────────────────── -->
+    <div class="panel" id="panel-users">
+      <div class="panel-header">
+        <div class="panel-title">Create Users</div>
+        <div class="panel-sub">Add rows, pick roles, then submit. Users sign in via Google on first login.</div>
+      </div>
+
+      <div id="usersAuthWarn" style="display:none" class="section">
+        <div class="section-body"><span class="tag tag-warn">not connected</span> <span class="text-sub">Sign in first on the Connect tab.</span></div>
+      </div>
+
+      <div id="usersForm" style="display:none">
+        <div class="section">
+          <div class="section-head">
+            <div>
+              <div class="section-head-title">User list</div>
+              <div class="section-head-sub">Each row becomes one user. Email must be unique.</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="addUserRow()">+ Add row</button>
+          </div>
+          <div class="section-body">
+            <div class="row-header">
+              <span>Full name</span>
+              <span>Email</span>
+              <span>Role</span>
+              <span>Designation (opt)</span>
+              <span></span>
+            </div>
+            <div class="user-rows" id="userRows"></div>
+            <div class="flex flex-end mt-2">
+              <button class="btn btn-ghost btn-sm" onclick="addUserRow()">+ Add row</button>
+              <button class="btn btn-primary" onclick="submitUsers()" id="submitUsersBtn">
+                Submit all users
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section" id="usersLogSection" style="display:none">
+          <div class="section-head">
+            <div class="section-head-title">Result</div>
+            <div class="flex gap-8">
+              <span id="usersSummaryOk" class="tag tag-ok"></span>
+              <span id="usersSummaryErr" class="tag tag-err" style="display:none"></span>
+            </div>
+          </div>
+          <div class="section-body">
+            <div class="progress-wrap"><div class="progress-bar" id="usersProgress" style="width:0%"></div></div>
+            <div class="log mt-3" id="usersLog"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Hierarchy panel ─────────────────────────────── -->
+    <div class="panel" id="panel-hierarchy">
+      <div class="panel-header">
+        <div class="panel-title">Team Hierarchy</div>
+        <div class="panel-sub">Create or update a team with its full org chart in one shot.</div>
+      </div>
+
+      <div id="hierAuthWarn" style="display:none" class="section">
+        <div class="section-body"><span class="tag tag-warn">not connected</span> <span class="text-sub">Sign in first on the Connect tab.</span></div>
+      </div>
+
+      <div id="hierForm" style="display:none">
+        <div class="section">
+          <div class="section-head">
+            <div class="section-head-title">Team details</div>
+          </div>
+          <div class="section-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+              <div class="field">
+                <label>Team name</label>
+                <input type="text" id="teamName" placeholder="e.g. Content Team" />
+              </div>
+              <div class="field">
+                <label>Vertical</label>
+                <select id="verticalSelect"><option value="">Select vertical…</option></select>
+              </div>
+              <div class="field">
+                <label>Existing team (optional)</label>
+                <select id="teamSelect" onchange="onTeamSelect()">
+                  <option value="">New team</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div>
+              <div class="section-head-title">Members</div>
+              <div class="section-head-sub">All users must already exist. Leave "Reports to" blank for top-level members.</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="addMemberRow()">+ Add member</button>
+          </div>
+          <div class="section-body">
+            <div class="member-header">
+              <span>User</span>
+              <span>Role in team</span>
+              <span>Reports to</span>
+              <span></span>
+            </div>
+            <div class="member-rows" id="memberRows"></div>
+            <div class="flex flex-end mt-2">
+              <button class="btn btn-ghost btn-sm" onclick="addMemberRow()">+ Add member</button>
+              <button class="btn btn-primary" onclick="submitHierarchy()" id="submitHierBtn">
+                Save hierarchy
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head"><div class="section-head-title">Preview</div></div>
+          <div class="section-body">
+            <div class="tree-preview" id="treePreview">
+              <span style="color:var(--muted)">Add members above to preview the org chart.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section" id="hierLogSection" style="display:none">
+          <div class="section-head"><div class="section-head-title">Result</div></div>
+          <div class="section-body">
+            <div class="log" id="hierLog"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────
+let state = {
+  token: null,
+  me: null,
+  roles: [],
+  verticals: [],
+  teams: [],
+  users: [],
+};
+
+// ── Utils ─────────────────────────────────────────────────────
+function getBase() {
+  return document.getElementById('baseUrl').value.replace(/\/$/, '');
+}
+
+async function api(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+  const res = await fetch(getBase() + '/en/v1' + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.message || json.error || `HTTP ${res.status}`);
+  return json;
+}
+
+function ts() {
+  return new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function log(containerId, type, msg) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-ts">${ts()}</span><span class="log-${type}">${escHtml(msg)}</span>`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Panel nav ─────────────────────────────────────────────────
+function showPanel(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  document.querySelector(`[data-panel="${id}"]`).classList.add('active');
+
+  if (id === 'users') refreshUsersPanel();
+  if (id === 'hierarchy') refreshHierPanel();
+}
+
+// ── Auth ──────────────────────────────────────────────────────
+async function doLogin() {
+  const btn = document.getElementById('loginBtn');
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  try {
+    const res = await api('POST', '/auth/login', {
+      email: document.getElementById('loginEmail').value.trim(),
+      password: document.getElementById('loginPassword').value,
+    });
+    state.token = res.data.token;
+    state.me = res.data.user;
+    await loadBootstrap();
+    setConnected();
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  }
+}
+
+async function loadBootstrap() {
+  const [rolesRes, verticalsRes, usersRes, teamsRes] = await Promise.allSettled([
+    api('GET', '/roles'),
+    api('GET', '/verticals'),
+    api('GET', '/users?pageSize=200'),
+    api('GET', '/teams'),
+  ]);
+
+  state.roles     = rolesRes.status     === 'fulfilled' ? (rolesRes.value.data || [])               : [];
+  state.verticals = verticalsRes.status === 'fulfilled' ? (verticalsRes.value.data || [])           : [];
+  state.users     = usersRes.status     === 'fulfilled' ? (usersRes.value.data?.users || [])        : [];
+  state.teams     = teamsRes.status     === 'fulfilled' ? (teamsRes.value.data || [])               : [];
+}
+
+function setConnected() {
+  document.getElementById('statusDot').className = 'status-dot ok';
+  document.getElementById('statusLabel').textContent = state.me?.name || 'connected';
+  document.getElementById('loggedInAs').textContent = state.me?.email || '';
+  document.getElementById('logoutBtn').style.display = '';
+
+  document.getElementById('loginSuccess').style.display = '';
+  document.getElementById('connectedAs').textContent =
+    `Signed in as ${state.me?.name} (${state.me?.role?.name || state.me?.roleId})`;
+  document.getElementById('rolesCount').textContent     = state.roles.length;
+  document.getElementById('verticalsCount').textContent = state.verticals.length;
+  document.getElementById('usersCount').textContent     = state.users.length;
+}
+
+function logout() {
+  state = { token: null, me: null, roles: [], verticals: [], teams: [], users: [] };
+  document.getElementById('statusDot').className = 'status-dot';
+  document.getElementById('statusLabel').textContent = 'not connected';
+  document.getElementById('loggedInAs').textContent = '';
+  document.getElementById('logoutBtn').style.display = 'none';
+  document.getElementById('loginSuccess').style.display = 'none';
+  document.getElementById('loginError').style.display = 'none';
+  showPanel('login');
+}
+
+// ── Create Users panel ────────────────────────────────────────
+let userRowCount = 0;
+
+function refreshUsersPanel() {
+  const isAuth = !!state.token;
+  document.getElementById('usersAuthWarn').style.display = isAuth ? 'none' : '';
+  document.getElementById('usersForm').style.display = isAuth ? '' : 'none';
+  if (isAuth && document.getElementById('userRows').children.length === 0) {
+    addUserRow();
+  }
+}
+
+function roleOptions(selected) {
+  if (!state.roles.length) return '<option value="">loading…</option>';
+  return state.roles.map(r =>
+    `<option value="${r.id}" ${selected === r.id ? 'selected' : ''}>${r.name}</option>`
+  ).join('');
+}
+
+function addUserRow() {
+  const id = ++userRowCount;
+  const row = document.createElement('div');
+  row.className = 'user-row';
+  row.id = 'ur-' + id;
+  row.innerHTML = `
+    <input type="text"  id="ur-name-${id}"  placeholder="Full name" />
+    <input type="email" id="ur-email-${id}" placeholder="user@email.com" />
+    <select id="ur-role-${id}">${roleOptions()}</select>
+    <input type="text"  id="ur-desig-${id}" placeholder="e.g. Director" />
+    <button class="del-btn" onclick="removeRow('ur-${id}')">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  `;
+  document.getElementById('userRows').appendChild(row);
+}
+
+function removeRow(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+async function submitUsers() {
+  const rows = [...document.getElementById('userRows').children];
+  const btn = document.getElementById('submitUsersBtn');
+  const logSection = document.getElementById('usersLogSection');
+  const logEl = document.getElementById('usersLog');
+  logEl.innerHTML = '';
+  logSection.style.display = '';
+  btn.disabled = true;
+
+  const users = rows.map(row => {
+    const id = row.id.replace('ur-', '');
+    return {
+      name:        document.getElementById(`ur-name-${id}`)?.value.trim() || '',
+      email:       document.getElementById(`ur-email-${id}`)?.value.trim() || '',
+      roleId:      document.getElementById(`ur-role-${id}`)?.value || '',
+      designation: document.getElementById(`ur-desig-${id}`)?.value.trim() || undefined,
+    };
+  }).filter(u => u.name || u.email);
+
+  if (!users.length) {
+    log('usersLog', 'warn', 'No rows to submit.');
+    btn.disabled = false;
+    return;
+  }
+
+  let ok = 0, err = 0;
+  const progress = document.getElementById('usersProgress');
+
+  for (let i = 0; i < users.length; i++) {
+    const u = users[i];
+    progress.style.width = Math.round(((i + 1) / users.length) * 100) + '%';
+    try {
+      const res = await api('POST', '/users', {
+        name: u.name, email: u.email, roleId: u.roleId,
+        ...(u.designation ? { designation: u.designation } : {})
+      });
+      log('usersLog', 'ok', `[${i+1}/${users.length}] Created: ${u.name} <${u.email}>`);
+      ok++;
+      // Refresh local users list for hierarchy panel
+      state.users.push(res.data);
+    } catch (e) {
+      log('usersLog', 'err', `[${i+1}/${users.length}] Failed ${u.email}: ${e.message}`);
+      err++;
+    }
+  }
+
+  document.getElementById('usersCount').textContent = state.users.length;
+  document.getElementById('usersSummaryOk').textContent = `${ok} created`;
+  const errTag = document.getElementById('usersSummaryErr');
+  if (err) { errTag.textContent = `${err} failed`; errTag.style.display = ''; }
+  else errTag.style.display = 'none';
+
+  btn.disabled = false;
+}
+
+// ── Hierarchy panel ───────────────────────────────────────────
+let memberRowCount = 0;
+
+function refreshHierPanel() {
+  const isAuth = !!state.token;
+  document.getElementById('hierAuthWarn').style.display = isAuth ? 'none' : '';
+  document.getElementById('hierForm').style.display = isAuth ? '' : 'none';
+  if (!isAuth) return;
+
+  // Populate vertical select
+  const vs = document.getElementById('verticalSelect');
+  const vsVal = vs.value;
+  vs.innerHTML = '<option value="">Select vertical…</option>' +
+    state.verticals.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
+  if (vsVal) vs.value = vsVal;
+
+  // Populate team select
+  const ts = document.getElementById('teamSelect');
+  const tsVal = ts.value;
+  ts.innerHTML = '<option value="">New team</option>' +
+    state.teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  if (tsVal) ts.value = tsVal;
+
+  // Re-render member rows to refresh user dropdowns
+  const existing = [...document.getElementById('memberRows').children];
+  if (existing.length === 0) addMemberRow();
+  else rebuildMemberSelects();
+
+  renderTree();
+}
+
+function onTeamSelect() {
+  const teamId = document.getElementById('teamSelect').value;
+  if (!teamId) {
+    document.getElementById('teamName').value = '';
+    return;
+  }
+  const team = state.teams.find(t => t.id === teamId);
+  if (team) document.getElementById('teamName').value = team.name;
+}
+
+function getUserOptions(selected) {
+  if (!state.users.length) return '<option value="">no users loaded</option>';
+  return '<option value="">— pick user —</option>' +
+    state.users.map(u => `<option value="${u.id}" ${selected === u.id ? 'selected' : ''}>${u.name}</option>`).join('');
+}
+
+function getReportsToOptions(selected, excludeId) {
+  const rows = [...document.getElementById('memberRows').children];
+  const inPanel = rows.map(row => {
+    const id = row.id.replace('mr-', '');
+    const uid = document.getElementById(`mr-user-${id}`)?.value;
+    const user = state.users.find(u => u.id === uid);
+    return user ? { id: uid, name: user.name } : null;
+  }).filter(Boolean).filter(u => u.id !== excludeId);
+
+  if (!inPanel.length) return '<option value="">— none (top level) —</option>';
+  return '<option value="">— none (top level) —</option>' +
+    inPanel.map(u => `<option value="${u.id}" ${selected === u.id ? 'selected' : ''}>${u.name}</option>`).join('');
+}
+
+function addMemberRow() {
+  const id = ++memberRowCount;
+  const row = document.createElement('div');
+  row.className = 'member-row';
+  row.id = 'mr-' + id;
+  row.innerHTML = `
+    <select id="mr-user-${id}" onchange="onMemberChange()">${getUserOptions()}</select>
+    <input type="text" id="mr-role-${id}" placeholder="LEAD / MEMBER" value="MEMBER" />
+    <select id="mr-reports-${id}" onchange="renderTree()">${getReportsToOptions()}</select>
+    <button class="del-btn" onclick="removeMemberRow('mr-${id}')">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  `;
+  document.getElementById('memberRows').appendChild(row);
+  renderTree();
+}
+
+function removeMemberRow(id) {
+  const el = document.getElementById(id);
+  if (el) { el.remove(); rebuildMemberSelects(); renderTree(); }
+}
+
+function onMemberChange() { rebuildMemberSelects(); renderTree(); }
+
+function rebuildMemberSelects() {
+  const rows = [...document.getElementById('memberRows').children];
+  rows.forEach(row => {
+    const id = row.id.replace('mr-', '');
+    const uid = document.getElementById(`mr-user-${id}`)?.value;
+    const reportsEl = document.getElementById(`mr-reports-${id}`);
+    if (!reportsEl) return;
+    const currentReportsTo = reportsEl.value;
+    reportsEl.innerHTML = getReportsToOptions(currentReportsTo, uid);
+  });
+}
+
+function renderTree() {
+  const preview = document.getElementById('treePreview');
+  const rows = [...document.getElementById('memberRows').children];
+
+  const members = rows.map(row => {
+    const id = row.id.replace('mr-', '');
+    const userId     = document.getElementById(`mr-user-${id}`)?.value;
+    const role       = document.getElementById(`mr-role-${id}`)?.value;
+    const reportsTo  = document.getElementById(`mr-reports-${id}`)?.value || null;
+    const user = state.users.find(u => u.id === userId);
+    return user ? { userId, name: user.name, role, reportsTo } : null;
+  }).filter(Boolean);
+
+  if (!members.length) {
+    preview.innerHTML = '<span style="color:var(--muted)">Add members above to preview the org chart.</span>';
+    return;
+  }
+
+  // Build tree
+  function renderNode(userId, depth) {
+    const m = members.find(x => x.userId === userId);
+    if (!m) return '';
+    const reports = members.filter(x => x.reportsTo === userId);
+    let html = `<div class="tree-line">
+      ${depth > 0 ? '<span class="tree-indent">'.repeat(depth) + '└─' + '</span>' : ''}
+      <span class="name">${escHtml(m.name)}</span>
+      <span class="role-tag">${escHtml(m.role || 'MEMBER')}</span>
+    </div>`;
+    reports.forEach(r => { html += renderNode(r.userId, depth + 1); });
+    return html;
+  }
+
+  const roots = members.filter(m => !m.reportsTo);
+  if (!roots.length) {
+    preview.innerHTML = '<span style="color:var(--warn)">No top-level members (all have "Reports to" set).</span>';
+    return;
+  }
+  preview.innerHTML = roots.map(r => renderNode(r.userId, 0)).join('');
+}
+
+async function submitHierarchy() {
+  const btn = document.getElementById('submitHierBtn');
+  const logSection = document.getElementById('hierLogSection');
+  const logEl = document.getElementById('hierLog');
+  logEl.innerHTML = '';
+  logSection.style.display = '';
+  btn.disabled = true;
+
+  const teamName   = document.getElementById('teamName').value.trim();
+  const teamId     = document.getElementById('teamSelect').value || undefined;
+  const verticalId = document.getElementById('verticalSelect').value || undefined;
+
+  const rows = [...document.getElementById('memberRows').children];
+  const members = rows.map(row => {
+    const id = row.id.replace('mr-', '');
+    const userId     = document.getElementById(`mr-user-${id}`)?.value;
+    const memberRole = document.getElementById(`mr-role-${id}`)?.value || 'MEMBER';
+    const reportsTo  = document.getElementById(`mr-reports-${id}`)?.value || null;
+    if (!userId) return null;
+    return { userId, memberRole, reportsToUserId: reportsTo || null };
+  }).filter(Boolean);
+
+  if (!members.length) { log('hierLog', 'warn', 'No members added.'); btn.disabled = false; return; }
+  if (!teamName && !teamId) { log('hierLog', 'warn', 'Enter a team name or pick an existing team.'); btn.disabled = false; return; }
+
+  const payload = {
+    members,
+    ...(teamId     ? { teamId }     : {}),
+    ...(teamName   ? { name: teamName }   : {}),
+    ...(verticalId ? { verticalId } : {}),
+  };
+
+  log('hierLog', 'info', `Submitting hierarchy for "${teamName || teamId}" with ${members.length} members…`);
+  try {
+    const res = await api('POST', '/teams/hierarchy', payload);
+    log('hierLog', 'ok', `Done! Team "${res.data?.name}" (${res.data?.id}) with ${members.length} members.`);
+    // Refresh teams list
+    if (!state.teams.find(t => t.id === res.data?.id)) {
+      state.teams.push(res.data);
+      const ts = document.getElementById('teamSelect');
+      ts.innerHTML += `<option value="${res.data.id}">${res.data.name}</option>`;
+    }
+  } catch (e) {
+    log('hierLog', 'err', `Failed: ${e.message}`);
+  }
+  btn.disabled = false;
+}
+
+// ── Init ──────────────────────────────────────────────────────
+// Auto-detect base URL: when served from the backend itself, use same origin
+(function () {
+  const loc = window.location;
+  if (loc.hostname !== 'localhost' && loc.hostname !== '127.0.0.1') {
+    document.getElementById('baseUrl').value = loc.origin;
+  }
+})();
+
+refreshUsersPanel();
+refreshHierPanel();
+</script>
+</body>
+</html>

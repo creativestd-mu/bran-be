@@ -92,6 +92,48 @@ async function ensureVerticalExists(verticalId: string) {
   if (!vertical) throw new HttpError(404, `Vertical not found: ${verticalId}`);
 }
 
+async function userCanManageProjects(roleId: string): Promise<boolean> {
+  const permission = await prisma.rolePermission.findFirst({
+    where: {
+      roleId,
+      permission: { name: "manage_projects" }
+    },
+    select: { roleId: true }
+  });
+
+  return Boolean(permission);
+}
+
+// Kept for potential future use (e.g. write-access gating).
+void userCanManageProjects;
+
+async function assertUserCanAccessProject(projectId: string) {
+  const project = await getProjectById(projectId);
+  if (!project) {
+    throw new HttpError(404, "Project not found");
+  }
+}
+
+export async function listAccessibleProjects() {
+  const projects = await listProjects();
+  return projects.map((project) => ({
+    ...project,
+    hierarchy: buildProjectHierarchy(project.members as ProjectListMember[])
+  }));
+}
+
+export async function getAccessibleProject(id: string) {
+  const project = await getProjectById(id);
+  if (!project) throw new HttpError(404, "Project not found");
+  return project;
+}
+
+async function ensureProjectExists(id: string) {
+  const project = await getProjectById(id);
+  if (!project) throw new HttpError(404, "Project not found");
+  return project;
+}
+
 export async function createTemporaryProject(input: {
   name: string;
   description?: string;
@@ -118,17 +160,11 @@ export async function createTemporaryProject(input: {
 }
 
 export async function listTemporaryProjects() {
-  const projects = await listProjects();
-  return projects.map((project) => ({
-    ...project,
-    hierarchy: buildProjectHierarchy(project.members as ProjectListMember[])
-  }));
+  return listAccessibleProjects();
 }
 
 export async function getTemporaryProject(id: string) {
-  const project = await getProjectById(id);
-  if (!project) throw new HttpError(404, "Project not found");
-  return project;
+  return getAccessibleProject(id);
 }
 
 export async function updateTemporaryProject(
@@ -144,7 +180,7 @@ export async function updateTemporaryProject(
     status?: string;
   }
 ) {
-  await getTemporaryProject(id);
+  await ensureProjectExists(id);
   if (input.verticalId) {
     await ensureVerticalExists(input.verticalId);
   }
@@ -161,7 +197,7 @@ export async function updateTemporaryProject(
 }
 
 export async function removeTemporaryProject(id: string) {
-  await getTemporaryProject(id);
+  await ensureProjectExists(id);
   return deleteProject(id);
 }
 
@@ -171,7 +207,7 @@ export async function addMemberToProject(input: {
   memberRole?: string;
   reportsToUserId?: string;
 }) {
-  await getTemporaryProject(input.projectId);
+  await ensureProjectExists(input.projectId);
 
   const user = await prisma.user.findUnique({ where: { id: input.userId } });
   if (!user) throw new HttpError(404, "User not found");
@@ -230,7 +266,7 @@ export async function addPhaseToProject(input: {
   status?: string;
   orderIndex?: number;
 }) {
-  await getTemporaryProject(input.projectId);
+  await ensureProjectExists(input.projectId);
   return createProjectPhase({
     projectId: input.projectId,
     name: input.name,

@@ -77,6 +77,8 @@ model User {
   adhocWork                 AdhocWork[]
   aiQueries                 AiQuery[]               @relation("AiQueryRequester")
   workUnits                 WorkUnit[]              @relation("WorkUnitOwner")
+  createdWorkUnits          WorkUnit[]              @relation("WorkUnitCreatedBy")
+  assignedWorkSteps         WorkStep[]              @relation("WorkStepAssignee")
   voiceRecordings           VoiceRecording[]        @relation("VoiceRecordingOwner")
   kpis                      UserKpi[]               @relation("UserKpiOwner")
   createdUserKpis           UserKpi[]               @relation("UserKpiCreatedBy")
@@ -170,6 +172,7 @@ model Project {
   members   ProjectMember[]
   phases    ProjectPhase[]
   contents  Content[]
+  workUnits WorkUnit[]
 
   @@index([createdById])
   @@index([verticalId])
@@ -364,6 +367,8 @@ model VoiceRecording {
 model WorkUnit {
   id                String    @id @default(uuid())
   userId            String
+  createdById       String?
+  projectId         String?
   audioRecordingId  String?
   title             String    @db.VarChar(500)
   context           String    @db.Text
@@ -376,10 +381,13 @@ model WorkUnit {
   updatedAt         DateTime  @updatedAt
 
   user           User            @relation("WorkUnitOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  createdBy      User?           @relation("WorkUnitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  project        Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   audioRecording VoiceRecording? @relation(fields: [audioRecordingId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   steps          WorkStep[]
 
   @@index([userId])
+  @@index([createdById])
   @@index([userId, createdAt])
   @@index([status])
   @@index([isPrivate])
@@ -387,19 +395,23 @@ model WorkUnit {
   @@index([firstDueAt])
   @@index([closedAt])
   @@index([audioRecordingId])
+  @@index([projectId])
 }
 
 model WorkStep {
   id          String    @id @default(uuid())
   workUnitId  String
+  assigneeId  String?
   description String    @db.Text
   deadline    DateTime?
   done        Boolean   @default(false)
   createdAt   DateTime  @default(now())
 
   workUnit WorkUnit @relation(fields: [workUnitId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  assignee User?    @relation("WorkStepAssignee", fields: [assigneeId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([workUnitId])
+  @@index([assigneeId])
   @@index([deadline])
 }
 

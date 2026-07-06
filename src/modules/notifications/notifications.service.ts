@@ -61,6 +61,11 @@ function buildIdeationLink(ideaId: string): string {
   return `${base}/ideation/ideas/${ideaId}`;
 }
 
+function buildWorkUnitLink(workUnitId: string): string {
+  if (!env.appUrl) return "";
+  return `${env.appUrl.replace(/\/$/, "")}/work/${workUnitId}`;
+}
+
 function buildNotificationCopy(input: NotifyNextStepInput) {
   const { content, fromNode, toNode, approvedOutput } = input;
   const title = `${fromNode.name} approved — ${toNode.name} is ready to start`;
@@ -571,3 +576,140 @@ export async function markAllRead(userId: string) {
 }
 
 export type CreateNotificationServiceInput = CreateNotificationInput;
+
+// ── Work unit / step assignment & overdue notifications ──
+
+export type NotifyWorkUnitAssignedInput = {
+  workUnitId: string;
+  workUnitTitle: string;
+  assignedToUserId: string;
+  createdByUser: { id: string; name: string };
+};
+
+export async function notifyWorkUnitAssigned(
+  input: NotifyWorkUnitAssignedInput
+): Promise<void> {
+  const link = buildWorkUnitLink(input.workUnitId);
+  const title = `${input.createdByUser.name} assigned you a work unit`;
+  const body = `"${input.workUnitTitle}" was assigned to you by ${input.createdByUser.name}.`;
+  const dedupeKey = `work_unit_assigned:${input.workUnitId}:${input.assignedToUserId}`;
+
+  const user = await prisma.user.findUnique({
+    where: { id: input.assignedToUserId, isActive: true },
+    select: { id: true, email: true, name: true }
+  });
+  if (!user) return;
+
+  const notification = await createNotification({
+    userId: user.id,
+    kind: "WORK_UNIT_ASSIGNED",
+    title,
+    body,
+    data: { workUnitId: input.workUnitId, workUnitTitle: input.workUnitTitle, createdByUser: input.createdByUser, link: link || undefined },
+    dedupeKey
+  });
+
+  if (!notification.emailSentAt && user.email) {
+    const emailLines = [body, ...(link ? ["", `Open in app: ${link}`] : [])];
+    const sent = await sendEmail({
+      to: user.email,
+      subject: title,
+      text: emailLines.join("\n"),
+      html: `<p>${escapeHtml(body)}</p>${link ? `<p><a href="${escapeAttr(link)}">Open in Bran</a></p>` : ""}`
+    });
+    if (sent) await markEmailSent(notification.id);
+  }
+}
+
+export type NotifyWorkStepAssignedInput = {
+  workUnitId: string;
+  workUnitTitle: string;
+  stepDescription: string;
+  stepDeadline: Date | null;
+  assignedToUserId: string;
+  assignedByUser: { id: string; name: string };
+};
+
+export async function notifyWorkStepAssigned(
+  input: NotifyWorkStepAssignedInput
+): Promise<void> {
+  const link = buildWorkUnitLink(input.workUnitId);
+  const deadlineNote = input.stepDeadline
+    ? ` (due ${input.stepDeadline.toLocaleDateString("en-IN")})`
+    : "";
+  const title = `${input.assignedByUser.name} assigned you a task`;
+  const body = `You were assigned a step on "${input.workUnitTitle}"${deadlineNote}: "${input.stepDescription}".`;
+  const dedupeKey = `work_step_assigned:${input.workUnitId}:${input.assignedToUserId}:${input.stepDescription.slice(0, 60)}`;
+
+  const user = await prisma.user.findUnique({
+    where: { id: input.assignedToUserId, isActive: true },
+    select: { id: true, email: true, name: true }
+  });
+  if (!user) return;
+
+  const notification = await createNotification({
+    userId: user.id,
+    kind: "WORK_STEP_ASSIGNED",
+    title,
+    body,
+    data: { workUnitId: input.workUnitId, workUnitTitle: input.workUnitTitle, stepDescription: input.stepDescription, assignedByUser: input.assignedByUser, link: link || undefined },
+    dedupeKey
+  });
+
+  if (!notification.emailSentAt && user.email) {
+    const emailLines = [body, ...(link ? ["", `Open in app: ${link}`] : [])];
+    const sent = await sendEmail({
+      to: user.email,
+      subject: title,
+      text: emailLines.join("\n"),
+      html: `<p>${escapeHtml(body)}</p>${link ? `<p><a href="${escapeAttr(link)}">Open in Bran</a></p>` : ""}`
+    });
+    if (sent) await markEmailSent(notification.id);
+  }
+}
+
+export type NotifyWorkStepOverdueInput = {
+  workUnitId: string;
+  workUnitTitle: string;
+  stepId: string;
+  stepDescription: string;
+  stepDeadline: Date;
+  recipientUserId: string;
+  overdueDate: string; // YYYY-MM-DD — used in dedupeKey to fire once per day
+};
+
+export async function notifyWorkStepOverdue(
+  input: NotifyWorkStepOverdueInput
+): Promise<void> {
+  const link = buildWorkUnitLink(input.workUnitId);
+  const deadlineStr = input.stepDeadline.toLocaleDateString("en-IN");
+  const title = `Overdue task: "${input.stepDescription.slice(0, 60)}"`;
+  const body = `A step on "${input.workUnitTitle}" was due on ${deadlineStr} and is still open.`;
+  const dedupeKey = `work_step_overdue:${input.stepId}:${input.overdueDate}`;
+
+  const user = await prisma.user.findUnique({
+    where: { id: input.recipientUserId, isActive: true },
+    select: { id: true, email: true }
+  });
+  if (!user) return;
+
+  const notification = await createNotification({
+    userId: user.id,
+    kind: "WORK_STEP_OVERDUE",
+    title,
+    body,
+    data: { workUnitId: input.workUnitId, workUnitTitle: input.workUnitTitle, stepId: input.stepId, stepDescription: input.stepDescription, stepDeadline: input.stepDeadline, link: link || undefined },
+    dedupeKey
+  });
+
+  if (!notification.emailSentAt && user.email) {
+    const emailLines = [body, ...(link ? ["", `Open in app: ${link}`] : [])];
+    const sent = await sendEmail({
+      to: user.email,
+      subject: title,
+      text: emailLines.join("\n"),
+      html: `<p>${escapeHtml(body)}</p>${link ? `<p><a href="${escapeAttr(link)}">Open in Bran</a></p>` : ""}`
+    });
+    if (sent) await markEmailSent(notification.id);
+  }
+}

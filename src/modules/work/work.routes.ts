@@ -10,16 +10,17 @@ import {
   createWorkUnitSchema,
   deadlinesQuerySchema,
   listWorkUnitsQuerySchema,
+  reassignWorkUnitAssignmentsSchema,
   updateWorkUnitSchema
 } from "./work.schemas";
 import {
-  assertCanView,
   checkOverdueAndNotify,
   createWorkUnit,
   createWorkUnitsFromAudio,
   getMyDeadlines,
   getWorkUnitById,
   listWorkUnits,
+  reassignWorkUnitAssignments,
   removeWorkUnit,
   updateWorkUnit
 } from "./work.service";
@@ -115,8 +116,27 @@ workRouter.get("/", async (req, res, next) => {
 
 workRouter.get("/:id", async (req, res, next) => {
   try {
-    const unit = await getWorkUnitById(param(req.params.id));
-    assertCanView(unit, req.user!.userId);
+    const unit = await getWorkUnitById(
+      param(req.params.id),
+      req.user!.userId,
+      req.user!.roleName
+    );
+    res.status(200).json({ success: true, data: unit });
+  } catch (error) {
+    next(error);
+  }
+});
+
+workRouter.patch("/:id/assignments", async (req, res, next) => {
+  try {
+    const id = param(req.params.id);
+    const payload = reassignWorkUnitAssignmentsSchema.parse(req.body);
+    const unit = await reassignWorkUnitAssignments(
+      id,
+      req.user!.userId,
+      req.user!.roleName,
+      payload
+    );
     res.status(200).json({ success: true, data: unit });
   } catch (error) {
     next(error);

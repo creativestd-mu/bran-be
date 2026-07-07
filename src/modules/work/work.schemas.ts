@@ -52,3 +52,21 @@ export const listWorkUnitsQuerySchema = z.object({
 export const deadlinesQuerySchema = z.object({
   date: z.string().datetime().optional()
 });
+
+export const reassignWorkUnitAssignmentsSchema = z
+  .object({
+    ownerUserId: z.string().uuid().nullable().optional(),
+    stepAssignments: z
+      .array(
+        z.object({
+          stepId: z.string().uuid(),
+          assigneeId: z.string().uuid().nullable()
+        })
+      )
+      .max(50)
+      .optional()
+  })
+  .refine(
+    (data) => data.ownerUserId !== undefined || (data.stepAssignments?.length ?? 0) > 0,
+    "Provide ownerUserId and/or at least one stepAssignment"
+  );

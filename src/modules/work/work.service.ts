@@ -25,11 +25,14 @@ import {
   createWorkUnit as createWorkUnitInDb,
   deleteWorkUnit as deleteWorkUnitInDb,
   findOverdueStepsForUser,
+  findWorkStepById,
   findWorkStepsByUserAndDeadlineRange,
   findWorkUnitById,
   findWorkUnits,
+  updateWorkStepAssignee,
   updateWorkUnit as updateWorkUnitInDb
 } from "./work.repository";
+import { enrichWorkUnitWithTagging } from "./work.tagging";
 import { listAllProjectSummaries } from "../projects/projects.repository";
 import { prisma } from "../../lib/prisma";
 
@@ -77,28 +80,39 @@ function canViewAll(roleName: string): boolean {
   return roleName === "admin" || roleName === "manager" || roleName === "superadmin";
 }
 
+function canAccessWorkUnit(
+  unit: { userId: string; createdById?: string | null; isPrivate: boolean },
+  viewerUserId: string,
+  roleName: string
+): boolean {
+  if (unit.userId === viewerUserId) return true;
+  if (unit.createdById === viewerUserId) return true;
+  if (unit.isPrivate) return false;
+  return canViewAll(roleName);
+}
+
 export function assertCanView(
-  unit: { userId: string; isPrivate: boolean },
-  viewerUserId: string
+  unit: { userId: string; createdById?: string | null; isPrivate: boolean },
+  viewerUserId: string,
+  roleName?: string
 ): void {
-  if (unit.userId !== viewerUserId) {
-    throw new HttpError(403, "Not authorized to view this work unit");
-  }
+  if (canAccessWorkUnit(unit, viewerUserId, roleName ?? "")) return;
+  throw new HttpError(403, "Not authorized to view this work unit");
 }
 
 export function assertCanModify(
-  unit: { userId: string; isPrivate: boolean },
+  unit: { userId: string; createdById?: string | null; isPrivate: boolean },
   viewerUserId: string,
   roleName: string
 ): void {
   if (unit.isPrivate) {
-    if (unit.userId !== viewerUserId) {
+    if (unit.userId !== viewerUserId && unit.createdById !== viewerUserId) {
       throw new HttpError(403, "Not authorized to modify this work unit");
     }
     return;
   }
 
-  if (unit.userId !== viewerUserId && !canViewAll(roleName)) {
+  if (!canAccessWorkUnit(unit, viewerUserId, roleName)) {
     throw new HttpError(403, "Not authorized to modify this work unit");
   }
 }
@@ -143,6 +157,7 @@ function mapSteps(
     done?: boolean;
     assigneeId?: string | null;
     assigneeSpokenName?: string | null;
+    sourceExcerpt?: string | null;
   }>
 ) {
   return (steps ?? []).map((step) => ({
@@ -150,8 +165,20 @@ function mapSteps(
     deadline: parseOptionalDate(step.deadline) ?? null,
     done: step.done ?? false,
     assigneeId: step.assigneeId ?? null,
-    assigneeSpokenName: step.assigneeSpokenName ?? null
+    assigneeSpokenName: step.assigneeSpokenName ?? null,
+    sourceExcerpt: step.sourceExcerpt ?? null
   }));
+}
+
+function formatWorkUnitResponse(
+  unit: NonNullable<Awaited<ReturnType<typeof findWorkUnitById>>>,
+  transcript?: string | null
+) {
+  const formatted = formatWorkUnitForResponse(unit);
+  return enrichWorkUnitWithTagging(
+    formatted as NonNullable<Awaited<ReturnType<typeof findWorkUnitById>>>,
+    transcript
+  );
 }
 
 function buildWorkUnitWriteFields(options: {
@@ -197,6 +224,7 @@ export async function createWorkUnit(
     projectId?: string | null;
     assignedToUserId?: string | null;
     assigneeSpokenName?: string | null;
+    sourceExcerpt?: string | null;
     audioRecordingId?: string | null;
     steps?: Array<{
       description: string;
@@ -204,6 +232,7 @@ export async function createWorkUnit(
       done?: boolean;
       assigneeId?: string | null;
       assigneeSpokenName?: string | null;
+      sourceExcerpt?: string | null;
     }>;
   }
 ) {
@@ -223,6 +252,7 @@ export async function createWorkUnit(
     context: data.context,
     isPrivate: data.isPrivate ?? false,
     assigneeSpokenName: data.assigneeSpokenName ?? null,
+    sourceExcerpt: data.sourceExcerpt ?? null,
     ...lifecycle,
     steps
   });
@@ -265,13 +295,16 @@ export async function createWorkUnit(
   }
 
   void indexWorkUnitForSearch(unit.id);
-  return formatWorkUnitForResponse(unit);
+  return formatWorkUnitResponse(unit);
 }
 
-export async function getWorkUnitById(id: string) {
+export async function getWorkUnitById(id: string, viewerUserId?: string, roleName?: string) {
   const unit = await findWorkUnitById(id);
   if (!unit) throw new HttpError(404, "Work unit not found");
-  return formatWorkUnitForResponse(unit);
+  if (viewerUserId) {
+    assertCanView(unit, viewerUserId, roleName);
+  }
+  return formatWorkUnitResponse(unit);
 }
 
 export async function listWorkUnits(options: {
@@ -296,7 +329,7 @@ export async function listWorkUnits(options: {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   return {
-    items: items.map((unit) => formatWorkUnitForResponse(unit)),
+    items: items.map((unit) => formatWorkUnitResponse(unit)),
     pagination: { page, pageSize, total, totalPages, hasNextPage: page < totalPages }
   };
 }
@@ -318,6 +351,7 @@ export async function updateWorkUnit(
       done?: boolean;
       assigneeId?: string | null;
       assigneeSpokenName?: string | null;
+      sourceExcerpt?: string | null;
     }>;
   }
 ) {
@@ -339,6 +373,7 @@ export async function updateWorkUnit(
         description: string;
         assigneeId?: string | null;
         assigneeSpokenName?: string | null;
+        sourceExcerpt?: string | null;
       }
     ])
   );
@@ -349,6 +384,7 @@ export async function updateWorkUnit(
       const oldStep = oldStepsByDescription.get(normalizeStepDescription(step.description));
       const assigneeSpokenName =
         step.assigneeSpokenName ?? oldStep?.assigneeSpokenName ?? null;
+      const sourceExcerpt = step.sourceExcerpt ?? oldStep?.sourceExcerpt ?? null;
 
       if (
         oldStep?.assigneeSpokenName &&
@@ -364,7 +400,8 @@ export async function updateWorkUnit(
 
       return {
         ...step,
-        assigneeSpokenName
+        assigneeSpokenName,
+        sourceExcerpt
       };
     });
   }
@@ -448,11 +485,109 @@ export async function updateWorkUnit(
   }
 
   void indexWorkUnitForSearch(unit!.id);
-  return formatWorkUnitForResponse(unit!);
+  return formatWorkUnitResponse(unit!);
+}
+
+export async function reassignWorkUnitAssignments(
+  workUnitId: string,
+  viewerUserId: string,
+  roleName: string,
+  data: {
+    ownerUserId?: string | null;
+    stepAssignments?: Array<{ stepId: string; assigneeId: string | null }>;
+  }
+) {
+  const existingRaw = await findWorkUnitById(workUnitId);
+  if (!existingRaw) throw new HttpError(404, "Work unit not found");
+  assertCanModify(existingRaw, viewerUserId, roleName);
+  if (existingRaw.status === "CLOSED") {
+    throw new HttpError(409, CLOSED_LOCK_MESSAGE);
+  }
+
+  const preferenceOwnerId = resolvePreferenceOwnerId(existingRaw);
+  let ownerReassigned = false;
+  let nextOwnerUserId = existingRaw.userId;
+  let nextCreatedById = existingRaw.createdById;
+
+  if (data.ownerUserId !== undefined) {
+    const resolvedOwnerUserId = data.ownerUserId ?? viewerUserId;
+    if (resolvedOwnerUserId !== existingRaw.userId) {
+      ownerReassigned = true;
+      nextOwnerUserId = resolvedOwnerUserId;
+      nextCreatedById = resolvedOwnerUserId !== viewerUserId ? viewerUserId : null;
+
+      if (existingRaw.assigneeSpokenName) {
+        void learnAssignmentPreference({
+          ownerUserId: preferenceOwnerId,
+          spokenName: existingRaw.assigneeSpokenName,
+          userId: resolvedOwnerUserId
+        });
+      }
+    }
+  }
+
+  const assignedBy = await prisma.user.findUnique({
+    where: { id: viewerUserId },
+    select: { id: true, name: true }
+  });
+
+  if (data.stepAssignments?.length) {
+    for (const assignment of data.stepAssignments) {
+      const step = await findWorkStepById(workUnitId, assignment.stepId);
+      if (!step) {
+        throw new HttpError(404, `Work step not found: ${assignment.stepId}`);
+      }
+
+      const previousAssigneeId = step.assigneeId;
+      if (assignment.assigneeId === previousAssigneeId) continue;
+
+      if (step.assigneeSpokenName && assignment.assigneeId) {
+        void learnAssignmentPreference({
+          ownerUserId: preferenceOwnerId,
+          spokenName: step.assigneeSpokenName,
+          userId: assignment.assigneeId
+        });
+      }
+
+      await updateWorkStepAssignee(workUnitId, assignment.stepId, assignment.assigneeId);
+
+      if (assignment.assigneeId && assignedBy && assignment.assigneeId !== viewerUserId) {
+        void notifyWorkStepAssigned({
+          workUnitId,
+          workUnitTitle: existingRaw.title,
+          stepDescription: step.description,
+          stepDeadline: step.deadline,
+          assignedToUserId: assignment.assigneeId,
+          assignedByUser: assignedBy
+        });
+      }
+    }
+  }
+
+  if (ownerReassigned) {
+    await updateWorkUnitInDb(workUnitId, {
+      userId: nextOwnerUserId,
+      createdById: nextCreatedById
+    });
+
+    if (nextOwnerUserId !== viewerUserId && assignedBy) {
+      void notifyWorkUnitAssigned({
+        workUnitId,
+        workUnitTitle: existingRaw.title,
+        assignedToUserId: nextOwnerUserId,
+        createdByUser: assignedBy
+      });
+    }
+  }
+
+  const unit = await findWorkUnitById(workUnitId);
+  void indexWorkUnitForSearch(workUnitId);
+  return formatWorkUnitResponse(unit!);
 }
 
 export async function removeWorkUnit(id: string, viewerUserId: string, roleName: string) {
-  const existing = await getWorkUnitById(id);
+  const existing = await findWorkUnitById(id);
+  if (!existing) throw new HttpError(404, "Work unit not found");
   assertCanModify(existing, viewerUserId, roleName);
   if (existing.status === "CLOSED") {
     throw new HttpError(409, CLOSED_LOCK_MESSAGE);
@@ -522,12 +657,14 @@ export async function createWorkUnitsFromAudio(
       projectId,
       assignedToUserId,
       assigneeSpokenName: unit.assigneeName ?? null,
+      sourceExcerpt: unit.sourceExcerpt ?? null,
       audioRecordingId: recording.id,
       steps: unit.steps.map((step) => ({
         description: step.description,
         deadline: step.deadline,
         assigneeId: resolveUserIdFromName(step.assigneeName, availableUsers, resolutionContext),
-        assigneeSpokenName: step.assigneeName ?? null
+        assigneeSpokenName: step.assigneeName ?? null,
+        sourceExcerpt: step.sourceExcerpt ?? null
       }))
     });
     workUnits.push(created);
@@ -536,7 +673,8 @@ export async function createWorkUnitsFromAudio(
   return {
     transcript: sarvam.transcript,
     audioRecording: recording,
-    workUnits
+    workUnits,
+    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings)
   };
 }
 

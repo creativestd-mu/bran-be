@@ -8,6 +8,9 @@ const workUnitInclude = {
   user: { select: userSelect },
   createdBy: { select: userSelect },
   project: { select: { id: true, name: true, status: true } },
+  audioRecording: {
+    select: { id: true, transcript: true, originalFilename: true, createdAt: true }
+  },
   steps: {
     orderBy: { deadline: "asc" as const },
     include: { assignee: { select: userSelect } }
@@ -43,6 +46,7 @@ export async function createWorkUnit(data: {
   status: string;
   isPrivate: boolean;
   assigneeSpokenName?: string | null;
+  sourceExcerpt?: string | null;
   closedAt?: Date | null;
   nextDueAt?: Date | null;
   firstDueAt?: Date | null;
@@ -52,6 +56,7 @@ export async function createWorkUnit(data: {
     done?: boolean;
     assigneeId?: string | null;
     assigneeSpokenName?: string | null;
+    sourceExcerpt?: string | null;
   }>;
 }) {
   return prisma.workUnit.create({
@@ -65,6 +70,7 @@ export async function createWorkUnit(data: {
       status: data.status,
       isPrivate: data.isPrivate,
       assigneeSpokenName: data.assigneeSpokenName ?? null,
+      sourceExcerpt: data.sourceExcerpt ?? null,
       closedAt: data.closedAt ?? null,
       nextDueAt: data.nextDueAt ?? null,
       firstDueAt: data.firstDueAt ?? null,
@@ -74,7 +80,8 @@ export async function createWorkUnit(data: {
           deadline: step.deadline ?? null,
           done: step.done ?? false,
           assigneeId: step.assigneeId ?? null,
-          assigneeSpokenName: step.assigneeSpokenName ?? null
+          assigneeSpokenName: step.assigneeSpokenName ?? null,
+          sourceExcerpt: step.sourceExcerpt ?? null
         }))
       }
     },
@@ -166,6 +173,7 @@ export async function updateWorkUnit(
       done?: boolean;
       assigneeId?: string | null;
       assigneeSpokenName?: string | null;
+      sourceExcerpt?: string | null;
     }>;
   }
 ) {
@@ -184,7 +192,8 @@ export async function updateWorkUnit(
               deadline: step.deadline ?? null,
               done: step.done ?? false,
               assigneeId: step.assigneeId ?? null,
-              assigneeSpokenName: step.assigneeSpokenName ?? null
+              assigneeSpokenName: step.assigneeSpokenName ?? null,
+              sourceExcerpt: step.sourceExcerpt ?? null
             }))
           }
         }
@@ -197,6 +206,24 @@ export async function updateWorkUnit(
     where: { id },
     data: scalarFields,
     include: workUnitInclude
+  });
+}
+
+export async function findWorkStepById(workUnitId: string, stepId: string) {
+  return prisma.workStep.findFirst({
+    where: { id: stepId, workUnitId },
+    include: { assignee: { select: userSelect } }
+  });
+}
+
+export async function updateWorkStepAssignee(
+  workUnitId: string,
+  stepId: string,
+  assigneeId: string | null
+) {
+  return prisma.workStep.updateMany({
+    where: { id: stepId, workUnitId },
+    data: { assigneeId }
   });
 }
 

@@ -6,13 +6,19 @@ import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { WORK_STATUSES } from "./work.constants";
 
-export type ExtractedStep = { description: string; deadline: string | null; assigneeName?: string | null };
+export type ExtractedStep = {
+  description: string;
+  deadline: string | null;
+  assigneeName?: string | null;
+  sourceExcerpt?: string | null;
+};
 export type ExtractedWorkUnit = {
   title: string;
   context: string;
   status: "OPEN" | "CLOSED";
   projectName?: string | null;
   assigneeName?: string | null;
+  sourceExcerpt?: string | null;
   steps: ExtractedStep[];
 };
 
@@ -64,12 +70,14 @@ const extractedResponseSchema = z.object({
       status: z.enum(WORK_STATUSES).optional(),
       projectName: nullableText,
       assigneeName: nullableText,
+      sourceExcerpt: nullableText,
       steps: z
         .array(
           z.object({
             description: z.string().trim().min(1),
             deadline: z.string().nullable().optional(),
-            assigneeName: nullableText
+            assigneeName: nullableText,
+            sourceExcerpt: nullableText
           })
         )
         .optional()
@@ -151,12 +159,13 @@ export async function extractWorkUnitsFromTranscript(
   const systemPrompt =
     "You extract structured work units from spoken meeting notes or voice memos. " +
     "Return STRICT JSON only (no markdown, no prose) with shape: " +
-    '{ "workUnits": [ { "title": string, "context": string, "status": "OPEN"|"CLOSED", "projectName": string|null, "assigneeName": string|null, "steps": [ { "description": string, "deadline": string|null, "assigneeName": string|null } ] } ] }. ' +
+    '{ "workUnits": [ { "title": string, "context": string, "status": "OPEN"|"CLOSED", "projectName": string|null, "assigneeName": string|null, "sourceExcerpt": string|null, "steps": [ { "description": string, "deadline": string|null, "assigneeName": string|null, "sourceExcerpt": string|null } ] } ] }. ' +
     "Rules: one transcript may contain MULTIPLE work units; status must be OPEN unless clearly finished; " +
     projectHint +
     "projectName must be null unless the transcript clearly mentions one of the available projects; never invent a project name; " +
     teamHint +
     "assigneeName at the work unit level means the whole task is for that person; assigneeName on a step means only that step is for them; set to null if unclear; only use exact names from the team members list; " +
+    "sourceExcerpt must be a verbatim quote (one sentence or phrase) from the transcript that this work unit or step was derived from; use null only if no specific phrase can be identified; " +
     "deadline must be ISO-8601 resolved relative to the provided current date-time: use full datetime (YYYY-MM-DDTHH:mm:ss.sssZ) when a time is mentioned, otherwise date-only (YYYY-MM-DD), or null if none mentioned; " +
     "the first step should capture the action already taken or meeting held when relevant, and follow-up actions become subsequent steps.";
 
@@ -191,12 +200,14 @@ export async function extractWorkUnitsFromTranscript(
     status: unit.status ?? "OPEN",
     projectName: unit.projectName ?? null,
     assigneeName: unit.assigneeName ?? null,
+    sourceExcerpt: unit.sourceExcerpt ?? null,
     steps: (unit.steps ?? [])
       .filter((step) => step.description.trim().length > 0)
       .map((step) => ({
         description: step.description.trim(),
         deadline: parseDeadlineToIso(step.deadline ?? null),
-        assigneeName: step.assigneeName ?? null
+        assigneeName: step.assigneeName ?? null,
+        sourceExcerpt: step.sourceExcerpt ?? null
       }))
   }));
 }

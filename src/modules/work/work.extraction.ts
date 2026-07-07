@@ -55,7 +55,12 @@ const extractedResponseSchema = z.object({
   workUnits: z.array(
     z.object({
       title: z.string().trim().min(1),
-      context: z.string().trim().min(1),
+      // LLM sometimes returns an empty context when there's nothing beyond the title.
+      context: z
+        .string()
+        .trim()
+        .optional()
+        .transform((v) => v ?? ""),
       status: z.enum(WORK_STATUSES).optional(),
       projectName: nullableText,
       assigneeName: nullableText,
@@ -182,7 +187,7 @@ export async function extractWorkUnitsFromTranscript(
 
   return validated.data.workUnits.map((unit) => ({
     title: unit.title,
-    context: unit.context,
+    context: unit.context.trim().length > 0 ? unit.context : unit.title,
     status: unit.status ?? "OPEN",
     projectName: unit.projectName ?? null,
     assigneeName: unit.assigneeName ?? null,

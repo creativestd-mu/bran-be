@@ -65,7 +65,7 @@ const extractedResponseSchema = z.object({
       context: z
         .string()
         .trim()
-        .optional()
+        .nullish()
         .transform((v) => v ?? ""),
       status: z.enum(WORK_STATUSES).optional(),
       projectName: nullableText,

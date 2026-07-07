@@ -43,20 +43,28 @@ function getAiProvider(): "anthropic" | "gemini" {
   return env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
 }
 
+// Treat empty strings the same as null — LLMs frequently return "" instead of null.
+const nullableText = z
+  .string()
+  .trim()
+  .transform((v) => (v === "" ? null : v))
+  .nullable()
+  .optional();
+
 const extractedResponseSchema = z.object({
   workUnits: z.array(
     z.object({
       title: z.string().trim().min(1),
       context: z.string().trim().min(1),
       status: z.enum(WORK_STATUSES).optional(),
-      projectName: z.string().trim().min(1).nullable().optional(),
-      assigneeName: z.string().trim().min(1).nullable().optional(),
+      projectName: nullableText,
+      assigneeName: nullableText,
       steps: z
         .array(
           z.object({
             description: z.string().trim().min(1),
             deadline: z.string().nullable().optional(),
-            assigneeName: z.string().trim().min(1).nullable().optional()
+            assigneeName: nullableText
           })
         )
         .optional()
@@ -154,12 +162,21 @@ export async function extractWorkUnitsFromTranscript(
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripCodeFences(raw));
-  } catch {
+  } catch (err) {
+    console.error("[work.extraction] LLM returned non-JSON", {
+      rawLength: raw.length,
+      rawPreview: raw.slice(0, 500),
+      error: err instanceof Error ? err.message : String(err)
+    });
     throw new HttpError(502, "Could not extract work units from audio");
   }
 
   const validated = extractedResponseSchema.safeParse(parsed);
   if (!validated.success) {
+    console.error("[work.extraction] LLM JSON failed schema validation", {
+      issues: validated.error.flatten(),
+      rawPreview: raw.slice(0, 500)
+    });
     throw new HttpError(502, "Could not extract work units from audio");
   }
 

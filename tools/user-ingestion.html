@@ -221,7 +221,7 @@
   .member-rows { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
   .member-row {
     display: grid;
-    grid-template-columns: 220px 160px 220px 32px;
+    grid-template-columns: 1fr 140px 1fr 32px;
     gap: 8px;
     align-items: center;
   }
@@ -238,7 +238,7 @@
   .member-row input:focus, .member-row select:focus { outline: none; border-color: var(--accent); }
   .member-header {
     display: grid;
-    grid-template-columns: 220px 160px 220px 32px;
+    grid-template-columns: 1fr 140px 1fr 32px;
     gap: 8px;
     padding-bottom: 6px;
     border-bottom: 1px solid var(--border);
@@ -489,7 +489,7 @@
     <div class="panel" id="panel-hierarchy">
       <div class="panel-header">
         <div class="panel-title">Team Hierarchy</div>
-        <div class="panel-sub">Create or update a team with its full org chart in one shot.</div>
+        <div class="panel-sub">Assign each member a manager. Managers are auto-added to the team if needed.</div>
       </div>
 
       <div id="hierAuthWarn" style="display:none" class="section">
@@ -523,17 +523,37 @@
 
         <div class="section">
           <div class="section-head">
+            <div class="section-head-title">Quick manager assignment</div>
+          </div>
+          <div class="section-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end">
+              <div class="field" style="margin:0">
+                <label>Employee</label>
+                <select id="quickEmployee"></select>
+              </div>
+              <div class="field" style="margin:0">
+                <label>Manager</label>
+                <select id="quickManager"></select>
+              </div>
+              <button class="btn btn-primary" onclick="quickAssignManager()">Assign</button>
+            </div>
+            <p class="text-sub mt-2">Adds or updates the employee in the member list below with the chosen manager.</p>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
             <div>
               <div class="section-head-title">Members</div>
-              <div class="section-head-sub">All users must already exist. Leave "Reports to" blank for top-level members.</div>
+              <div class="section-head-sub">All users must already exist. Leave Manager blank for top-level members.</div>
             </div>
             <button class="btn btn-ghost btn-sm" onclick="addMemberRow()">+ Add member</button>
           </div>
           <div class="section-body">
             <div class="member-header">
-              <span>User</span>
+              <span>Member</span>
               <span>Role in team</span>
-              <span>Reports to</span>
+              <span>Manager</span>
               <span></span>
             </div>
             <div class="member-rows" id="memberRows"></div>
@@ -782,6 +802,9 @@ async function submitUsers() {
   if (err) { errTag.textContent = `${err} failed`; errTag.style.display = ''; }
   else errTag.style.display = 'none';
 
+  refreshQuickAssignSelects();
+  rebuildMemberSelects();
+
   btn.disabled = false;
 }
 
@@ -808,6 +831,8 @@ function refreshHierPanel() {
     state.teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   if (tsVal) ts.value = tsVal;
 
+  refreshQuickAssignSelects();
+
   // Re-render member rows to refresh user dropdowns
   const existing = [...document.getElementById('memberRows').children];
   if (existing.length === 0) addMemberRow();
@@ -816,51 +841,152 @@ function refreshHierPanel() {
   renderTree();
 }
 
+function refreshQuickAssignSelects() {
+  const employeeEl = document.getElementById('quickEmployee');
+  const managerEl = document.getElementById('quickManager');
+  if (!employeeEl || !managerEl) return;
+
+  const employeeVal = employeeEl.value;
+  const managerVal = managerEl.value;
+
+  const userOpts = state.users.length
+    ? '<option value="">— pick user —</option>' +
+      state.users.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('')
+    : '<option value="">no users loaded</option>';
+
+  employeeEl.innerHTML = userOpts;
+  managerEl.innerHTML = '<option value="">— none (top level) —</option>' +
+    state.users.map(u => `<option value="${u.id}">${escHtml(u.name)}</option>`).join('');
+
+  if (employeeVal) employeeEl.value = employeeVal;
+  if (managerVal) managerEl.value = managerVal;
+}
+
 function onTeamSelect() {
   const teamId = document.getElementById('teamSelect').value;
   if (!teamId) {
     document.getElementById('teamName').value = '';
+    document.getElementById('memberRows').innerHTML = '';
+    memberRowCount = 0;
+    addMemberRow();
+    renderTree();
     return;
   }
+
   const team = state.teams.find(t => t.id === teamId);
-  if (team) document.getElementById('teamName').value = team.name;
+  if (!team) return;
+
+  document.getElementById('teamName').value = team.name || '';
+  if (team.verticalId) document.getElementById('verticalSelect').value = team.verticalId;
+  else if (team.vertical?.id) document.getElementById('verticalSelect').value = team.vertical.id;
+
+  loadTeamMembers(team);
+}
+
+function loadTeamMembers(team) {
+  document.getElementById('memberRows').innerHTML = '';
+  memberRowCount = 0;
+
+  const members = team.members || [];
+  if (!members.length) {
+    addMemberRow();
+    return;
+  }
+
+  members.forEach(m => {
+    addMemberRow({
+      userId: m.userId,
+      memberRole: m.memberRole || 'MEMBER',
+      reportsToUserId: m.reportsToUserId || null,
+    });
+  });
+
+  rebuildMemberSelects();
+  renderTree();
 }
 
 function getUserOptions(selected) {
   if (!state.users.length) return '<option value="">no users loaded</option>';
-  return '<option value="">— pick user —</option>' +
-    state.users.map(u => `<option value="${u.id}" ${selected === u.id ? 'selected' : ''}>${u.name}</option>`).join('');
+  return '<option value="">— pick member —</option>' +
+    state.users.map(u => `<option value="${u.id}" ${selected === u.id ? 'selected' : ''}>${escHtml(u.name)}</option>`).join('');
 }
 
-function getReportsToOptions(selected, excludeId) {
-  const rows = [...document.getElementById('memberRows').children];
-  const inPanel = rows.map(row => {
-    const id = row.id.replace('mr-', '');
-    const uid = document.getElementById(`mr-user-${id}`)?.value;
-    const user = state.users.find(u => u.id === uid);
-    return user ? { id: uid, name: user.name } : null;
-  }).filter(Boolean).filter(u => u.id !== excludeId);
-
-  if (!inPanel.length) return '<option value="">— none (top level) —</option>';
+function getManagerOptions(selected, excludeUserId) {
+  const managers = state.users.filter(u => u.id !== excludeUserId);
+  if (!managers.length) return '<option value="">— none (top level) —</option>';
   return '<option value="">— none (top level) —</option>' +
-    inPanel.map(u => `<option value="${u.id}" ${selected === u.id ? 'selected' : ''}>${u.name}</option>`).join('');
+    managers.map(u => `<option value="${u.id}" ${selected === u.id ? 'selected' : ''}>${escHtml(u.name)}</option>`).join('');
 }
 
-function addMemberRow() {
+function findMemberRowByUserId(userId) {
+  return [...document.getElementById('memberRows').children].find(row => {
+    const id = row.id.replace('mr-', '');
+    return document.getElementById(`mr-user-${id}`)?.value === userId;
+  }) || null;
+}
+
+function ensureMemberInRows(userId, defaults = {}) {
+  if (!userId) return;
+  const existing = findMemberRowByUserId(userId);
+  if (existing) return existing.id.replace('mr-', '');
+
+  const rowId = addMemberRow({
+    userId,
+    memberRole: defaults.memberRole || 'LEAD',
+    reportsToUserId: defaults.reportsToUserId || null,
+  });
+  return rowId;
+}
+
+function quickAssignManager() {
+  const employeeId = document.getElementById('quickEmployee').value;
+  const managerId = document.getElementById('quickManager').value;
+
+  if (!employeeId) {
+    alert('Pick an employee first.');
+    return;
+  }
+  if (managerId && managerId === employeeId) {
+    alert('A user cannot be their own manager.');
+    return;
+  }
+
+  if (managerId) ensureMemberInRows(managerId, { memberRole: 'LEAD' });
+
+  let rowId;
+  const existing = findMemberRowByUserId(employeeId);
+  if (existing) {
+    rowId = existing.id.replace('mr-', '');
+  } else {
+    rowId = addMemberRow({ userId: employeeId, memberRole: 'MEMBER', reportsToUserId: managerId || null });
+  }
+
+  const reportsEl = document.getElementById(`mr-reports-${rowId}`);
+  if (reportsEl) {
+    reportsEl.innerHTML = getManagerOptions(managerId || '', employeeId);
+    reportsEl.value = managerId || '';
+  }
+
+  rebuildMemberSelects();
+  renderTree();
+}
+
+function addMemberRow(prefill = null) {
   const id = ++memberRowCount;
   const row = document.createElement('div');
   row.className = 'member-row';
   row.id = 'mr-' + id;
   row.innerHTML = `
-    <select id="mr-user-${id}" onchange="onMemberChange()">${getUserOptions()}</select>
-    <input type="text" id="mr-role-${id}" placeholder="LEAD / MEMBER" value="MEMBER" />
-    <select id="mr-reports-${id}" onchange="renderTree()">${getReportsToOptions()}</select>
+    <select id="mr-user-${id}" onchange="onMemberChange(${id})">${getUserOptions(prefill?.userId)}</select>
+    <input type="text" id="mr-role-${id}" placeholder="LEAD / MEMBER" value="${escHtml(prefill?.memberRole || 'MEMBER')}" />
+    <select id="mr-reports-${id}" onchange="onManagerChange(${id})">${getManagerOptions(prefill?.reportsToUserId || '', prefill?.userId || '')}</select>
     <button class="del-btn" onclick="removeMemberRow('mr-${id}')">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
   `;
   document.getElementById('memberRows').appendChild(row);
-  renderTree();
+  if (!prefill) renderTree();
+  return id;
 }
 
 function removeMemberRow(id) {
@@ -868,7 +994,32 @@ function removeMemberRow(id) {
   if (el) { el.remove(); rebuildMemberSelects(); renderTree(); }
 }
 
-function onMemberChange() { rebuildMemberSelects(); renderTree(); }
+function onMemberChange(rowId) {
+  const userId = document.getElementById(`mr-user-${rowId}`)?.value;
+  const reportsEl = document.getElementById(`mr-reports-${rowId}`);
+  if (reportsEl) {
+    const currentManager = reportsEl.value;
+    if (currentManager === userId) reportsEl.value = '';
+    reportsEl.innerHTML = getManagerOptions(reportsEl.value, userId);
+  }
+  rebuildMemberSelects();
+  renderTree();
+}
+
+function onManagerChange(rowId) {
+  const userId = document.getElementById(`mr-user-${rowId}`)?.value;
+  const managerId = document.getElementById(`mr-reports-${rowId}`)?.value;
+
+  if (managerId && managerId === userId) {
+    document.getElementById(`mr-reports-${rowId}`).value = '';
+    alert('A user cannot be their own manager.');
+    return;
+  }
+
+  if (managerId) ensureMemberInRows(managerId, { memberRole: 'LEAD' });
+  rebuildMemberSelects();
+  renderTree();
+}
 
 function rebuildMemberSelects() {
   const rows = [...document.getElementById('memberRows').children];
@@ -877,46 +1028,67 @@ function rebuildMemberSelects() {
     const uid = document.getElementById(`mr-user-${id}`)?.value;
     const reportsEl = document.getElementById(`mr-reports-${id}`);
     if (!reportsEl) return;
-    const currentReportsTo = reportsEl.value;
-    reportsEl.innerHTML = getReportsToOptions(currentReportsTo, uid);
+    const currentManager = reportsEl.value;
+    if (currentManager === uid) reportsEl.value = '';
+    reportsEl.innerHTML = getManagerOptions(reportsEl.value, uid);
   });
+}
+
+function collectMembersFromForm() {
+  const rows = [...document.getElementById('memberRows').children];
+  const members = rows.map(row => {
+    const id = row.id.replace('mr-', '');
+    const userId = document.getElementById(`mr-user-${id}`)?.value;
+    const memberRole = document.getElementById(`mr-role-${id}`)?.value || 'MEMBER';
+    const reportsTo = document.getElementById(`mr-reports-${id}`)?.value || null;
+    if (!userId) return null;
+    return { userId, memberRole, reportsToUserId: reportsTo || null };
+  }).filter(Boolean);
+
+  // Ensure every manager is also included in the payload (API requirement)
+  const byUserId = new Map(members.map(m => [m.userId, m]));
+  for (const member of [...members]) {
+    const managerId = member.reportsToUserId;
+    if (!managerId || byUserId.has(managerId)) continue;
+    byUserId.set(managerId, {
+      userId: managerId,
+      memberRole: 'LEAD',
+      reportsToUserId: null,
+    });
+  }
+
+  return [...byUserId.values()];
 }
 
 function renderTree() {
   const preview = document.getElementById('treePreview');
-  const rows = [...document.getElementById('memberRows').children];
-
-  const members = rows.map(row => {
-    const id = row.id.replace('mr-', '');
-    const userId     = document.getElementById(`mr-user-${id}`)?.value;
-    const role       = document.getElementById(`mr-role-${id}`)?.value;
-    const reportsTo  = document.getElementById(`mr-reports-${id}`)?.value || null;
-    const user = state.users.find(u => u.id === userId);
-    return user ? { userId, name: user.name, role, reportsTo } : null;
-  }).filter(Boolean);
+  const members = collectMembersFromForm().filter(m => m.userId);
 
   if (!members.length) {
     preview.innerHTML = '<span style="color:var(--muted)">Add members above to preview the org chart.</span>';
     return;
   }
 
-  // Build tree
+  const nameById = new Map(state.users.map(u => [u.id, u.name]));
+
   function renderNode(userId, depth) {
     const m = members.find(x => x.userId === userId);
     if (!m) return '';
-    const reports = members.filter(x => x.reportsTo === userId);
+    const reports = members.filter(x => x.reportsToUserId === userId);
+    const managerName = m.reportsToUserId ? nameById.get(m.reportsToUserId) : null;
     let html = `<div class="tree-line">
       ${depth > 0 ? '<span class="tree-indent">'.repeat(depth) + '└─' + '</span>' : ''}
-      <span class="name">${escHtml(m.name)}</span>
-      <span class="role-tag">${escHtml(m.role || 'MEMBER')}</span>
+      <span class="name">${escHtml(nameById.get(m.userId) || m.userId)}</span>
+      <span class="role-tag">${escHtml(m.memberRole || 'MEMBER')}</span>
+      ${managerName ? `<span class="text-sub">→ manager: ${escHtml(managerName)}</span>` : ''}
     </div>`;
     reports.forEach(r => { html += renderNode(r.userId, depth + 1); });
     return html;
   }
 
-  const roots = members.filter(m => !m.reportsTo);
+  const roots = members.filter(m => !m.reportsToUserId || !members.some(x => x.userId === m.reportsToUserId));
   if (!roots.length) {
-    preview.innerHTML = '<span style="color:var(--warn)">No top-level members (all have "Reports to" set).</span>';
+    preview.innerHTML = '<span style="color:var(--warn)">No top-level members. Clear manager fields for team leads.</span>';
     return;
   }
   preview.innerHTML = roots.map(r => renderNode(r.userId, 0)).join('');
@@ -934,18 +1106,11 @@ async function submitHierarchy() {
   const teamId     = document.getElementById('teamSelect').value || undefined;
   const verticalId = document.getElementById('verticalSelect').value || undefined;
 
-  const rows = [...document.getElementById('memberRows').children];
-  const members = rows.map(row => {
-    const id = row.id.replace('mr-', '');
-    const userId     = document.getElementById(`mr-user-${id}`)?.value;
-    const memberRole = document.getElementById(`mr-role-${id}`)?.value || 'MEMBER';
-    const reportsTo  = document.getElementById(`mr-reports-${id}`)?.value || null;
-    if (!userId) return null;
-    return { userId, memberRole, reportsToUserId: reportsTo || null };
-  }).filter(Boolean);
+  const members = collectMembersFromForm();
 
   if (!members.length) { log('hierLog', 'warn', 'No members added.'); btn.disabled = false; return; }
   if (!teamName && !teamId) { log('hierLog', 'warn', 'Enter a team name or pick an existing team.'); btn.disabled = false; return; }
+  if (!verticalId && !teamId) { log('hierLog', 'warn', 'Select a vertical for a new team.'); btn.disabled = false; return; }
 
   const payload = {
     members,
@@ -958,11 +1123,18 @@ async function submitHierarchy() {
   try {
     const res = await api('POST', '/teams/hierarchy', payload);
     log('hierLog', 'ok', `Done! Team "${res.data?.name}" (${res.data?.id}) with ${members.length} members.`);
-    // Refresh teams list
-    if (!state.teams.find(t => t.id === res.data?.id)) {
-      state.teams.push(res.data);
+
+    const updatedTeam = res.data;
+    const idx = state.teams.findIndex(t => t.id === updatedTeam?.id);
+    if (idx >= 0) state.teams[idx] = updatedTeam;
+    else if (updatedTeam) state.teams.push(updatedTeam);
+
+    if (updatedTeam?.id) {
       const ts = document.getElementById('teamSelect');
-      ts.innerHTML += `<option value="${res.data.id}">${res.data.name}</option>`;
+      if (![...ts.options].some(o => o.value === updatedTeam.id)) {
+        ts.innerHTML += `<option value="${updatedTeam.id}">${escHtml(updatedTeam.name)}</option>`;
+      }
+      ts.value = updatedTeam.id;
     }
   } catch (e) {
     log('hierLog', 'err', `Failed: ${e.message}`);

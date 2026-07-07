@@ -1,8 +1,11 @@
 import { HttpError } from "../../utils/httpError";
 import {
   findAllUsers,
+  findAllUserManagerLinks,
   findUserById,
   findUserByEmail,
+  findUserManagerLink,
+  findUsersForHierarchy,
   createUser as createUserInDb,
   updateUser,
   deleteUser,
@@ -12,6 +15,171 @@ import {
 } from "./users.repository";
 
 const VALID_PLATFORMS = ["YOUTUBE", "INSTAGRAM", "LINKEDIN", "FACEBOOK"] as const;
+
+type UserHierarchyMemberInput = {
+  userId: string;
+  managerUserId?: string | null;
+};
+
+type UserHierarchyListMember = {
+  id: string;
+  name: string;
+  email: string;
+  designation: string | null;
+  managerUserId: string | null;
+  isActive: boolean;
+  role: { id: string; name: string };
+  manager: { id: string; name: string; email: string; designation: string | null } | null;
+};
+
+type UserHierarchyNode = {
+  id: string;
+  name: string;
+  email: string;
+  designation: string | null;
+  managerUserId: string | null;
+  isActive: boolean;
+  role: { id: string; name: string };
+  manager: { id: string; name: string; email: string; designation: string | null } | null;
+  directReports: UserHierarchyNode[];
+};
+
+function buildUserHierarchy(members: UserHierarchyListMember[]) {
+  const nodeByUserId = new Map<string, UserHierarchyNode>();
+
+  for (const member of members) {
+    nodeByUserId.set(member.id, {
+      id: member.id,
+      name: member.name,
+      email: member.email,
+      designation: member.designation,
+      managerUserId: member.managerUserId,
+      isActive: member.isActive,
+      role: member.role,
+      manager: member.manager,
+      directReports: []
+    });
+  }
+
+  const roots: UserHierarchyNode[] = [];
+  for (const member of members) {
+    const node = nodeByUserId.get(member.id);
+    if (!node) continue;
+
+    if (!member.managerUserId || !nodeByUserId.has(member.managerUserId)) {
+      roots.push(node);
+      continue;
+    }
+
+    const managerNode = nodeByUserId.get(member.managerUserId);
+    managerNode?.directReports.push(node);
+  }
+
+  return roots;
+}
+
+function validateUserHierarchyMembers(members: UserHierarchyMemberInput[]) {
+  const memberIds = new Set<string>();
+
+  for (const member of members) {
+    if (memberIds.has(member.userId)) {
+      throw new HttpError(400, `Duplicate userId in hierarchy payload: ${member.userId}`);
+    }
+    memberIds.add(member.userId);
+
+    if (member.managerUserId === member.userId) {
+      throw new HttpError(400, "User cannot be their own manager");
+    }
+  }
+}
+
+async function validateUserHierarchyUpdates(members: UserHierarchyMemberInput[]) {
+  validateUserHierarchyMembers(members);
+
+  const managerUserIds = [
+    ...new Set(
+      members
+        .map((member) => member.managerUserId)
+        .filter((managerUserId): managerUserId is string => Boolean(managerUserId))
+    )
+  ];
+
+  if (managerUserIds.length > 0) {
+    const managers = await findAllUserManagerLinks();
+    const existingUserIds = new Set(managers.map((user) => user.id));
+    const missingManagerIds = managerUserIds.filter((managerUserId) => !existingUserIds.has(managerUserId));
+
+    if (missingManagerIds.length > 0) {
+      throw new HttpError(404, `Manager user(s) not found: ${missingManagerIds.join(", ")}`);
+    }
+  }
+
+  const requestedUserIds = [...new Set(members.map((member) => member.userId))];
+  const users = await findAllUserManagerLinks();
+  const existingUserIds = new Set(users.map((user) => user.id));
+  const missingUserIds = requestedUserIds.filter((userId) => !existingUserIds.has(userId));
+
+  if (missingUserIds.length > 0) {
+    throw new HttpError(404, `User(s) not found: ${missingUserIds.join(", ")}`);
+  }
+
+  const managerByUser = new Map(users.map((user) => [user.id, user.managerUserId]));
+
+  for (const member of members) {
+    if (member.managerUserId !== undefined) {
+      managerByUser.set(member.userId, member.managerUserId ?? null);
+    }
+  }
+
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+
+  const detectCycle = (userId: string) => {
+    if (visiting.has(userId)) {
+      throw new HttpError(400, "Invalid hierarchy: circular reporting chain detected");
+    }
+    if (visited.has(userId)) return;
+
+    visiting.add(userId);
+    const managerUserId = managerByUser.get(userId);
+    if (managerUserId) detectCycle(managerUserId);
+    visiting.delete(userId);
+    visited.add(userId);
+  };
+
+  for (const userId of requestedUserIds) {
+    detectCycle(userId);
+  }
+}
+
+async function ensureManagerCanBeAssigned(userId: string | undefined, managerUserId?: string | null) {
+  if (managerUserId === undefined || managerUserId === null) return;
+
+  if (userId && managerUserId === userId) {
+    throw new HttpError(400, "User cannot be their own manager");
+  }
+
+  const manager = await findUserManagerLink(managerUserId);
+  if (!manager) {
+    throw new HttpError(404, "Manager user not found");
+  }
+
+  const visited = new Set<string>();
+  let currentManagerUserId: string | null = manager.managerUserId;
+
+  while (currentManagerUserId) {
+    if (userId && currentManagerUserId === userId) {
+      throw new HttpError(400, "Invalid manager hierarchy: circular reporting chain detected");
+    }
+    if (visited.has(currentManagerUserId)) {
+      throw new HttpError(400, "Invalid existing manager hierarchy: circular reporting chain detected");
+    }
+
+    visited.add(currentManagerUserId);
+    const currentManager = await findUserManagerLink(currentManagerUserId);
+    currentManagerUserId = currentManager?.managerUserId ?? null;
+  }
+}
 
 export async function listUsers(options: {
   page?: number;
@@ -46,12 +214,15 @@ export async function createUser(data: {
   description?: string;
   phone?: string;
   designation?: string;
+  managerUserId?: string | null;
   isActive?: boolean;
 }) {
   const existing = await findUserByEmail(data.email);
   if (existing) {
     throw new HttpError(409, "User with this email already exists");
   }
+
+  await ensureManagerCanBeAssigned(undefined, data.managerUserId);
 
   return createUserInDb({
     ...data,
@@ -66,11 +237,13 @@ export async function updateUserProfile(
     description?: string;
     phone?: string;
     designation?: string;
+    managerUserId?: string | null;
     roleId?: string;
     isActive?: boolean;
   }
 ) {
   await getUserById(id);
+  await ensureManagerCanBeAssigned(id, data.managerUserId);
   return updateUser(id, data);
 }
 
@@ -98,4 +271,26 @@ export async function removeSocialAccount(id: string) {
 export async function getUserSocialAccounts(userId: string) {
   await getUserById(userId);
   return findSocialAccountsByUser(userId);
+}
+
+export async function getUserHierarchy(isActive?: boolean) {
+  const members = await findUsersForHierarchy(isActive);
+
+  return {
+    members,
+    hierarchy: buildUserHierarchy(members as UserHierarchyListMember[])
+  };
+}
+
+export async function upsertUserHierarchy(members: UserHierarchyMemberInput[]) {
+  await validateUserHierarchyUpdates(members);
+
+  for (const member of members) {
+    if (member.managerUserId === undefined) continue;
+    await updateUser(member.userId, {
+      managerUserId: member.managerUserId ?? null
+    });
+  }
+
+  return getUserHierarchy();
 }

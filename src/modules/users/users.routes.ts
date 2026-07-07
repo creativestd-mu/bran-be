@@ -8,6 +8,8 @@ import {
   listUsers,
   createUser,
   getUserById,
+  getUserHierarchy,
+  upsertUserHierarchy,
   updateUserProfile,
   removeUser,
   addSocialAccount,
@@ -42,6 +44,42 @@ usersRouter.get("/", async (req, res, next) => {
   }
 });
 
+const upsertUserHierarchySchema = z.object({
+  members: z.array(
+    z.object({
+      userId: z.string().uuid(),
+      managerUserId: z.string().uuid().nullable().optional()
+    })
+  )
+});
+
+usersRouter.get("/hierarchy", requirePermission("manage_users"), async (req, res, next) => {
+  try {
+    const isActive =
+      typeof req.query.isActive === "string"
+        ? req.query.isActive === "true"
+          ? true
+          : req.query.isActive === "false"
+            ? false
+            : undefined
+        : undefined;
+    const hierarchy = await getUserHierarchy(isActive);
+    res.status(200).json({ success: true, data: hierarchy });
+  } catch (error) {
+    next(error);
+  }
+});
+
+usersRouter.put("/hierarchy", requirePermission("manage_users"), async (req, res, next) => {
+  try {
+    const payload = upsertUserHierarchySchema.parse(req.body);
+    const hierarchy = await upsertUserHierarchy(payload.members);
+    res.status(200).json({ success: true, data: hierarchy });
+  } catch (error) {
+    next(error);
+  }
+});
+
 const createUserSchema = z.object({
   email: z.string().email("Valid email is required"),
   name: z.string().min(1),
@@ -49,6 +87,7 @@ const createUserSchema = z.object({
   description: z.string().optional(),
   phone: z.string().optional(),
   designation: z.string().optional(),
+  managerUserId: z.string().uuid().nullable().optional(),
   isActive: z.boolean().optional()
 });
 
@@ -76,6 +115,7 @@ const updateUserSchema = z.object({
   description: z.string().optional(),
   phone: z.string().optional(),
   designation: z.string().optional(),
+  managerUserId: z.string().uuid().nullable().optional(),
   roleId: z.string().uuid().optional(),
   isActive: z.boolean().optional()
 });
@@ -85,8 +125,11 @@ usersRouter.put("/:id", async (req, res, next) => {
     const id = param(req.params.id);
     const isSelf = req.user!.userId === id;
     const data = updateUserSchema.parse(req.body);
+    const requiresManageUsers =
+      data.managerUserId !== undefined ||
+      (!isSelf && (data.roleId !== undefined || data.isActive !== undefined));
 
-    if (!isSelf && (data.roleId !== undefined || data.isActive !== undefined)) {
+    if (requiresManageUsers) {
       await new Promise<void>((resolve, reject) => {
         requirePermission("manage_users")(req, res, (err?: unknown) =>
           err ? reject(err) : resolve()

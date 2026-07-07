@@ -1,5 +1,18 @@
 import { prisma } from "../../lib/prisma";
 
+const userMiniSelect = {
+  id: true,
+  name: true,
+  email: true,
+  designation: true
+} as const;
+
+const userInclude = {
+  role: { select: { id: true, name: true } },
+  manager: { select: userMiniSelect },
+  directReports: { select: userMiniSelect }
+} as const;
+
 export async function findAllUsers(options: {
   page: number;
   pageSize: number;
@@ -15,7 +28,7 @@ export async function findAllUsers(options: {
   const [items, total] = await Promise.all([
     prisma.user.findMany({
       where,
-      include: { role: { select: { id: true, name: true } } },
+      include: userInclude,
       skip: (page - 1) * pageSize,
       take: pageSize,
       orderBy: { createdAt: "desc" }
@@ -29,17 +42,46 @@ export async function findAllUsers(options: {
 export async function findUserById(id: string) {
   return prisma.user.findUnique({
     where: { id },
-    include: {
-      role: { select: { id: true, name: true } },
-      socialAccounts: true
-    }
+    include: { ...userInclude, socialAccounts: true }
   });
 }
 
 export async function findUserByEmail(email: string) {
   return prisma.user.findUnique({
     where: { email },
-    include: { role: { select: { id: true, name: true } } }
+    include: userInclude
+  });
+}
+
+export async function findUserManagerLink(id: string) {
+  return prisma.user.findUnique({
+    where: { id },
+    select: { id: true, managerUserId: true }
+  });
+}
+
+export async function findAllUserManagerLinks() {
+  return prisma.user.findMany({
+    select: { id: true, managerUserId: true }
+  });
+}
+
+export async function findUsersForHierarchy(isActive?: boolean) {
+  const where = isActive !== undefined ? { isActive } : {};
+
+  return prisma.user.findMany({
+    where,
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      designation: true,
+      managerUserId: true,
+      isActive: true,
+      role: { select: { id: true, name: true } },
+      manager: { select: userMiniSelect }
+    },
+    orderBy: { name: "asc" }
   });
 }
 
@@ -50,11 +92,12 @@ export async function createUser(data: {
   description?: string;
   phone?: string;
   designation?: string;
+  managerUserId?: string | null;
   isActive?: boolean;
 }) {
   return prisma.user.create({
     data,
-    include: { role: { select: { id: true, name: true } } }
+    include: userInclude
   });
 }
 
@@ -65,6 +108,7 @@ export async function updateUser(
     description?: string;
     phone?: string;
     designation?: string;
+    managerUserId?: string | null;
     roleId?: string;
     isActive?: boolean;
   }
@@ -72,7 +116,7 @@ export async function updateUser(
   return prisma.user.update({
     where: { id },
     data,
-    include: { role: { select: { id: true, name: true } } }
+    include: userInclude
   });
 }
 

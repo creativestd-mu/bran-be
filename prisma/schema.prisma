@@ -47,6 +47,7 @@ model User {
   description  String?
   phone        String?
   designation  String?
+  managerUserId String?
   passwordHash String?
   roleId       String
   isActive     Boolean   @default(true)
@@ -55,6 +56,8 @@ model User {
   updatedAt    DateTime  @updatedAt
 
   role                      Role                    @relation(fields: [roleId], references: [id])
+  manager                   User?                   @relation("UserManager", fields: [managerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  directReports             User[]                  @relation("UserManager")
   tasks                     Task[]
   socialAccounts            SocialAccount[]
   teamMemberships           TeamMember[]
@@ -89,6 +92,7 @@ model User {
   thumbnailGenerations    ThumbnailGeneration[]
 
   @@index([roleId])
+  @@index([managerUserId])
   @@index([email])
   @@index([googleId])
 }

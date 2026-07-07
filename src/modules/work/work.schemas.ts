@@ -25,6 +25,7 @@ export const updateWorkUnitSchema = z.object({
   status: z.enum(WORK_STATUSES).optional(),
   isPrivate: z.boolean().optional(),
   projectId: z.string().uuid().nullable().optional(),
+  assignedToUserId: z.string().uuid().nullable().optional(),
   steps: z.array(stepSchema).max(50).optional()
 });
 

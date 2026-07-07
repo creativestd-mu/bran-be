@@ -90,6 +90,8 @@ model User {
   navSearchLogs             NavSearchLog[]
   pageVisits                UserPageVisit[]
   thumbnailGenerations    ThumbnailGeneration[]
+  nameAssignmentPreferences NameAssignmentPreference[] @relation("NamePrefOwner")
+  preferredNameAssignments  NameAssignmentPreference[] @relation("NamePrefTarget")
 
   @@index([roleId])
   @@index([managerUserId])
@@ -381,6 +383,7 @@ model WorkUnit {
   closedAt          DateTime?
   nextDueAt         DateTime?
   firstDueAt        DateTime?
+  assigneeSpokenName String?  @db.VarChar(200)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -409,6 +412,7 @@ model WorkStep {
   description String    @db.Text
   deadline    DateTime?
   done        Boolean   @default(false)
+  assigneeSpokenName String? @db.VarChar(200)
   createdAt   DateTime  @default(now())
 
   workUnit WorkUnit @relation(fields: [workUnitId], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -417,6 +421,21 @@ model WorkStep {
   @@index([workUnitId])
   @@index([assigneeId])
   @@index([deadline])
+}
+
+model NameAssignmentPreference {
+  id          String   @id @default(uuid())
+  ownerUserId String
+  nameKey     String   @db.VarChar(200)
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner     User @relation("NamePrefOwner", fields: [ownerUserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  preferred User @relation("NamePrefTarget", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([ownerUserId, nameKey])
+  @@index([ownerUserId])
 }
 
 // ── AI Query History & Cache ────────────────────────────────

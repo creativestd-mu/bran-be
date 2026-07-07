@@ -42,10 +42,17 @@ export async function createWorkUnit(data: {
   context: string;
   status: string;
   isPrivate: boolean;
+  assigneeSpokenName?: string | null;
   closedAt?: Date | null;
   nextDueAt?: Date | null;
   firstDueAt?: Date | null;
-  steps: Array<{ description: string; deadline?: Date | null; done?: boolean; assigneeId?: string | null }>;
+  steps: Array<{
+    description: string;
+    deadline?: Date | null;
+    done?: boolean;
+    assigneeId?: string | null;
+    assigneeSpokenName?: string | null;
+  }>;
 }) {
   return prisma.workUnit.create({
     data: {
@@ -57,6 +64,7 @@ export async function createWorkUnit(data: {
       context: data.context,
       status: data.status,
       isPrivate: data.isPrivate,
+      assigneeSpokenName: data.assigneeSpokenName ?? null,
       closedAt: data.closedAt ?? null,
       nextDueAt: data.nextDueAt ?? null,
       firstDueAt: data.firstDueAt ?? null,
@@ -65,7 +73,8 @@ export async function createWorkUnit(data: {
           description: step.description,
           deadline: step.deadline ?? null,
           done: step.done ?? false,
-          assigneeId: step.assigneeId ?? null
+          assigneeId: step.assigneeId ?? null,
+          assigneeSpokenName: step.assigneeSpokenName ?? null
         }))
       }
     },
@@ -145,10 +154,19 @@ export async function updateWorkUnit(
     status?: string;
     isPrivate?: boolean;
     projectId?: string | null;
+    userId?: string;
+    createdById?: string | null;
+    assigneeSpokenName?: string | null;
     closedAt?: Date | null;
     nextDueAt?: Date | null;
     firstDueAt?: Date | null;
-    steps?: Array<{ description: string; deadline?: Date | null; done?: boolean; assigneeId?: string | null }>;
+    steps?: Array<{
+      description: string;
+      deadline?: Date | null;
+      done?: boolean;
+      assigneeId?: string | null;
+      assigneeSpokenName?: string | null;
+    }>;
   }
 ) {
   const { steps, ...scalarFields } = data;
@@ -165,7 +183,8 @@ export async function updateWorkUnit(
               description: step.description,
               deadline: step.deadline ?? null,
               done: step.done ?? false,
-              assigneeId: step.assigneeId ?? null
+              assigneeId: step.assigneeId ?? null,
+              assigneeSpokenName: step.assigneeSpokenName ?? null
             }))
           }
         }

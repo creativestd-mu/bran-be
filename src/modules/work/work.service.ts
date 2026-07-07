@@ -15,6 +15,13 @@ import {
 import { extractWorkUnitsFromTranscript } from "./work.extraction";
 import { resolveProjectIdFromExtraction } from "./work.project-matching";
 import {
+  learnAssignmentPreference,
+  loadNameAssignmentPreferences,
+  normalizeStepDescription,
+  resolvePreferenceOwnerId,
+  resolveUserIdFromName
+} from "./work.name-preference";
+import {
   createWorkUnit as createWorkUnitInDb,
   deleteWorkUnit as deleteWorkUnitInDb,
   findOverdueStepsForUser,
@@ -130,13 +137,20 @@ function assertNotLockedClosedUnit(
 }
 
 function mapSteps(
-  steps?: Array<{ description: string; deadline?: string | null; done?: boolean; assigneeId?: string | null }>
+  steps?: Array<{
+    description: string;
+    deadline?: string | null;
+    done?: boolean;
+    assigneeId?: string | null;
+    assigneeSpokenName?: string | null;
+  }>
 ) {
   return (steps ?? []).map((step) => ({
     description: step.description,
     deadline: parseOptionalDate(step.deadline) ?? null,
     done: step.done ?? false,
-    assigneeId: step.assigneeId ?? null
+    assigneeId: step.assigneeId ?? null,
+    assigneeSpokenName: step.assigneeSpokenName ?? null
   }));
 }
 
@@ -182,8 +196,15 @@ export async function createWorkUnit(
     isPrivate?: boolean;
     projectId?: string | null;
     assignedToUserId?: string | null;
+    assigneeSpokenName?: string | null;
     audioRecordingId?: string | null;
-    steps?: Array<{ description: string; deadline?: string | null; done?: boolean; assigneeId?: string | null }>;
+    steps?: Array<{
+      description: string;
+      deadline?: string | null;
+      done?: boolean;
+      assigneeId?: string | null;
+      assigneeSpokenName?: string | null;
+    }>;
   }
 ) {
   const ownerUserId = data.assignedToUserId ?? creatorUserId;
@@ -201,6 +222,7 @@ export async function createWorkUnit(
     title: data.title,
     context: data.context,
     isPrivate: data.isPrivate ?? false,
+    assigneeSpokenName: data.assigneeSpokenName ?? null,
     ...lifecycle,
     steps
   });
@@ -289,7 +311,14 @@ export async function updateWorkUnit(
     status?: string;
     isPrivate?: boolean;
     projectId?: string | null;
-    steps?: Array<{ description: string; deadline?: string | null; done?: boolean; assigneeId?: string | null }>;
+    assignedToUserId?: string | null;
+    steps?: Array<{
+      description: string;
+      deadline?: string | null;
+      done?: boolean;
+      assigneeId?: string | null;
+      assigneeSpokenName?: string | null;
+    }>;
   }
 ) {
   const existingRaw = await findWorkUnitById(id);
@@ -297,14 +326,49 @@ export async function updateWorkUnit(
   assertCanModify(existingRaw, viewerUserId, roleName);
   assertNotLockedClosedUnit(existingRaw.status, data);
 
-  // Snapshot existing step assignees so we can detect new assignments.
+  const preferenceOwnerId = resolvePreferenceOwnerId(existingRaw);
   const previousAssigneeIds = new Set(
     existingRaw.steps
       .map((s) => (s as { assigneeId?: string | null }).assigneeId)
       .filter(Boolean) as string[]
   );
+  const oldStepsByDescription = new Map(
+    existingRaw.steps.map((step) => [
+      normalizeStepDescription(step.description),
+      step as {
+        description: string;
+        assigneeId?: string | null;
+        assigneeSpokenName?: string | null;
+      }
+    ])
+  );
 
-  const mappedSteps = data.steps !== undefined ? mapSteps(data.steps) : undefined;
+  let mappedSteps = data.steps !== undefined ? mapSteps(data.steps) : undefined;
+  if (mappedSteps) {
+    mappedSteps = mappedSteps.map((step) => {
+      const oldStep = oldStepsByDescription.get(normalizeStepDescription(step.description));
+      const assigneeSpokenName =
+        step.assigneeSpokenName ?? oldStep?.assigneeSpokenName ?? null;
+
+      if (
+        oldStep?.assigneeSpokenName &&
+        step.assigneeId &&
+        step.assigneeId !== oldStep.assigneeId
+      ) {
+        void learnAssignmentPreference({
+          ownerUserId: preferenceOwnerId,
+          spokenName: oldStep.assigneeSpokenName,
+          userId: step.assigneeId
+        });
+      }
+
+      return {
+        ...step,
+        assigneeSpokenName
+      };
+    });
+  }
+
   const lifecycle = buildWorkUnitWriteFields({
     existingStatus: existingRaw.status,
     existingClosedAt: existingRaw.closedAt,
@@ -315,16 +379,53 @@ export async function updateWorkUnit(
   const projectId =
     data.projectId !== undefined ? await resolveProjectIdForUser(data.projectId) : undefined;
 
+  let nextOwnerUserId = existingRaw.userId;
+  let nextCreatedById = existingRaw.createdById;
+  let ownerReassigned = false;
+
+  if (data.assignedToUserId !== undefined) {
+    const resolvedOwnerUserId = data.assignedToUserId ?? viewerUserId;
+    if (resolvedOwnerUserId !== existingRaw.userId) {
+      ownerReassigned = true;
+      nextOwnerUserId = resolvedOwnerUserId;
+      nextCreatedById = resolvedOwnerUserId !== viewerUserId ? viewerUserId : null;
+
+      if (existingRaw.assigneeSpokenName) {
+        void learnAssignmentPreference({
+          ownerUserId: preferenceOwnerId,
+          spokenName: existingRaw.assigneeSpokenName,
+          userId: resolvedOwnerUserId
+        });
+      }
+    }
+  }
+
   const unit = await updateWorkUnitInDb(id, {
     title: data.title,
     context: data.context,
     isPrivate: data.isPrivate,
     projectId,
+    userId: ownerReassigned ? nextOwnerUserId : undefined,
+    createdById: ownerReassigned ? nextCreatedById : undefined,
     ...lifecycle,
     steps: mappedSteps
   });
 
-  // Notify any newly-assigned step assignees.
+  if (ownerReassigned && nextOwnerUserId !== viewerUserId) {
+    const assignedBy = await prisma.user.findUnique({
+      where: { id: viewerUserId },
+      select: { id: true, name: true }
+    });
+    if (assignedBy) {
+      void notifyWorkUnitAssigned({
+        workUnitId: id,
+        workUnitTitle: unit!.title,
+        assignedToUserId: nextOwnerUserId,
+        createdByUser: assignedBy
+      });
+    }
+  }
+
   if (mappedSteps) {
     const assignedBy = await prisma.user.findUnique({
       where: { id: viewerUserId },
@@ -373,13 +474,26 @@ export async function createWorkUnitsFromAudio(
     mimetype
   });
 
-  const [availableProjects, availableUsers] = await Promise.all([
+  const [availableProjects, availableUsers, preferenceMap] = await Promise.all([
     listAllProjectSummaries(),
     prisma.user.findMany({
       where: { isActive: true, id: { not: userId } },
-      select: { id: true, name: true }
-    })
+      select: { id: true, name: true, managerUserId: true }
+    }),
+    loadNameAssignmentPreferences(userId)
   ]);
+
+  const directReportIds = new Set(
+    availableUsers
+      .filter((user) => user.managerUserId === userId)
+      .map((user) => user.id)
+  );
+
+  const resolutionContext = {
+    uploaderId: userId,
+    directReportIds,
+    preferenceMap
+  };
 
   const extracted = await extractWorkUnitsFromTranscript(sarvam.transcript, {
     availableProjects,
@@ -397,7 +511,8 @@ export async function createWorkUnitsFromAudio(
       projects: availableProjects
     });
 
-    const assignedToUserId = resolveUserIdFromName(unit.assigneeName, availableUsers) ?? null;
+    const assignedToUserId =
+      resolveUserIdFromName(unit.assigneeName, availableUsers, resolutionContext) ?? null;
 
     const created = await createWorkUnit(userId, {
       title: unit.title,
@@ -406,11 +521,13 @@ export async function createWorkUnitsFromAudio(
       isPrivate: false,
       projectId,
       assignedToUserId,
+      assigneeSpokenName: unit.assigneeName ?? null,
       audioRecordingId: recording.id,
       steps: unit.steps.map((step) => ({
         description: step.description,
         deadline: step.deadline,
-        assigneeId: resolveUserIdFromName(step.assigneeName, availableUsers)
+        assigneeId: resolveUserIdFromName(step.assigneeName, availableUsers, resolutionContext),
+        assigneeSpokenName: step.assigneeName ?? null
       }))
     });
     workUnits.push(created);
@@ -443,36 +560,6 @@ export async function getMyDeadlines(userId: string, date?: string) {
       workUnit: step.workUnit
     }))
   };
-}
-
-/**
- * Fuzzy match a person name extracted from audio against the users list.
- * Returns the user ID of the best match or null.
- */
-export function resolveUserIdFromName(
-  name: string | null | undefined,
-  users: Array<{ id: string; name: string }>
-): string | null {
-  if (!name?.trim() || users.length === 0) return null;
-
-  const normTarget = name.trim().toLowerCase();
-
-  // Exact match
-  const exact = users.find((u) => u.name.toLowerCase() === normTarget);
-  if (exact) return exact.id;
-
-  // Full name contains target or target contains a word from the full name
-  for (const user of users) {
-    const normUser = user.name.toLowerCase();
-    if (normUser.includes(normTarget) || normTarget.includes(normUser)) {
-      return user.id;
-    }
-    // First-name match
-    const firstName = normUser.split(" ")[0];
-    if (firstName && normTarget === firstName) return user.id;
-  }
-
-  return null;
 }
 
 /**

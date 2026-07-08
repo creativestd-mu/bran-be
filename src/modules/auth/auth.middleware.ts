@@ -6,7 +6,7 @@ import { verifyJwt } from "./auth.service";
 export function authenticate(req: Request, _res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
-    throw new HttpError(401, "Missing or malformed Authorization header");
+    throw new HttpError(401, "Authentication required. Please sign in again.");
   }
 
   const token = header.slice(7);

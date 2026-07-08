@@ -35,6 +35,9 @@ import {
 import { enrichWorkUnitWithTagging } from "./work.tagging";
 import { listAllProjectSummaries } from "../projects/projects.repository";
 import { prisma } from "../../lib/prisma";
+import {
+  findVoiceRecordingById
+} from "../voice-recording/voice-recording.repository";
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -309,6 +312,8 @@ export async function getWorkUnitById(id: string, viewerUserId?: string, roleNam
 
 export async function listWorkUnits(options: {
   viewerUserId: string;
+  viewerRole?: string;
+  targetUserId?: string;
   status?: string;
   from?: string;
   to?: string;
@@ -318,8 +323,15 @@ export async function listWorkUnits(options: {
   const page = Math.max(1, Number(options.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(options.pageSize) || 20));
 
+  // Admins/managers may filter by any user; others can only see their own units.
+  const isPrivileged = canViewAll(options.viewerRole ?? "");
+  const filterUserId =
+    options.targetUserId && isPrivileged
+      ? options.targetUserId
+      : options.viewerUserId;
+
   const { items, total } = await findWorkUnits({
-    userId: options.viewerUserId,
+    userId: filterUserId,
     status: options.status,
     from: parseRangeFrom(options.from),
     to: parseRangeTo(options.to),
@@ -672,6 +684,84 @@ export async function createWorkUnitsFromAudio(
 
   return {
     transcript: sarvam.transcript,
+    audioRecording: recording,
+    workUnits,
+    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings)
+  };
+}
+
+export async function regenerateWorkUnitsFromRecording(recordingId: string, userId: string) {
+  const recording = await findVoiceRecordingById(recordingId);
+  if (!recording) {
+    throw new HttpError(404, "Voice recording not found");
+  }
+  if (!recording.transcript) {
+    throw new HttpError(422, "Voice recording has no transcript to regenerate from");
+  }
+
+  const [availableProjects, availableUsers, preferenceMap] = await Promise.all([
+    listAllProjectSummaries(),
+    prisma.user.findMany({
+      where: { isActive: true, id: { not: userId } },
+      select: { id: true, name: true, managerUserId: true }
+    }),
+    loadNameAssignmentPreferences(userId)
+  ]);
+
+  const directReportIds = new Set(
+    availableUsers
+      .filter((user) => user.managerUserId === userId)
+      .map((user) => user.id)
+  );
+
+  const resolutionContext = {
+    uploaderId: userId,
+    directReportIds,
+    preferenceMap
+  };
+
+  const extracted = await extractWorkUnitsFromTranscript(recording.transcript, {
+    availableProjects,
+    availableUsers
+  });
+
+  const workUnits = [];
+
+  for (const unit of extracted) {
+    const projectId = resolveProjectIdFromExtraction({
+      projectName: unit.projectName,
+      title: unit.title,
+      context: unit.context,
+      transcript: recording.transcript,
+      projects: availableProjects
+    });
+
+    const assignedToUserId =
+      resolveUserIdFromName(unit.assigneeName, availableUsers, resolutionContext) ?? null;
+
+    const created = await createWorkUnit(userId, {
+      title: unit.title,
+      context: unit.context,
+      status: unit.status,
+      isPrivate: false,
+      projectId,
+      assignedToUserId,
+      assigneeSpokenName: unit.assigneeName ?? null,
+      sourceExcerpt: unit.sourceExcerpt ?? null,
+      audioRecordingId: recording.id,
+      steps: unit.steps.map((step) => ({
+        description: step.description,
+        deadline: step.deadline,
+        assigneeId: resolveUserIdFromName(step.assigneeName, availableUsers, resolutionContext),
+        assigneeSpokenName: step.assigneeName ?? null,
+        sourceExcerpt: step.sourceExcerpt ?? null
+      }))
+    });
+    workUnits.push(created);
+  }
+
+  return {
+    transcript: recording.transcript,
     audioRecording: recording,
     workUnits,
     taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings)

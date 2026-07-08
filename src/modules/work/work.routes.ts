@@ -21,6 +21,7 @@ import {
   getWorkUnitById,
   listWorkUnits,
   reassignWorkUnitAssignments,
+  regenerateWorkUnitsFromRecording,
   removeWorkUnit,
   updateWorkUnit
 } from "./work.service";
@@ -66,6 +67,22 @@ workRouter.post(
   }
 );
 
+workRouter.post(
+  "/audio/:recordingId/regenerate",
+  requirePermission("create_tasks"),
+  async (req, res, next) => {
+    try {
+      const result = await regenerateWorkUnitsFromRecording(
+        param(req.params.recordingId),
+        req.user!.userId
+      );
+      res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 workRouter.post("/", requirePermission("create_tasks"), async (req, res, next) => {
   try {
     const payload = createWorkUnitSchema.parse(req.body);
@@ -101,6 +118,8 @@ workRouter.get("/", async (req, res, next) => {
 
     const result = await listWorkUnits({
       viewerUserId: req.user!.userId,
+      viewerRole: req.user!.roleName,
+      targetUserId: query.userId,
       status: query.status,
       from: query.from,
       to: query.to,

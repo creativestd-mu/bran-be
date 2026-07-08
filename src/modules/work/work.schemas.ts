@@ -31,6 +31,7 @@ export const updateWorkUnitSchema = z.object({
 
 export const listWorkUnitsQuerySchema = z.object({
   status: z.enum(WORK_STATUSES).optional(),
+  userId: z.string().uuid().optional(),
   from: z
     .string()
     .refine(

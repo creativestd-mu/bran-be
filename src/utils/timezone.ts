@@ -138,3 +138,15 @@ export function isSameCalendarDayInTimezone(
   const end = readZonedParts(to, timeZone);
   return start.year === end.year && start.month === end.month && start.day === end.day;
 }
+
+/**
+ * Returns the { year, month, day } components of a Date in the configured
+ * app timezone. Useful for timezone-safe date arithmetic.
+ */
+export function getZonedDateParts(
+  instant: Date,
+  timeZone: string = env.appTimezone
+): { year: number; month: number; day: number } {
+  const { year, month, day } = readZonedParts(instant, timeZone);
+  return { year, month, day };
+}

@@ -894,6 +894,11 @@ export async function reviewResourceService(
     );
   }
 
+  // Prevent the requester from approving or rejecting their own request.
+  if (resource.requestedByUserId && resource.requestedByUserId === actor.userId) {
+    throw new HttpError(403, "You cannot approve or reject your own resource request");
+  }
+
   const current = resource.approvalState as ResourceApprovalState;
   if (!isLegalResourceApprovalTransition(current, next)) {
     throw new HttpError(400, `Illegal transition: ${current} -> ${next}`);

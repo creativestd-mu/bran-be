@@ -1,7 +1,7 @@
 import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../utils/httpError";
-import { endOfDayInTimezone, startOfDayInTimezone } from "../../utils/timezone";
+import { endOfDayInTimezone, startOfDayInTimezone, getZonedDateParts } from "../../utils/timezone";
 import { findTasksByUserAndDateRange } from "../tasks/tasks.repository";
 import { findAdhocWorkByUserAndDateRange } from "../adhoc-work/adhoc-work.repository";
 import { findUserKpis } from "../kpi/kpi.repository";
@@ -110,50 +110,62 @@ function parseTimeRange(query: string): { from: Date; to: Date } {
     return { from: startOfDay(from), to: endOfDay(now) };
   }
 
+  // Compute the start of today in the configured timezone (IST), then use offsets
+  // for relative day/week calculations to avoid JS local-time vs. app-timezone drift.
+  const todayStart = startOfDay(now); // midnight of today in the app timezone (as UTC instant)
+
   if (/\b(this|current)\s+week\b/.test(lower)) {
-    const dayOfWeek = now.getDay();
+    // Determine the day-of-week for today in the app timezone.
+    const { day: todayDay, month: todayMonth, year: todayYear } = getZonedDateParts(now);
+    const todayDate = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay, 12, 0, 0));
+    const dayOfWeek = todayDate.getUTCDay();
     const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    const from = new Date(now);
-    from.setDate(now.getDate() - diffToMonday);
+    const from = new Date(todayStart.getTime() - diffToMonday * 86_400_000);
     return { from: startOfDay(from), to: endOfDay(now) };
   }
 
   if (/\blast\s+week\b/.test(lower)) {
-    const dayOfWeek = now.getDay();
+    const { day: todayDay, month: todayMonth, year: todayYear } = getZonedDateParts(now);
+    const todayDate = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay, 12, 0, 0));
+    const dayOfWeek = todayDate.getUTCDay();
     const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    const from = new Date(now);
-    from.setDate(now.getDate() - diffToMonday - 7);
-    const to = new Date(from);
-    to.setDate(from.getDate() + 6);
+    const thisMonday = new Date(todayStart.getTime() - diffToMonday * 86_400_000);
+    const from = new Date(thisMonday.getTime() - 7 * 86_400_000);
+    const to = new Date(thisMonday.getTime() - 86_400_000); // last Sunday
     return { from: startOfDay(from), to: endOfDay(to) };
   }
 
   if (/\b(this|current)\s+month\b/.test(lower)) {
-    const from = new Date(now.getFullYear(), now.getMonth(), 1);
-    return { from: startOfDay(from), to: endOfDay(now) };
+    const { month, year } = getZonedDateParts(now);
+    const firstOfMonth = new Date(Date.UTC(year, month - 1, 1, 12, 0, 0));
+    return { from: startOfDay(firstOfMonth), to: endOfDay(now) };
   }
 
   if (/\blast\s+month\b/.test(lower)) {
-    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const to = new Date(now.getFullYear(), now.getMonth(), 0);
-    return { from: startOfDay(from), to: endOfDay(to) };
+    const { month, year } = getZonedDateParts(now);
+    const firstOfLastMonth = new Date(Date.UTC(year, month - 2, 1, 12, 0, 0));
+    const firstOfThisMonth = new Date(Date.UTC(year, month - 1, 1, 12, 0, 0));
+    const lastDayOfLastMonth = new Date(firstOfThisMonth.getTime() - 86_400_000);
+    return { from: startOfDay(firstOfLastMonth), to: endOfDay(lastDayOfLastMonth) };
   }
 
   if (/\b(this|current)\s+(quarter|qtr)\b/.test(lower)) {
-    const q = Math.floor(now.getMonth() / 3);
-    const from = new Date(now.getFullYear(), q * 3, 1);
-    return { from: startOfDay(from), to: endOfDay(now) };
+    const { month, year } = getZonedDateParts(now);
+    const q = Math.floor((month - 1) / 3);
+    const firstOfQuarter = new Date(Date.UTC(year, q * 3, 1, 12, 0, 0));
+    return { from: startOfDay(firstOfQuarter), to: endOfDay(now) };
   }
 
   if (/\b(this|current)\s+year\b/.test(lower)) {
-    const from = new Date(now.getFullYear(), 0, 1);
-    return { from: startOfDay(from), to: endOfDay(now) };
+    const { year } = getZonedDateParts(now);
+    const firstOfYear = new Date(Date.UTC(year, 0, 1, 12, 0, 0));
+    return { from: startOfDay(firstOfYear), to: endOfDay(now) };
   }
 
   if (/\byesterday\b/.test(lower)) {
-    const from = new Date(now);
-    from.setDate(now.getDate() - 1);
-    return { from: startOfDay(from), to: endOfDay(from) };
+    // Subtract exactly one calendar day from today's start in the app timezone.
+    const yesterday = new Date(todayStart.getTime() - 86_400_000);
+    return { from: startOfDay(yesterday), to: endOfDay(yesterday) };
   }
 
   if (/\btoday\b/.test(lower)) {
@@ -564,6 +576,7 @@ export async function processAiQuery(query: string, requestingUserId?: string) {
     taskCount: tasks.length,
     adhocWorkCount: adhocWork.length,
     workUnitCount: workUnits.length,
+    analyzedItemsCount: tasks.length + adhocWork.length + workUnits.length,
     visionCount: visions.length,
     kpiCount: kpis.length,
     guidanceQuery,

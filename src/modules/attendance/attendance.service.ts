@@ -1,6 +1,7 @@
 import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../utils/httpError";
+import { notifyWfhToManager } from "../notifications/notifications.service";
 import { ATTENDANCE_ADMIN_ROLES } from "./attendance.constants";
 import {
   classifyFlags,
@@ -33,6 +34,35 @@ import {
   sendDm,
   type SlackMessage
 } from "./attendance.slack";
+
+async function maybeNotifyWfhManager(input: {
+  recordType: string;
+  userEmail: string | null;
+  userName: string | null;
+  entryDate: string;
+  rawMessage?: string | null;
+}): Promise<void> {
+  if (input.recordType !== "wfh" || !input.userEmail) return;
+
+  try {
+    const result = await notifyWfhToManager({
+      employeeEmail: input.userEmail,
+      employeeName: input.userName,
+      entryDate: input.entryDate,
+      rawMessage: input.rawMessage ?? null
+    });
+    if (!result.notified && result.reason) {
+      console.log(
+        `[attendance] WFH manager notify skipped for ${input.userEmail}: ${result.reason}`
+      );
+    }
+  } catch (error) {
+    console.error(
+      `[attendance] WFH manager notify failed for ${input.userEmail}:`,
+      error
+    );
+  }
+}
 
 function emailAllowed(email: string | null | undefined): boolean {
   if (!email) return false;
@@ -103,6 +133,15 @@ export async function submitAttendanceFromSlack(input: {
   });
 
   await cleanupStaleMissingEntries(entryDate);
+
+  await maybeNotifyWfhManager({
+    recordType: input.recordType,
+    userEmail: input.userEmail,
+    userName: input.userName,
+    entryDate,
+    rawMessage: input.text
+  });
+
   return serializeEntry(entry);
 }
 
@@ -264,6 +303,16 @@ export async function syncAttendanceFromSlackHistory(dateStr: string): Promise<{
   const entries = [...byUser.values()];
   const recorded = await bulkUpsertSubmittedEntries(entries);
   await cleanupStaleMissingEntries(dateStr);
+
+  for (const entry of entries) {
+    await maybeNotifyWfhManager({
+      recordType: entry.recordType,
+      userEmail: entry.userEmail,
+      userName: entry.userName,
+      entryDate: entry.entryDate,
+      rawMessage: entry.rawMessage
+    });
+  }
 
   return {
     processed: messages.length,

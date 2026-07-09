@@ -66,6 +66,12 @@ function buildWorkUnitLink(workUnitId: string): string {
   return `${env.appUrl.replace(/\/$/, "")}/work/${workUnitId}`;
 }
 
+function buildAttendanceLink(date?: string): string {
+  if (!env.appUrl) return "";
+  const base = `${env.appUrl.replace(/\/$/, "")}/attendance`;
+  return date ? `${base}?date=${encodeURIComponent(date)}` : base;
+}
+
 function buildNotificationCopy(input: NotifyNextStepInput) {
   const { content, fromNode, toNode, approvedOutput } = input;
   const title = `${fromNode.name} approved — ${toNode.name} is ready to start`;
@@ -712,4 +718,118 @@ export async function notifyWorkStepOverdue(
     });
     if (sent) await markEmailSent(notification.id);
   }
+}
+
+// ── Attendance WFH → manager notifications ───────────────
+
+export type NotifyWfhToManagerInput = {
+  /** Slack profile email used to match an onboarded Bran user. */
+  employeeEmail: string;
+  employeeName?: string | null;
+  entryDate: string; // YYYY-MM-DD IST
+  rawMessage?: string | null;
+};
+
+/**
+ * When someone posts WFH, notify their manager (in-app + email).
+ *
+ * Matching rules:
+ * - Slack email must match an active onboarded User (case-insensitive).
+ * - That user must have managerUserId set to an active manager.
+ * - Anyone not onboarded / without a manager is skipped silently.
+ * - Idempotent per (manager, employee, date) via dedupeKey.
+ */
+export async function notifyWfhToManager(
+  input: NotifyWfhToManagerInput
+): Promise<{ notified: boolean; reason?: string }> {
+  const email = input.employeeEmail.trim().toLowerCase();
+  if (!email) {
+    return { notified: false, reason: "missing_email" };
+  }
+
+  const employee = await prisma.user.findFirst({
+    where: {
+      isActive: true,
+      email: { equals: email, mode: "insensitive" }
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      managerUserId: true,
+      manager: {
+        select: { id: true, name: true, email: true, isActive: true }
+      }
+    }
+  });
+
+  if (!employee) {
+    return { notified: false, reason: "user_not_onboarded" };
+  }
+
+  const manager = employee.manager;
+  if (!employee.managerUserId || !manager || !manager.isActive) {
+    return { notified: false, reason: "no_active_manager" };
+  }
+
+  const displayName = input.employeeName?.trim() || employee.name;
+  const link = buildAttendanceLink(input.entryDate);
+  const title = `${displayName} is WFH today`;
+  const body = `${displayName} marked work from home for ${input.entryDate}.`;
+  const dedupeKey = `attendance_wfh:${employee.id}:${input.entryDate}`;
+
+  const payload = {
+    kind: "ATTENDANCE_WFH",
+    entryDate: input.entryDate,
+    employee: {
+      id: employee.id,
+      name: employee.name,
+      email: employee.email
+    },
+    rawMessage: input.rawMessage ?? null,
+    link: link || undefined
+  };
+
+  const notification = await createNotification({
+    userId: manager.id,
+    kind: "ATTENDANCE_WFH",
+    title,
+    body,
+    data: payload,
+    dedupeKey
+  });
+
+  if (!notification.emailSentAt && manager.email) {
+    const lines = [
+      body,
+      "",
+      `Employee: ${employee.name} <${employee.email}>`,
+      `Date: ${input.entryDate}`,
+      ...(input.rawMessage ? [`Slack message: ${input.rawMessage}`] : []),
+      ...(link ? ["", `Open in app: ${link}`] : [])
+    ];
+    const html = `
+      <p>${escapeHtml(body)}</p>
+      <ul>
+        <li><strong>Employee:</strong> ${escapeHtml(employee.name)} &lt;${escapeHtml(employee.email)}&gt;</li>
+        <li><strong>Date:</strong> ${escapeHtml(input.entryDate)}</li>
+        ${
+          input.rawMessage
+            ? `<li><strong>Slack message:</strong> ${escapeHtml(input.rawMessage)}</li>`
+            : ""
+        }
+      </ul>
+      ${link ? `<p><a href="${escapeAttr(link)}">Open attendance in Bran</a></p>` : ""}
+    `.trim();
+
+    const sent = await sendEmail({
+      to: manager.email,
+      subject: title,
+      text: lines.join("\n"),
+      html
+    });
+    if (sent) await markEmailSent(notification.id);
+  }
+
+  return { notified: true };
 }

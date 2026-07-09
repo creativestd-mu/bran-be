@@ -1,0 +1,19 @@
+---
+description: Bran BE production host URL for Slack webhooks and API checks
+alwaysApply: true
+---
+
+# Production URL
+
+- **Current production:** `https://bran-be-production-3549.up.railway.app`
+- **Deprecated / old:** `https://bran-be-production.up.railway.app` (do not use)
+
+## Slack Event Subscriptions
+
+- Request URL: `https://bran-be-production-3549.up.railway.app/api/slack/events`
+- Slash command URL: `https://bran-be-production-3549.up.railway.app/api/slack/commands`
+- Cron check: `https://bran-be-production-3549.up.railway.app/api/cron/eta-check`
+
+## Deploy verification
+
+A healthy attendance deploy returns `"build":"attendance-v1"` from `GET /` and echoes Slack `url_verification` challenges from `POST /api/slack/events`.

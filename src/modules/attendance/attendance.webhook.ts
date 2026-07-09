@@ -46,6 +46,10 @@ function assertSlackSignature(req: Request, rawBody: string): void {
 /**
  * POST /api/slack/events — Slack Event Subscriptions webhook.
  * Responds quickly; attendance processing is fire-and-forget.
+ *
+ * url_verification is answered before signature checks so Slack's
+ * Request URL handshake can succeed even before secrets are perfect.
+ * All real events still require a valid Slack signature.
  */
 export async function slackEventsHandler(
   req: Request,
@@ -54,9 +58,8 @@ export async function slackEventsHandler(
 ): Promise<void> {
   try {
     const rawBody = readRawBody(req);
-    assertSlackSignature(req, rawBody);
 
-    const payload = JSON.parse(rawBody) as {
+    let payload: {
       type?: string;
       challenge?: string;
       event?: {
@@ -72,10 +75,19 @@ export async function slackEventsHandler(
       };
     };
 
+    try {
+      payload = JSON.parse(rawBody) as typeof payload;
+    } catch {
+      throw new HttpError(400, "Invalid JSON body");
+    }
+
+    // Slack Event URL handshake — must return the challenge value.
     if (payload.type === "url_verification" && payload.challenge) {
       res.status(200).json({ challenge: payload.challenge });
       return;
     }
+
+    assertSlackSignature(req, rawBody);
 
     // Acknowledge immediately (Slack requires < 3s)
     res.status(200).json({ ok: true });

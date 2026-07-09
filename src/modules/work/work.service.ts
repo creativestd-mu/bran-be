@@ -217,6 +217,88 @@ async function resolveProjectIdForUser(
   return projectId;
 }
 
+async function buildAssignmentContext(userId: string) {
+  const [availableProjects, availableUsers, preferenceMap] = await Promise.all([
+    listAllProjectSummaries(),
+    prisma.user.findMany({
+      where: { isActive: true, id: { not: userId } },
+      select: { id: true, name: true, managerUserId: true }
+    }),
+    loadNameAssignmentPreferences(userId)
+  ]);
+
+  const directReportIds = new Set(
+    availableUsers
+      .filter((user) => user.managerUserId === userId)
+      .map((user) => user.id)
+  );
+
+  return {
+    availableProjects,
+    availableUsers,
+    resolutionContext: {
+      uploaderId: userId,
+      directReportIds,
+      preferenceMap
+    }
+  };
+}
+
+export async function createWorkUnitsFromRecording(
+  userId: string,
+  recording: { id: string },
+  transcript: string
+) {
+  const { availableProjects, availableUsers, resolutionContext } =
+    await buildAssignmentContext(userId);
+
+  const extracted = await extractWorkUnitsFromTranscript(transcript, {
+    availableProjects,
+    availableUsers
+  });
+
+  const workUnits = [];
+
+  for (const unit of extracted) {
+    const projectId = resolveProjectIdFromExtraction({
+      projectName: unit.projectName,
+      title: unit.title,
+      context: unit.context,
+      transcript,
+      projects: availableProjects
+    });
+
+    const assignedToUserId =
+      resolveUserIdFromName(unit.assigneeName, availableUsers, resolutionContext) ?? null;
+
+    const created = await createWorkUnit(userId, {
+      title: unit.title,
+      context: unit.context,
+      status: unit.status,
+      isPrivate: false,
+      projectId,
+      assignedToUserId,
+      assigneeSpokenName: unit.assigneeName ?? null,
+      sourceExcerpt: unit.sourceExcerpt ?? null,
+      audioRecordingId: recording.id,
+      steps: unit.steps.map((step) => ({
+        description: step.description,
+        deadline: step.deadline,
+        assigneeId: resolveUserIdFromName(step.assigneeName, availableUsers, resolutionContext),
+        assigneeSpokenName: step.assigneeName ?? null,
+        sourceExcerpt: step.sourceExcerpt ?? null
+      }))
+    });
+    workUnits.push(created);
+  }
+
+  return {
+    transcript,
+    workUnits,
+    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings)
+  };
+}
+
 export async function createWorkUnit(
   creatorUserId: string,
   data: {
@@ -621,72 +703,13 @@ export async function createWorkUnitsFromAudio(
     mimetype
   });
 
-  const [availableProjects, availableUsers, preferenceMap] = await Promise.all([
-    listAllProjectSummaries(),
-    prisma.user.findMany({
-      where: { isActive: true, id: { not: userId } },
-      select: { id: true, name: true, managerUserId: true }
-    }),
-    loadNameAssignmentPreferences(userId)
-  ]);
-
-  const directReportIds = new Set(
-    availableUsers
-      .filter((user) => user.managerUserId === userId)
-      .map((user) => user.id)
-  );
-
-  const resolutionContext = {
-    uploaderId: userId,
-    directReportIds,
-    preferenceMap
-  };
-
-  const extracted = await extractWorkUnitsFromTranscript(sarvam.transcript, {
-    availableProjects,
-    availableUsers
-  });
-
-  const workUnits = [];
-
-  for (const unit of extracted) {
-    const projectId = resolveProjectIdFromExtraction({
-      projectName: unit.projectName,
-      title: unit.title,
-      context: unit.context,
-      transcript: sarvam.transcript,
-      projects: availableProjects
-    });
-
-    const assignedToUserId =
-      resolveUserIdFromName(unit.assigneeName, availableUsers, resolutionContext) ?? null;
-
-    const created = await createWorkUnit(userId, {
-      title: unit.title,
-      context: unit.context,
-      status: unit.status,
-      isPrivate: false,
-      projectId,
-      assignedToUserId,
-      assigneeSpokenName: unit.assigneeName ?? null,
-      sourceExcerpt: unit.sourceExcerpt ?? null,
-      audioRecordingId: recording.id,
-      steps: unit.steps.map((step) => ({
-        description: step.description,
-        deadline: step.deadline,
-        assigneeId: resolveUserIdFromName(step.assigneeName, availableUsers, resolutionContext),
-        assigneeSpokenName: step.assigneeName ?? null,
-        sourceExcerpt: step.sourceExcerpt ?? null
-      }))
-    });
-    workUnits.push(created);
-  }
+  const result = await createWorkUnitsFromRecording(userId, recording, sarvam.transcript);
 
   return {
     transcript: sarvam.transcript,
     audioRecording: recording,
-    workUnits,
-    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings)
+    workUnits: result.workUnits,
+    taggingMappings: result.taggingMappings
   };
 }
 
@@ -699,72 +722,13 @@ export async function regenerateWorkUnitsFromRecording(recordingId: string, user
     throw new HttpError(422, "Voice recording has no transcript to regenerate from");
   }
 
-  const [availableProjects, availableUsers, preferenceMap] = await Promise.all([
-    listAllProjectSummaries(),
-    prisma.user.findMany({
-      where: { isActive: true, id: { not: userId } },
-      select: { id: true, name: true, managerUserId: true }
-    }),
-    loadNameAssignmentPreferences(userId)
-  ]);
-
-  const directReportIds = new Set(
-    availableUsers
-      .filter((user) => user.managerUserId === userId)
-      .map((user) => user.id)
-  );
-
-  const resolutionContext = {
-    uploaderId: userId,
-    directReportIds,
-    preferenceMap
-  };
-
-  const extracted = await extractWorkUnitsFromTranscript(recording.transcript, {
-    availableProjects,
-    availableUsers
-  });
-
-  const workUnits = [];
-
-  for (const unit of extracted) {
-    const projectId = resolveProjectIdFromExtraction({
-      projectName: unit.projectName,
-      title: unit.title,
-      context: unit.context,
-      transcript: recording.transcript,
-      projects: availableProjects
-    });
-
-    const assignedToUserId =
-      resolveUserIdFromName(unit.assigneeName, availableUsers, resolutionContext) ?? null;
-
-    const created = await createWorkUnit(userId, {
-      title: unit.title,
-      context: unit.context,
-      status: unit.status,
-      isPrivate: false,
-      projectId,
-      assignedToUserId,
-      assigneeSpokenName: unit.assigneeName ?? null,
-      sourceExcerpt: unit.sourceExcerpt ?? null,
-      audioRecordingId: recording.id,
-      steps: unit.steps.map((step) => ({
-        description: step.description,
-        deadline: step.deadline,
-        assigneeId: resolveUserIdFromName(step.assigneeName, availableUsers, resolutionContext),
-        assigneeSpokenName: step.assigneeName ?? null,
-        sourceExcerpt: step.sourceExcerpt ?? null
-      }))
-    });
-    workUnits.push(created);
-  }
+  const result = await createWorkUnitsFromRecording(userId, recording, recording.transcript);
 
   return {
     transcript: recording.transcript,
     audioRecording: recording,
-    workUnits,
-    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings)
+    workUnits: result.workUnits,
+    taggingMappings: result.taggingMappings
   };
 }
 

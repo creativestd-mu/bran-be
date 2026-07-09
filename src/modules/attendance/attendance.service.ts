@@ -1,0 +1,414 @@
+import { env } from "../../config/env";
+import { prisma } from "../../lib/prisma";
+import { HttpError } from "../../utils/httpError";
+import { ATTENDANCE_ADMIN_ROLES } from "./attendance.constants";
+import {
+  classifyFlags,
+  dateInIST,
+  isWeekendIST,
+  slackTsToDate,
+  todayInIST
+} from "./attendance.dates";
+import { parseAttendanceMessage } from "./attendance.parser";
+import {
+  bulkUpsertSubmittedEntries,
+  cleanupStaleMissingEntries,
+  findEntriesForDate,
+  findMissingEntries,
+  findSlackMember,
+  findSubmittedUserIdsForDate,
+  listActiveSlackMembers,
+  markReminderSent,
+  serializeEntry,
+  upsertMissingEntry,
+  upsertSlackMember,
+  upsertSubmittedEntry,
+  type UpsertSubmittedInput
+} from "./attendance.repository";
+import {
+  fetchChannelMessagesForDate,
+  getSlackUserInfo,
+  listChannelMemberIds,
+  resolveChannelId,
+  sendDm,
+  type SlackMessage
+} from "./attendance.slack";
+
+function emailAllowed(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const domain = env.attendanceEmailDomain.toLowerCase().replace(/^@/, "");
+  return email.toLowerCase().endsWith(`@${domain}`);
+}
+
+function displayName(user: {
+  name?: string;
+  real_name?: string;
+  profile?: { real_name?: string; display_name?: string };
+}): string {
+  return (
+    user.profile?.real_name ||
+    user.real_name ||
+    user.profile?.display_name ||
+    user.name ||
+    "Unknown"
+  );
+}
+
+export function canManageAttendance(roleName: string): boolean {
+  return ATTENDANCE_ADMIN_ROLES.has(roleName);
+}
+
+export function assertCanManageAttendance(roleName: string): void {
+  if (!canManageAttendance(roleName)) {
+    throw new HttpError(403, "Only admin roles can manage attendance checks");
+  }
+}
+
+export async function submitAttendanceFromSlack(input: {
+  slackUserId: string;
+  userEmail: string | null;
+  userName: string | null;
+  text: string;
+  messageTs: string;
+  recordType: string;
+  etaText: string | null;
+  etaMinutes: number | null;
+}): Promise<ReturnType<typeof serializeEntry>> {
+  const submittedAt = slackTsToDate(input.messageTs);
+  const entryDate = dateInIST(submittedAt);
+
+  const member = await findSlackMember(input.slackUserId);
+  const skipSubmissionDeadline = member?.pod === "production";
+
+  const flags = classifyFlags({
+    submittedAt,
+    etaMinutes: input.etaMinutes,
+    recordType: input.recordType,
+    skipSubmissionDeadline
+  });
+
+  const entry = await upsertSubmittedEntry({
+    slackUserId: input.slackUserId,
+    userEmail: input.userEmail,
+    userName: input.userName,
+    entryDate,
+    etaText: input.etaText,
+    etaMinutes: input.etaMinutes,
+    recordType: input.recordType,
+    submittedAt,
+    submittedOnTime: flags.submittedOnTime,
+    isLateArrival: flags.isLateArrival,
+    rawMessage: input.text,
+    slackMessageTs: input.messageTs
+  });
+
+  await cleanupStaleMissingEntries(entryDate);
+  return serializeEntry(entry);
+}
+
+function isIngestibleMessage(message: SlackMessage): boolean {
+  if (!message.user || !message.text || !message.ts) return false;
+  if (message.bot_id) return false;
+  if (message.subtype) return false;
+  // Thread replies (not the parent) are ignored
+  if (message.thread_ts && message.thread_ts !== message.ts) return false;
+  return true;
+}
+
+export async function processSlackChannelMessage(input: {
+  channelId: string;
+  userId: string;
+  text: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  threadTs?: string;
+}): Promise<{ recorded: boolean; reason?: string }> {
+  if (input.botId || input.subtype) {
+    return { recorded: false, reason: "ignored_bot_or_subtype" };
+  }
+  if (input.threadTs && input.threadTs !== input.ts) {
+    return { recorded: false, reason: "ignored_thread_reply" };
+  }
+
+  const targetChannelId = await resolveChannelId();
+  if (input.channelId !== targetChannelId) {
+    return { recorded: false, reason: "wrong_channel" };
+  }
+
+  const parsed = parseAttendanceMessage(input.text);
+  if (!parsed) {
+    return { recorded: false, reason: "unrecognized_message" };
+  }
+
+  const user = await getSlackUserInfo(input.userId);
+  if (user.is_bot || user.deleted) {
+    return { recorded: false, reason: "ignored_bot_or_deleted_user" };
+  }
+
+  const email = user.profile?.email ?? null;
+  if (!emailAllowed(email)) {
+    return { recorded: false, reason: "email_domain_rejected" };
+  }
+
+  await upsertSlackMember({
+    slackUserId: user.id,
+    name: user.name ?? null,
+    email,
+    realName: displayName(user),
+    isBot: Boolean(user.is_bot),
+    isDeleted: Boolean(user.deleted)
+  });
+
+  await submitAttendanceFromSlack({
+    slackUserId: user.id,
+    userEmail: email,
+    userName: displayName(user),
+    text: input.text,
+    messageTs: input.ts,
+    recordType: parsed.recordType,
+    etaText: parsed.etaText,
+    etaMinutes: parsed.etaMinutes
+  });
+
+  return { recorded: true };
+}
+
+export async function syncSlackMembers(): Promise<{ synced: number }> {
+  const memberIds = await listChannelMemberIds();
+  let synced = 0;
+
+  for (const userId of memberIds) {
+    try {
+      const user = await getSlackUserInfo(userId);
+      await upsertSlackMember({
+        slackUserId: user.id,
+        name: user.name ?? null,
+        email: user.profile?.email ?? null,
+        realName: displayName(user),
+        isBot: Boolean(user.is_bot),
+        isDeleted: Boolean(user.deleted)
+      });
+      synced += 1;
+    } catch (error) {
+      console.error(`Failed to sync Slack member ${userId}:`, error);
+    }
+  }
+
+  return { synced };
+}
+
+export async function syncAttendanceFromSlackHistory(dateStr: string): Promise<{
+  processed: number;
+  recorded: number;
+  errors: string[];
+}> {
+  const messages = await fetchChannelMessagesForDate(dateStr);
+  const errors: string[] = [];
+  const byUser = new Map<string, UpsertSubmittedInput>();
+
+  // Process oldest → newest so the latest message for a user wins
+  const ordered = [...messages].sort((a, b) => Number(a.ts) - Number(b.ts));
+
+  for (const message of ordered) {
+    if (!isIngestibleMessage(message)) continue;
+
+    const parsed = parseAttendanceMessage(message.text!);
+    if (!parsed) continue;
+
+    try {
+      const user = await getSlackUserInfo(message.user!);
+      if (user.is_bot || user.deleted) continue;
+
+      const email = user.profile?.email ?? null;
+      if (!emailAllowed(email)) continue;
+
+      await upsertSlackMember({
+        slackUserId: user.id,
+        name: user.name ?? null,
+        email,
+        realName: displayName(user),
+        isBot: Boolean(user.is_bot),
+        isDeleted: Boolean(user.deleted)
+      });
+
+      const submittedAt = slackTsToDate(message.ts);
+      const member = await findSlackMember(user.id);
+      const flags = classifyFlags({
+        submittedAt,
+        etaMinutes: parsed.etaMinutes,
+        recordType: parsed.recordType,
+        skipSubmissionDeadline: member?.pod === "production"
+      });
+
+      byUser.set(user.id, {
+        slackUserId: user.id,
+        userEmail: email,
+        userName: displayName(user),
+        entryDate: dateStr,
+        etaText: parsed.etaText,
+        etaMinutes: parsed.etaMinutes,
+        recordType: parsed.recordType,
+        submittedAt,
+        submittedOnTime: flags.submittedOnTime,
+        isLateArrival: flags.isLateArrival,
+        rawMessage: message.text!,
+        slackMessageTs: message.ts
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(`ts=${message.ts}: ${msg}`);
+    }
+  }
+
+  const entries = [...byUser.values()];
+  const recorded = await bulkUpsertSubmittedEntries(entries);
+  await cleanupStaleMissingEntries(dateStr);
+
+  return {
+    processed: messages.length,
+    recorded,
+    errors
+  };
+}
+
+export async function sendReminder(slackUserId: string): Promise<void> {
+  const channelLabel = env.slackChannelName.replace(/^#/, "");
+  const text = [
+    `Please post in #${channelLabel} before 11am:`,
+    "• eta 12:30  (office)",
+    "• wfh",
+    "• leave",
+    "• comp off"
+  ].join("\n");
+
+  await sendDm(slackUserId, text);
+}
+
+export async function sendRemindersForDate(dateStr: string): Promise<{
+  sent: number;
+  skipped: number;
+  errors: string[];
+}> {
+  const missing = await findMissingEntries(dateStr);
+  let sent = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const entry of missing) {
+    if (!entry.slackUserId) {
+      skipped += 1;
+      continue;
+    }
+    if (entry.reminderSentAt) {
+      skipped += 1;
+      continue;
+    }
+
+    const member = await findSlackMember(entry.slackUserId);
+    if (member?.pod === "production") {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      await sendReminder(entry.slackUserId);
+      await markReminderSent(entry.id);
+      sent += 1;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(`${entry.slackUserId}: ${msg}`);
+    }
+  }
+
+  return { sent, skipped, errors };
+}
+
+export async function runEtaCheck(
+  dateStr: string = todayInIST(),
+  options: { sendReminders?: boolean } = {}
+): Promise<{
+  date: string;
+  weekend: boolean;
+  membersSynced: number;
+  history: { processed: number; recorded: number; errors: string[] };
+  missingCreated: number;
+  reminders?: { sent: number; skipped: number; errors: string[] };
+}> {
+  if (isWeekendIST(dateStr)) {
+    return {
+      date: dateStr,
+      weekend: true,
+      membersSynced: 0,
+      history: { processed: 0, recorded: 0, errors: [] },
+      missingCreated: 0
+    };
+  }
+
+  const { synced: membersSynced } = await syncSlackMembers();
+  const history = await syncAttendanceFromSlackHistory(dateStr);
+  await cleanupStaleMissingEntries(dateStr);
+
+  const submittedIds = await findSubmittedUserIdsForDate(dateStr);
+  const members = await listActiveSlackMembers();
+
+  for (const member of members) {
+    if (member.isBot || member.isDeleted) continue;
+    if (member.pod === "production") continue;
+    if (!emailAllowed(member.email)) continue;
+    if (submittedIds.has(member.slackUserId)) continue;
+
+    await upsertMissingEntry({
+      slackUserId: member.slackUserId,
+      userEmail: member.email,
+      userName: member.realName ?? member.name,
+      entryDate: dateStr
+    });
+  }
+
+  const missingAfter = await findMissingEntries(dateStr);
+  const missingCreated = missingAfter.length;
+
+  let reminders: { sent: number; skipped: number; errors: string[] } | undefined;
+  if (options.sendReminders) {
+    reminders = await sendRemindersForDate(dateStr);
+  }
+
+  return {
+    date: dateStr,
+    weekend: false,
+    membersSynced,
+    history,
+    missingCreated,
+    reminders
+  };
+}
+
+export async function listTodayAttendance(dateStr: string = todayInIST()) {
+  const entries = await findEntriesForDate(dateStr);
+  return {
+    date: dateStr,
+    entries: entries.map(serializeEntry),
+    summary: {
+      total: entries.length,
+      submitted: entries.filter((e) => e.status === "submitted").length,
+      missing: entries.filter((e) => e.status === "missing").length,
+      wfh: entries.filter((e) => e.recordType === "wfh").length,
+      leave: entries.filter((e) => e.recordType === "leave").length,
+      compOff: entries.filter((e) => e.recordType === "comp_off").length,
+      office: entries.filter((e) => e.recordType === "office").length
+    }
+  };
+}
+
+export async function updateMemberPod(slackUserId: string, pod: "default" | "production") {
+  const member = await findSlackMember(slackUserId);
+  if (!member) {
+    throw new HttpError(404, "Slack member not found. Run a check first to sync members.");
+  }
+
+  return prisma.slackMember.update({
+    where: { slackUserId },
+    data: { pod }
+  });
+}

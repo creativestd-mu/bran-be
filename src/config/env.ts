@@ -68,6 +68,16 @@ export const env = {
     }
     return process.env.GOOGLE_CLIENT_ID ? [process.env.GOOGLE_CLIENT_ID] : [];
   })(),
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  googleOAuthRedirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI ?? "",
+  googleCalendarScopes: parseCsv(
+    process.env.GOOGLE_CALENDAR_SCOPES ??
+      "https://www.googleapis.com/auth/calendar.events.readonly,openid,email,profile"
+  ),
+  recallApiKey: process.env.RECALL_API_KEY ?? "",
+  recallApiRegion: process.env.RECALL_API_REGION ?? "us-east-1",
+  recallWebhookSecret: process.env.RECALL_WEBHOOK_SECRET ?? "",
+  meetingBotName: process.env.MEETING_BOT_NAME ?? "Bran Notetaker",
   jwtSecret: process.env.JWT_SECRET ?? "",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "7d",
   aiProvider: process.env.AI_PROVIDER ?? "gemini",
@@ -115,5 +125,13 @@ export const env = {
     user: process.env.SMTP_USER ?? "",
     password: process.env.SMTP_PASSWORD ?? "",
     from: process.env.SMTP_FROM ?? ""
-  }
+  },
+  // Attendance / ETA tracker (Slack)
+  slackBotToken: process.env.SLACK_BOT_TOKEN ?? "",
+  slackSigningSecret: process.env.SLACK_SIGNING_SECRET ?? "",
+  slackChannelName: process.env.SLACK_CHANNEL_NAME ?? "cs-day-off",
+  slackChannelId: process.env.SLACK_CHANNEL_ID ?? "",
+  cronSecret: process.env.CRON_SECRET ?? "",
+  attendanceEmailDomain: process.env.ATTENDANCE_EMAIL_DOMAIN ?? "mastersunion.org",
+  attendanceCronEnabled: (process.env.ATTENDANCE_CRON_ENABLED ?? "true").toLowerCase() !== "false"
 };

@@ -92,6 +92,8 @@ model User {
   thumbnailGenerations    ThumbnailGeneration[]
   nameAssignmentPreferences NameAssignmentPreference[] @relation("NamePrefOwner")
   preferredNameAssignments  NameAssignmentPreference[] @relation("NamePrefTarget")
+  calendarConnection        CalendarConnection?
+  organizedMeetings         Meeting[]               @relation("MeetingOrganizer")
 
   @@index([roleId])
   @@index([managerUserId])
@@ -362,10 +364,55 @@ model VoiceRecording {
 
   user      User       @relation("VoiceRecordingOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   workUnits WorkUnit[]
+  meetings  Meeting[]
 
   @@index([userId])
   @@index([userId, createdAt])
   @@index([source])
+}
+
+// ── Google Meet / Calendar Integration ──────────────────────
+
+model CalendarConnection {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  provider         String   @default("google")
+  recallCalendarId String   @unique @db.VarChar(200)
+  oauthEmail       String?  @db.VarChar(320)
+  status           String   @default("CONNECTED") // CONNECTED | DISCONNECTED | ERROR
+  connectedAt      DateTime @default(now())
+  disconnectedAt   DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([status])
+  @@index([recallCalendarId])
+}
+
+model Meeting {
+  id               String    @id @default(uuid())
+  organizerUserId  String
+  recallBotId      String?   @unique @db.VarChar(200)
+  calendarEventId  String?   @db.VarChar(200)
+  meetingUrl       String    @db.VarChar(1000)
+  title            String?   @db.VarChar(500)
+  startTime        DateTime?
+  status           String    @default("SCHEDULED") // SCHEDULED | JOINING | RECORDING | PROCESSING | COMPLETED | FAILED | CANCELLED
+  voiceRecordingId String?
+  errorMessage     String?   @db.Text
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  organizer      User            @relation("MeetingOrganizer", fields: [organizerUserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  voiceRecording VoiceRecording? @relation(fields: [voiceRecordingId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([organizerUserId])
+  @@index([organizerUserId, createdAt])
+  @@index([status])
+  @@index([calendarEventId])
+  @@index([voiceRecordingId])
 }
 
 // ── Work Units ──────────────────────────────────────────────
@@ -780,6 +827,46 @@ model UserPageVisit {
   @@unique([userId, path])
   @@index([userId, visitCount])
   @@index([userId, lastVisitedAt])
+}
+
+// ── Attendance / ETA Tracker (Slack #cs-day-off) ─────────────
+
+model SlackMember {
+  slackUserId String    @id @map("slack_user_id")
+  name        String?
+  email       String?
+  realName    String?   @map("real_name")
+  isBot       Boolean   @default(false) @map("is_bot")
+  isDeleted   Boolean   @default(false) @map("is_deleted")
+  syncedAt    DateTime? @map("synced_at")
+  pod         String    @default("default") // 'default' | 'production'
+
+  @@map("slack_members")
+}
+
+model EtaEntry {
+  id               Int       @id @default(autoincrement())
+  slackUserId      String?   @map("slack_user_id")
+  userEmail        String?   @map("user_email")
+  userName         String?   @map("user_name")
+  entryDate        DateTime  @map("entry_date") @db.Date
+  etaText          String?   @map("eta_text")
+  etaMinutes       Int?      @map("eta_minutes")
+  status           String // 'submitted' | 'missing'
+  recordType       String?   @map("record_type") // 'office' | 'wfh' | 'leave' | 'comp_off'
+  submittedAt      DateTime? @map("submitted_at")
+  submittedOnTime  Boolean?  @map("submitted_on_time")
+  isLateArrival    Boolean?  @map("is_late_arrival")
+  rawMessage       String?   @map("raw_message")
+  slackMessageTs   String?   @map("slack_message_ts")
+  reminderSentAt   DateTime? @map("reminder_sent_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@unique([slackUserId, entryDate])
+  @@index([entryDate, recordType], map: "idx_eta_entries_date_type")
+  @@index([entryDate, status])
+  @@map("eta_entries")
 }
 
 // ── Notifications ───────────────────────────────────────────

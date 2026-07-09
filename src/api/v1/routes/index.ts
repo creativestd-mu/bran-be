@@ -26,6 +26,8 @@ import { visionRouter } from "../../../modules/vision/vision.routes";
 import { navigationRouter } from "../../../modules/navigation/navigation.routes";
 import { utilitiesRouter } from "../../../modules/utilities/utilities.routes";
 import { inventoryRouter } from "../../../modules/inventory/inventory.routes";
+import { meetingsRouter } from "../../../modules/meetings/meetings.routes";
+import { attendanceRouter } from "../../../modules/attendance/attendance.routes";
 
 const v1Router = Router();
 
@@ -55,6 +57,8 @@ v1Router.use("/visions", visionRouter);
 v1Router.use("/navigation", navigationRouter);
 v1Router.use("/utilities", utilitiesRouter);
 v1Router.use("/inventory", inventoryRouter);
+v1Router.use("/meetings", meetingsRouter);
+v1Router.use("/attendance", attendanceRouter);
 
 // Existing Meltwater-based routes
 v1Router.use("/instagram", instagramRouter);

@@ -17,6 +17,9 @@ import { handleCalendarOAuthCallback } from "./modules/meetings/meetings.service
 import { recallWebhookHandler } from "./modules/meetings/meetings.webhook";
 import { apiRouter } from "./routes";
 
+/** Bump when shipping route-surface changes so deploys are easy to verify. */
+const BUILD_MARKER = "attendance-v1";
+
 const app = express();
 
 // Serve admin tools before helmet so inline scripts are not blocked by CSP
@@ -34,17 +37,19 @@ app.post(
   recallWebhookHandler
 );
 
-// Slack + cron webhooks need raw body for signature / form verification
-app.post(
-  "/api/slack/events",
-  express.raw({ type: "*/*" }),
-  slackEventsHandler
-);
-app.post(
-  "/api/slack/commands",
-  express.raw({ type: "*/*" }),
-  slackCommandsHandler
-);
+// Slack + cron webhooks need raw body for signature / form verification.
+// Registered before express.json() so the body stays a Buffer.
+const slackRaw = express.raw({ type: () => true, limit: "2mb" });
+app.post("/api/slack/events", slackRaw, slackEventsHandler);
+app.post("/api/slack/commands", slackRaw, slackCommandsHandler);
+app.get("/api/slack/events", (_req, res) => {
+  res.status(200).json({
+    success: true,
+    service: "attendance",
+    build: BUILD_MARKER,
+    message: "Slack events endpoint is live. Use POST for Event Subscriptions."
+  });
+});
 app.get("/api/cron/eta-check", etaCronHandler);
 
 app.get("/oauth/google/calendar/callback", (req, res) => {
@@ -64,7 +69,14 @@ app.use("/api/eta", attendanceRouter);
 app.get("/", (_req, res) => {
   res.status(200).json({
     success: true,
-    message: "Backend service is running"
+    message: "Backend service is running",
+    build: BUILD_MARKER,
+    features: {
+      attendance: true,
+      slackEvents: "/api/slack/events",
+      slackCommands: "/api/slack/commands",
+      etaCron: "/api/cron/eta-check"
+    }
   });
 });
 

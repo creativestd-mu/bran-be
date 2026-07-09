@@ -8,4 +8,5 @@ COPY . .
 RUN npm run build
 
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+# Match railway.json so migrations run before the server starts
+CMD ["npm", "run", "start:railway"]

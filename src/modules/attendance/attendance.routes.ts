@@ -6,13 +6,19 @@ import {
   attendanceCheckBodySchema,
   attendanceDateQuerySchema,
   attendanceRemindBodySchema,
-  updateMemberPodSchema
+  listPersonStatsQuerySchema,
+  updateMemberPodSchema,
+  updatePersonStatsActionSchema
 } from "./attendance.schemas";
 import {
   assertCanManageAttendance,
+  getAttendancePersonStats,
+  listAttendancePersonStats,
   listTodayAttendance,
+  rebuildAllAttendancePersonStats,
   runEtaCheck,
   sendRemindersForDate,
+  setAttendancePersonAction,
   updateMemberPod
 } from "./attendance.service";
 import { todayInIST } from "./attendance.dates";
@@ -54,6 +60,57 @@ attendanceRouter.post("/remind", async (req, res, next) => {
     const body = attendanceRemindBodySchema.parse(req.body ?? {});
     const result = await sendRemindersForDate(body.date ?? todayInIST());
     res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** GET /attendance/stats — per-person rolling counters for action */
+attendanceRouter.get("/stats", async (req, res, next) => {
+  try {
+    assertCanManageAttendance(req.user!.roleName);
+    const query = listPersonStatsQuerySchema.parse(req.query);
+    const data = await listAttendancePersonStats(query);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** POST /attendance/stats/rebuild — recompute all person stats from eta_entries */
+attendanceRouter.post("/stats/rebuild", async (req, res, next) => {
+  try {
+    assertCanManageAttendance(req.user!.roleName);
+    const data = await rebuildAllAttendancePersonStats();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** GET /attendance/stats/:slackUserId */
+attendanceRouter.get("/stats/:slackUserId", async (req, res, next) => {
+  try {
+    assertCanManageAttendance(req.user!.roleName);
+    const data = await getAttendancePersonStats(param(req.params.slackUserId));
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** PATCH /attendance/stats/:slackUserId/action — flag / warn / resolve */
+attendanceRouter.patch("/stats/:slackUserId/action", async (req, res, next) => {
+  try {
+    assertCanManageAttendance(req.user!.roleName);
+    const body = updatePersonStatsActionSchema.parse(req.body);
+    const data = await setAttendancePersonAction({
+      slackUserId: param(req.params.slackUserId),
+      actionStatus: body.actionStatus,
+      actionNote: body.actionNote,
+      actionTakenById: req.user!.userId
+    });
+    res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
   }

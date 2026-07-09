@@ -16,14 +16,22 @@ import {
   cleanupStaleMissingEntries,
   findEntriesForDate,
   findMissingEntries,
+  findPersonStatsBySlackUserId,
   findSlackMember,
   findSubmittedUserIdsForDate,
   listActiveSlackMembers,
+  listPersonStats,
   markReminderSent,
+  recomputePersonStats,
+  recomputePersonStatsMany,
   serializeEntry,
+  serializePersonStats,
+  updatePersonStatsAction,
   upsertMissingEntry,
   upsertSlackMember,
   upsertSubmittedEntry,
+  type AttendanceActionStatus,
+  type ListPersonStatsFilters,
   type UpsertSubmittedInput
 } from "./attendance.repository";
 import {
@@ -133,6 +141,7 @@ export async function submitAttendanceFromSlack(input: {
   });
 
   await cleanupStaleMissingEntries(entryDate);
+  await recomputePersonStats(input.slackUserId);
 
   await maybeNotifyWfhManager({
     recordType: input.recordType,
@@ -303,6 +312,7 @@ export async function syncAttendanceFromSlackHistory(dateStr: string): Promise<{
   const entries = [...byUser.values()];
   const recorded = await bulkUpsertSubmittedEntries(entries);
   await cleanupStaleMissingEntries(dateStr);
+  await recomputePersonStatsMany(entries.map((e) => e.slackUserId));
 
   for (const entry of entries) {
     await maybeNotifyWfhManager({
@@ -418,6 +428,14 @@ export async function runEtaCheck(
   const missingAfter = await findMissingEntries(dateStr);
   const missingCreated = missingAfter.length;
 
+  const statsUserIds = [
+    ...new Set([
+      ...members.map((m) => m.slackUserId),
+      ...missingAfter.map((m) => m.slackUserId).filter((id): id is string => Boolean(id))
+    ])
+  ];
+  await recomputePersonStatsMany(statsUserIds);
+
   let reminders: { sent: number; skipped: number; errors: string[] } | undefined;
   if (options.sendReminders) {
     reminders = await sendRemindersForDate(dateStr);
@@ -460,4 +478,53 @@ export async function updateMemberPod(slackUserId: string, pod: "default" | "pro
     where: { slackUserId },
     data: { pod }
   });
+}
+
+export async function listAttendancePersonStats(filters: ListPersonStatsFilters = {}) {
+  const rows = await listPersonStats(filters);
+  return rows.map(serializePersonStats);
+}
+
+export async function getAttendancePersonStats(slackUserId: string) {
+  let row = await findPersonStatsBySlackUserId(slackUserId);
+  if (!row) {
+    // Recompute on demand if entries exist but stats row was never created.
+    await recomputePersonStats(slackUserId);
+    row = await findPersonStatsBySlackUserId(slackUserId);
+  }
+  if (!row) {
+    throw new HttpError(404, "Attendance stats not found for this Slack user");
+  }
+  return serializePersonStats(row);
+}
+
+export async function setAttendancePersonAction(input: {
+  slackUserId: string;
+  actionStatus: AttendanceActionStatus;
+  actionNote?: string | null;
+  actionTakenById: string;
+}) {
+  let updated = await updatePersonStatsAction(input);
+  if (!updated) {
+    await recomputePersonStats(input.slackUserId);
+    updated = await updatePersonStatsAction(input);
+  }
+  if (!updated) {
+    throw new HttpError(404, "Attendance stats not found for this Slack user");
+  }
+  return serializePersonStats(updated);
+}
+
+/** Rebuild stats for every slack user that has eta_entries. */
+export async function rebuildAllAttendancePersonStats(): Promise<{ rebuilt: number }> {
+  const rows = await prisma.etaEntry.findMany({
+    where: { slackUserId: { not: null } },
+    select: { slackUserId: true },
+    distinct: ["slackUserId"]
+  });
+  const ids = rows
+    .map((r) => r.slackUserId)
+    .filter((id): id is string => Boolean(id));
+  const rebuilt = await recomputePersonStatsMany(ids);
+  return { rebuilt };
 }

@@ -94,6 +94,8 @@ model User {
   preferredNameAssignments  NameAssignmentPreference[] @relation("NamePrefTarget")
   calendarConnection        CalendarConnection?
   organizedMeetings         Meeting[]               @relation("MeetingOrganizer")
+  attendanceStats           AttendancePersonStats[] @relation("AttendanceStatsUser")
+  attendanceActionsTaken    AttendancePersonStats[] @relation("AttendanceStatsActionBy")
 
   @@index([roleId])
   @@index([managerUserId])
@@ -867,6 +869,45 @@ model EtaEntry {
   @@index([entryDate, recordType], map: "idx_eta_entries_date_type")
   @@index([entryDate, status])
   @@map("eta_entries")
+}
+
+/// Rolling per-person attendance counters for manager/admin action.
+/// Recomputed from eta_entries (not incremented) so upserts stay accurate.
+model AttendancePersonStats {
+  id                   String    @id @default(uuid())
+  slackUserId          String    @unique @map("slack_user_id")
+  userId               String?   @map("user_id")
+  userEmail            String?   @map("user_email")
+  userName             String?   @map("user_name")
+  wfhCount             Int       @default(0) @map("wfh_count")
+  leaveCount           Int       @default(0) @map("leave_count")
+  compOffCount         Int       @default(0) @map("comp_off_count")
+  officeCount          Int       @default(0) @map("office_count")
+  onTimeCount          Int       @default(0) @map("on_time_count")
+  lateSubmissionCount  Int       @default(0) @map("late_submission_count")
+  lateArrivalCount     Int       @default(0) @map("late_arrival_count")
+  missingCount         Int       @default(0) @map("missing_count")
+  submittedCount       Int       @default(0) @map("submitted_count")
+  /// none | flagged | warned | acknowledged | resolved
+  actionStatus         String    @default("none") @map("action_status")
+  actionNote           String?   @map("action_note") @db.Text
+  actionTakenById      String?   @map("action_taken_by_id")
+  actionTakenAt        DateTime? @map("action_taken_at")
+  lastEntryDate        DateTime? @map("last_entry_date") @db.Date
+  lastComputedAt       DateTime  @default(now()) @map("last_computed_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  user          User? @relation("AttendanceStatsUser", fields: [userId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  actionTakenBy User? @relation("AttendanceStatsActionBy", fields: [actionTakenById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([userEmail])
+  @@index([userId])
+  @@index([actionStatus])
+  @@index([wfhCount])
+  @@index([lateSubmissionCount])
+  @@index([missingCount])
+  @@map("attendance_person_stats")
 }
 
 // ── Notifications ───────────────────────────────────────────

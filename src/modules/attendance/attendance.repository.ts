@@ -302,3 +302,295 @@ export function deriveBadge(entry: {
   if (entry.submittedOnTime === true) return "on_time";
   return "submitted";
 }
+
+export const ATTENDANCE_ACTION_STATUSES = [
+  "none",
+  "flagged",
+  "warned",
+  "acknowledged",
+  "resolved"
+] as const;
+
+export type AttendanceActionStatus = (typeof ATTENDANCE_ACTION_STATUSES)[number];
+
+type StatsCounters = {
+  wfhCount: number;
+  leaveCount: number;
+  compOffCount: number;
+  officeCount: number;
+  onTimeCount: number;
+  lateSubmissionCount: number;
+  lateArrivalCount: number;
+  missingCount: number;
+  submittedCount: number;
+  lastEntryDate: Date | null;
+  userEmail: string | null;
+  userName: string | null;
+};
+
+function emptyCounters(): StatsCounters {
+  return {
+    wfhCount: 0,
+    leaveCount: 0,
+    compOffCount: 0,
+    officeCount: 0,
+    onTimeCount: 0,
+    lateSubmissionCount: 0,
+    lateArrivalCount: 0,
+    missingCount: 0,
+    submittedCount: 0,
+    lastEntryDate: null,
+    userEmail: null,
+    userName: null
+  };
+}
+
+function accumulateEntry(
+  counters: StatsCounters,
+  entry: {
+    status: string;
+    recordType: string | null;
+    submittedOnTime: boolean | null;
+    isLateArrival: boolean | null;
+    entryDate: Date;
+    userEmail: string | null;
+    userName: string | null;
+  }
+): void {
+  if (entry.userEmail) counters.userEmail = entry.userEmail;
+  if (entry.userName) counters.userName = entry.userName;
+
+  if (
+    !counters.lastEntryDate ||
+    entry.entryDate.getTime() > counters.lastEntryDate.getTime()
+  ) {
+    counters.lastEntryDate = entry.entryDate;
+  }
+
+  if (entry.status === "missing") {
+    counters.missingCount += 1;
+    return;
+  }
+
+  counters.submittedCount += 1;
+
+  if (entry.recordType === "wfh") counters.wfhCount += 1;
+  else if (entry.recordType === "leave") counters.leaveCount += 1;
+  else if (entry.recordType === "comp_off") counters.compOffCount += 1;
+  else if (entry.recordType === "office") counters.officeCount += 1;
+
+  if (entry.submittedOnTime === true) counters.onTimeCount += 1;
+  if (entry.submittedOnTime === false) counters.lateSubmissionCount += 1;
+  if (entry.isLateArrival === true) counters.lateArrivalCount += 1;
+}
+
+async function resolveUserIdByEmail(email: string | null): Promise<string | null> {
+  if (!email) return null;
+  const user = await prisma.user.findFirst({
+    where: {
+      isActive: true,
+      email: { equals: email, mode: "insensitive" }
+    },
+    select: { id: true }
+  });
+  return user?.id ?? null;
+}
+
+/** Recompute one person's rolling stats from all eta_entries. */
+export async function recomputePersonStats(slackUserId: string) {
+  const entries = await prisma.etaEntry.findMany({
+    where: { slackUserId },
+    orderBy: { entryDate: "asc" }
+  });
+
+  const counters = emptyCounters();
+  for (const entry of entries) {
+    accumulateEntry(counters, entry);
+  }
+
+  const userId = await resolveUserIdByEmail(counters.userEmail);
+
+  const counts = {
+    userId,
+    userEmail: counters.userEmail,
+    userName: counters.userName,
+    wfhCount: counters.wfhCount,
+    leaveCount: counters.leaveCount,
+    compOffCount: counters.compOffCount,
+    officeCount: counters.officeCount,
+    onTimeCount: counters.onTimeCount,
+    lateSubmissionCount: counters.lateSubmissionCount,
+    lateArrivalCount: counters.lateArrivalCount,
+    missingCount: counters.missingCount,
+    submittedCount: counters.submittedCount,
+    lastEntryDate: counters.lastEntryDate,
+    lastComputedAt: new Date()
+  };
+
+  return prisma.attendancePersonStats.upsert({
+    where: { slackUserId },
+    create: {
+      slackUserId,
+      ...counts
+    },
+    update: counts
+  });
+}
+
+export async function recomputePersonStatsMany(slackUserIds: string[]): Promise<number> {
+  const unique = [...new Set(slackUserIds.filter(Boolean))];
+  for (const slackUserId of unique) {
+    await recomputePersonStats(slackUserId);
+  }
+  return unique.length;
+}
+
+export type ListPersonStatsFilters = {
+  actionStatus?: AttendanceActionStatus;
+  minWfh?: number;
+  minLeave?: number;
+  minLateSubmission?: number;
+  minLateArrival?: number;
+  minMissing?: number;
+  sortBy?:
+    | "wfhCount"
+    | "leaveCount"
+    | "lateSubmissionCount"
+    | "lateArrivalCount"
+    | "missingCount"
+    | "onTimeCount"
+    | "userName";
+  sortDir?: "asc" | "desc";
+};
+
+export async function listPersonStats(filters: ListPersonStatsFilters = {}) {
+  const sortBy = filters.sortBy ?? "wfhCount";
+  const sortDir = filters.sortDir ?? "desc";
+
+  return prisma.attendancePersonStats.findMany({
+    where: {
+      ...(filters.actionStatus ? { actionStatus: filters.actionStatus } : {}),
+      ...(filters.minWfh != null ? { wfhCount: { gte: filters.minWfh } } : {}),
+      ...(filters.minLeave != null ? { leaveCount: { gte: filters.minLeave } } : {}),
+      ...(filters.minLateSubmission != null
+        ? { lateSubmissionCount: { gte: filters.minLateSubmission } }
+        : {}),
+      ...(filters.minLateArrival != null
+        ? { lateArrivalCount: { gte: filters.minLateArrival } }
+        : {}),
+      ...(filters.minMissing != null ? { missingCount: { gte: filters.minMissing } } : {})
+    },
+    include: {
+      user: { select: { id: true, name: true, email: true, managerUserId: true } },
+      actionTakenBy: { select: { id: true, name: true, email: true } }
+    },
+    orderBy: { [sortBy]: sortDir }
+  });
+}
+
+export async function findPersonStatsBySlackUserId(slackUserId: string) {
+  return prisma.attendancePersonStats.findUnique({
+    where: { slackUserId },
+    include: {
+      user: { select: { id: true, name: true, email: true, managerUserId: true } },
+      actionTakenBy: { select: { id: true, name: true, email: true } }
+    }
+  });
+}
+
+export async function updatePersonStatsAction(input: {
+  slackUserId: string;
+  actionStatus: AttendanceActionStatus;
+  actionNote?: string | null;
+  actionTakenById: string;
+}) {
+  const existing = await prisma.attendancePersonStats.findUnique({
+    where: { slackUserId: input.slackUserId }
+  });
+  if (!existing) return null;
+
+  return prisma.attendancePersonStats.update({
+    where: { slackUserId: input.slackUserId },
+    data: {
+      actionStatus: input.actionStatus,
+      actionNote: input.actionNote ?? null,
+      actionTakenById: input.actionTakenById,
+      actionTakenAt: new Date()
+    },
+    include: {
+      user: { select: { id: true, name: true, email: true, managerUserId: true } },
+      actionTakenBy: { select: { id: true, name: true, email: true } }
+    }
+  });
+}
+
+export function serializePersonStats(row: {
+  id: string;
+  slackUserId: string;
+  userId: string | null;
+  userEmail: string | null;
+  userName: string | null;
+  wfhCount: number;
+  leaveCount: number;
+  compOffCount: number;
+  officeCount: number;
+  onTimeCount: number;
+  lateSubmissionCount: number;
+  lateArrivalCount: number;
+  missingCount: number;
+  submittedCount: number;
+  actionStatus: string;
+  actionNote: string | null;
+  actionTakenById: string | null;
+  actionTakenAt: Date | null;
+  lastEntryDate: Date | null;
+  lastComputedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  user?: { id: string; name: string; email: string; managerUserId: string | null } | null;
+  actionTakenBy?: { id: string; name: string; email: string } | null;
+}) {
+  return {
+    id: row.id,
+    slackUserId: row.slackUserId,
+    userId: row.userId,
+    userEmail: row.userEmail,
+    userName: row.userName,
+    counts: {
+      wfh: row.wfhCount,
+      leave: row.leaveCount,
+      compOff: row.compOffCount,
+      office: row.officeCount,
+      onTime: row.onTimeCount,
+      lateSubmission: row.lateSubmissionCount,
+      lateArrival: row.lateArrivalCount,
+      missing: row.missingCount,
+      submitted: row.submittedCount
+    },
+    action: {
+      status: row.actionStatus,
+      note: row.actionNote,
+      takenById: row.actionTakenById,
+      takenBy: row.actionTakenBy
+        ? {
+            id: row.actionTakenBy.id,
+            name: row.actionTakenBy.name,
+            email: row.actionTakenBy.email
+          }
+        : null,
+      takenAt: row.actionTakenAt?.toISOString() ?? null
+    },
+    linkedUser: row.user
+      ? {
+          id: row.user.id,
+          name: row.user.name,
+          email: row.user.email,
+          managerUserId: row.user.managerUserId
+        }
+      : null,
+    lastEntryDate: row.lastEntryDate ? formatEntryDate(row.lastEntryDate) : null,
+    lastComputedAt: row.lastComputedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  };
+}

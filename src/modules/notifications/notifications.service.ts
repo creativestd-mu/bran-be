@@ -833,3 +833,218 @@ export async function notifyWfhToManager(
 
   return { notified: true };
 }
+
+// ── Content ops hub (shoot brief / edit / build) ─────────
+
+function opsDedupeKey(kind: string, nodeId: string, userId: string): string {
+  const minute = new Date().toISOString().slice(0, 16);
+  return `ops:${kind}:${nodeId}:${userId}:${minute}`;
+}
+
+function formatOpsDateTime(value: Date | null | undefined): string {
+  if (!value) return "—";
+  return value.toLocaleString("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: env.appTimezone
+  });
+}
+
+async function notifyOpsRecipient(input: {
+  userId: string;
+  kind: string;
+  title: string;
+  body: string;
+  emailLines: string[];
+  dedupeKind: string;
+  nodeId: string;
+  data: Record<string, unknown>;
+  link?: string;
+}): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: input.userId, isActive: true },
+    select: { id: true, email: true, name: true }
+  });
+  if (!user) return;
+
+  const notification = await createNotification({
+    userId: user.id,
+    kind: input.kind,
+    title: input.title,
+    body: input.body,
+    data: { ...input.data, link: input.link || undefined },
+    dedupeKey: opsDedupeKey(input.dedupeKind, input.nodeId, user.id)
+  });
+
+  if (!notification.emailSentAt && user.email) {
+    const text = [...input.emailLines, ...(input.link ? ["", `Open in app: ${input.link}`] : [])].join(
+      "\n"
+    );
+    const htmlBody = input.emailLines.map((line) => `<p>${escapeHtml(line)}</p>`).join("");
+    const sent = await sendEmail({
+      to: user.email,
+      subject: input.title,
+      text,
+      html: `${htmlBody}${input.link ? `<p><a href="${escapeAttr(input.link)}">Open in Bran</a></p>` : ""}`
+    });
+    if (sent) await markEmailSent(notification.id);
+  }
+}
+
+export type NotifyShootBriefDispatchedInput = {
+  contentId: string;
+  contentTitle: string;
+  nodeId: string;
+  location: string;
+  callTime: Date;
+  wrapTime?: Date | null;
+  scriptLink?: string | null;
+  scenes?: string | null;
+  notes?: string | null;
+  equipment: string[];
+  recipientUserIds: string[];
+};
+
+export async function notifyShootBriefDispatched(
+  input: NotifyShootBriefDispatchedInput
+): Promise<void> {
+  const link = buildContentLink(input.contentId, input.nodeId);
+  const title = `Shoot brief — ${input.contentTitle}`;
+  const callStr = formatOpsDateTime(input.callTime);
+  const wrapStr = input.wrapTime ? formatOpsDateTime(input.wrapTime) : "—";
+
+  const detailLines = [
+    `Video: ${input.contentTitle}`,
+    `Location: ${input.location}`,
+    `Call time: ${callStr}`,
+    `Wrap: ${wrapStr}`,
+    ...(input.scenes ? [`Scenes: ${input.scenes}`] : []),
+    ...(input.scriptLink ? [`Script: ${input.scriptLink}`] : []),
+    ...(input.equipment.length > 0
+      ? [`Equipment: ${input.equipment.join(", ")}`]
+      : []),
+    ...(input.notes ? [`Notes: ${input.notes}`] : [])
+  ];
+
+  const body = `You are on set for "${input.contentTitle}" at ${input.location}. Call ${callStr}.`;
+
+  await Promise.all(
+    input.recipientUserIds.map((userId) =>
+      notifyOpsRecipient({
+        userId,
+        kind: "SHOOT_BRIEF_DISPATCHED",
+        title,
+        body,
+        emailLines: ["Shoot brief dispatched.", "", ...detailLines],
+        dedupeKind: "shoot-brief",
+        nodeId: input.nodeId,
+        data: {
+          contentId: input.contentId,
+          contentTitle: input.contentTitle,
+          nodeId: input.nodeId,
+          location: input.location,
+          callTime: input.callTime.toISOString(),
+          wrapTime: input.wrapTime?.toISOString() ?? null,
+          equipment: input.equipment
+        },
+        link: link || undefined
+      })
+    )
+  );
+}
+
+export type NotifyEditAssignedInput = {
+  contentId: string;
+  contentTitle: string;
+  nodeId: string;
+  editorUserId: string;
+  deadline: Date;
+  footage?: string | null;
+  notes?: string | null;
+};
+
+export async function notifyEditAssigned(input: NotifyEditAssignedInput): Promise<void> {
+  const link = buildContentLink(input.contentId, input.nodeId);
+  const deadlineStr = formatOpsDateTime(input.deadline);
+  const title = `Edit assigned — ${input.contentTitle}`;
+  const body = `You were assigned to edit "${input.contentTitle}". First cut due ${deadlineStr}.`;
+
+  const detailLines = [
+    `Video: ${input.contentTitle}`,
+    `First cut due: ${deadlineStr}`,
+    ...(input.footage ? [`Footage: ${input.footage}`] : []),
+    ...(input.notes ? [`Notes: ${input.notes}`] : [])
+  ];
+
+  await notifyOpsRecipient({
+    userId: input.editorUserId,
+    kind: "EDIT_ASSIGNED",
+    title,
+    body,
+    emailLines: ["Edit assignment dispatched.", "", ...detailLines],
+    dedupeKind: "edit-assigned",
+    nodeId: input.nodeId,
+    data: {
+      contentId: input.contentId,
+      contentTitle: input.contentTitle,
+      nodeId: input.nodeId,
+      deadline: input.deadline.toISOString(),
+      footage: input.footage ?? null,
+      notes: input.notes ?? null
+    },
+    link: link || undefined
+  });
+}
+
+export type NotifyBuildAssignedInput = {
+  contentId: string;
+  contentTitle: string;
+  nodeId: string;
+  projectName: string;
+  phase?: string | null;
+  deadline: Date;
+  materials?: string | null;
+  files?: string | null;
+  notes?: string | null;
+  recipientUserIds: string[];
+};
+
+export async function notifyBuildAssigned(input: NotifyBuildAssignedInput): Promise<void> {
+  const link = buildContentLink(input.contentId, input.nodeId);
+  const deadlineStr = formatOpsDateTime(input.deadline);
+  const title = `Build assigned — ${input.projectName}`;
+  const body = `You were assigned to build "${input.projectName}" for "${input.contentTitle}". Shoot-ready by ${deadlineStr}.`;
+
+  const detailLines = [
+    `Project: ${input.projectName}`,
+    `For video: ${input.contentTitle}`,
+    ...(input.phase ? [`Phase: ${input.phase}`] : []),
+    `Shoot-ready by: ${deadlineStr}`,
+    ...(input.materials ? [`Materials: ${input.materials}`] : []),
+    ...(input.files ? [`Files: ${input.files}`] : []),
+    ...(input.notes ? [`Notes: ${input.notes}`] : [])
+  ];
+
+  await Promise.all(
+    input.recipientUserIds.map((userId) =>
+      notifyOpsRecipient({
+        userId,
+        kind: "BUILD_ASSIGNED",
+        title,
+        body,
+        emailLines: ["Build assignment dispatched.", "", ...detailLines],
+        dedupeKind: "build-assigned",
+        nodeId: input.nodeId,
+        data: {
+          contentId: input.contentId,
+          contentTitle: input.contentTitle,
+          nodeId: input.nodeId,
+          projectName: input.projectName,
+          phase: input.phase ?? null,
+          deadline: input.deadline.toISOString()
+        },
+        link: link || undefined
+      })
+    )
+  );
+}

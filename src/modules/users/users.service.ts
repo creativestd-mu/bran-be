@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { HttpError } from "../../utils/httpError";
 import {
   findAllUsers,
@@ -28,6 +29,7 @@ type UserHierarchyListMember = {
   designation: string | null;
   managerUserId: string | null;
   isActive: boolean;
+  isPlaceholder: boolean;
   role: { id: string; name: string };
   manager: { id: string; name: string; email: string; designation: string | null } | null;
 };
@@ -39,6 +41,7 @@ type UserHierarchyNode = {
   designation: string | null;
   managerUserId: string | null;
   isActive: boolean;
+  isPlaceholder: boolean;
   role: { id: string; name: string };
   manager: { id: string; name: string; email: string; designation: string | null } | null;
   directReports: UserHierarchyNode[];
@@ -55,6 +58,7 @@ function buildUserHierarchy(members: UserHierarchyListMember[]) {
       designation: member.designation,
       managerUserId: member.managerUserId,
       isActive: member.isActive,
+      isPlaceholder: member.isPlaceholder,
       role: member.role,
       manager: member.manager,
       directReports: []
@@ -216,6 +220,7 @@ export async function createUser(data: {
   designation?: string;
   managerUserId?: string | null;
   isActive?: boolean;
+  isPlaceholder?: boolean;
 }) {
   const existing = await findUserByEmail(data.email);
   if (existing) {
@@ -226,7 +231,32 @@ export async function createUser(data: {
 
   return createUserInDb({
     ...data,
-    isActive: data.isActive ?? true
+    isActive: data.isActive ?? true,
+    isPlaceholder: data.isPlaceholder ?? false
+  });
+}
+
+export async function createNewHire(data: {
+  name?: string;
+  designation?: string;
+  roleId: string;
+  managerUserId?: string | null;
+  email?: string;
+}) {
+  const id = randomUUID();
+  const email =
+    data.email?.trim().toLowerCase() ||
+    `newhire+${id.replace(/-/g, "").slice(0, 16)}@placeholder.internal`;
+  const name = data.name?.trim() || "New Hire";
+
+  return createUser({
+    email,
+    name,
+    roleId: data.roleId,
+    designation: data.designation?.trim() || undefined,
+    managerUserId: data.managerUserId,
+    isActive: false,
+    isPlaceholder: true
   });
 }
 
@@ -240,9 +270,22 @@ export async function updateUserProfile(
     managerUserId?: string | null;
     roleId?: string;
     isActive?: boolean;
+    isPlaceholder?: boolean;
+    email?: string;
   }
 ) {
   await getUserById(id);
+
+  if (data.email !== undefined) {
+    const email = data.email.trim().toLowerCase();
+    if (!email) throw new HttpError(400, "Email is required");
+    const existing = await findUserByEmail(email);
+    if (existing && existing.id !== id) {
+      throw new HttpError(409, "User with this email already exists");
+    }
+    data = { ...data, email };
+  }
+
   await ensureManagerCanBeAssigned(id, data.managerUserId);
   return updateUser(id, data);
 }

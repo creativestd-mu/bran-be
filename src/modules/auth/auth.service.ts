@@ -149,6 +149,10 @@ export async function googleSignIn(idToken: string) {
     });
   }
 
+  if (user.isPlaceholder) {
+    throw new HttpError(403, "Placeholder new-hire accounts cannot sign in");
+  }
+
   if (!user.isActive) {
     throw new HttpError(403, "Account is deactivated");
   }
@@ -169,6 +173,10 @@ export async function emailPasswordLogin(email: string, password: string) {
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
     throw new HttpError(401, "Invalid email or password");
+  }
+
+  if (user.isPlaceholder) {
+    throw new HttpError(403, "Placeholder new-hire accounts cannot sign in");
   }
 
   if (!user.isActive) {

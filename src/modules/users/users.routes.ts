@@ -7,6 +7,7 @@ import { requirePermission } from "../auth/auth.guard";
 import {
   listUsers,
   createUser,
+  createNewHire,
   getUserById,
   getUserHierarchy,
   upsertUserHierarchy,
@@ -91,10 +92,28 @@ const createUserSchema = z.object({
   isActive: z.boolean().optional()
 });
 
+const createNewHireSchema = z.object({
+  name: z.string().min(1).optional(),
+  designation: z.string().optional(),
+  roleId: z.string().uuid(),
+  managerUserId: z.string().uuid().nullable().optional(),
+  email: z.string().email().optional()
+});
+
 usersRouter.post("/", requirePermission("manage_users"), async (req, res, next) => {
   try {
     const data = createUserSchema.parse(req.body);
     const user = await createUser(data);
+    res.status(201).json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
+});
+
+usersRouter.post("/new-hire", requirePermission("manage_users"), async (req, res, next) => {
+  try {
+    const data = createNewHireSchema.parse(req.body);
+    const user = await createNewHire(data);
     res.status(201).json({ success: true, data: user });
   } catch (error) {
     next(error);
@@ -117,7 +136,9 @@ const updateUserSchema = z.object({
   designation: z.string().optional(),
   managerUserId: z.string().uuid().nullable().optional(),
   roleId: z.string().uuid().optional(),
-  isActive: z.boolean().optional()
+  isActive: z.boolean().optional(),
+  isPlaceholder: z.boolean().optional(),
+  email: z.string().email().optional()
 });
 
 usersRouter.put("/:id", async (req, res, next) => {
@@ -127,6 +148,8 @@ usersRouter.put("/:id", async (req, res, next) => {
     const data = updateUserSchema.parse(req.body);
     const requiresManageUsers =
       data.managerUserId !== undefined ||
+      data.isPlaceholder !== undefined ||
+      data.email !== undefined ||
       (!isSelf && (data.roleId !== undefined || data.isActive !== undefined));
 
     if (requiresManageUsers) {

@@ -78,6 +78,7 @@ export async function findUsersForHierarchy(isActive?: boolean) {
       designation: true,
       managerUserId: true,
       isActive: true,
+      isPlaceholder: true,
       role: { select: { id: true, name: true } },
       manager: { select: userMiniSelect }
     },
@@ -94,6 +95,7 @@ export async function createUser(data: {
   designation?: string;
   managerUserId?: string | null;
   isActive?: boolean;
+  isPlaceholder?: boolean;
 }) {
   return prisma.user.create({
     data,
@@ -111,6 +113,8 @@ export async function updateUser(
     managerUserId?: string | null;
     roleId?: string;
     isActive?: boolean;
+    isPlaceholder?: boolean;
+    email?: string;
   }
 ) {
   return prisma.user.update({

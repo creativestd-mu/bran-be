@@ -25,6 +25,9 @@ import {
   deleteNodeService,
   deleteOutputService,
   deleteResourceService,
+  dispatchBuildAssignService,
+  dispatchEditAssignService,
+  dispatchShootBriefService,
   getContentService,
   listContentsService,
   removeNodeTeamMemberService,
@@ -149,6 +152,34 @@ const listQuerySchema = z.object({
     .transform((v) => v === "true")
 });
 
+const shootBriefSchema = z.object({
+  location: z.string().min(1),
+  callTime: z.string().datetime(),
+  wrapTime: z.string().datetime().nullable().optional(),
+  people: z.array(z.string().uuid()).min(1),
+  equipment: z.array(z.string().min(1)).optional(),
+  scriptLink: z.string().url().nullable().optional(),
+  scenes: z.string().nullable().optional(),
+  notes: z.string().nullable().optional()
+});
+
+const editAssignSchema = z.object({
+  editorUserId: z.string().uuid(),
+  deadline: z.string().datetime(),
+  footage: z.string().nullable().optional(),
+  notes: z.string().nullable().optional()
+});
+
+const buildAssignSchema = z.object({
+  projectName: z.string().min(1),
+  builderUserIds: z.array(z.string().uuid()).min(1),
+  deadline: z.string().datetime(),
+  phase: z.string().nullable().optional(),
+  materials: z.string().nullable().optional(),
+  files: z.string().nullable().optional(),
+  notes: z.string().nullable().optional()
+});
+
 // ── Content ───────────────────────────────────────────────
 
 contentRouter.post("/", writeGuard, async (req, res, next) => {
@@ -248,6 +279,53 @@ contentRouter.delete("/nodes/:nodeId", writeGuard, async (req, res, next) => {
   try {
     await deleteNodeService(param(req.params.nodeId));
     res.status(200).json({ success: true, message: "Node deleted" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Ops hub (content creator only) ────────────────────────
+
+contentRouter.post("/nodes/:nodeId/ops/shoot-brief", async (req, res, next) => {
+  try {
+    if (!req.user) throw new Error("Authentication required");
+    const payload = shootBriefSchema.parse(req.body);
+    const node = await dispatchShootBriefService(
+      param(req.params.nodeId),
+      payload,
+      { userId: req.user.userId, roleId: req.user.roleId }
+    );
+    res.status(200).json({ success: true, data: node });
+  } catch (error) {
+    next(error);
+  }
+});
+
+contentRouter.post("/nodes/:nodeId/ops/assign-edit", async (req, res, next) => {
+  try {
+    if (!req.user) throw new Error("Authentication required");
+    const payload = editAssignSchema.parse(req.body);
+    const node = await dispatchEditAssignService(
+      param(req.params.nodeId),
+      payload,
+      { userId: req.user.userId, roleId: req.user.roleId }
+    );
+    res.status(200).json({ success: true, data: node });
+  } catch (error) {
+    next(error);
+  }
+});
+
+contentRouter.post("/nodes/:nodeId/ops/assign-build", async (req, res, next) => {
+  try {
+    if (!req.user) throw new Error("Authentication required");
+    const payload = buildAssignSchema.parse(req.body);
+    const node = await dispatchBuildAssignService(
+      param(req.params.nodeId),
+      payload,
+      { userId: req.user.userId, roleId: req.user.roleId }
+    );
+    res.status(200).json({ success: true, data: node });
   } catch (error) {
     next(error);
   }

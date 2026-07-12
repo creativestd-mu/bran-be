@@ -17,3 +17,7 @@ alwaysApply: true
 ## Deploy verification
 
 A healthy attendance deploy returns `"build":"attendance-v1"` from `GET /` and echoes Slack `url_verification` challenges from `POST /api/slack/events`.
+
+## Attendance access
+
+JWT attendance APIs (`/api/eta/*`, `/:lang/v1/attendance/*`) are restricted to role `chief_of_staff` only. Frontend should hide the Attendance nav/page for every other role.

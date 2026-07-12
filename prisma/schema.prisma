@@ -51,6 +51,8 @@ model User {
   passwordHash String?
   roleId       String
   isActive     Boolean   @default(true)
+  /** Open role / new-hire slot on the org chart (not a real login account). */
+  isPlaceholder Boolean  @default(false)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt

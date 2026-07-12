@@ -9,7 +9,10 @@ import { findUserByEmail } from "../users/users.repository";
 import {
   notifyNextStepReady,
   notifyResourceRequested,
-  notifyResourceReviewed
+  notifyResourceReviewed,
+  notifyShootBriefDispatched,
+  notifyEditAssigned,
+  notifyBuildAssigned
 } from "../notifications/notifications.service";
 import {
   ApprovalState,
@@ -107,6 +110,60 @@ async function loadContentOrThrow(contentId: string) {
   const content = await repoGetContentById(contentId);
   if (!content) throw new HttpError(404, "Content not found");
   return content;
+}
+
+function assertContentCreator(content: { createdById: string | null }, actor: Actor) {
+  if (!content.createdById || content.createdById !== actor.userId) {
+    throw new HttpError(403, "Only the content creator may dispatch ops assignments");
+  }
+}
+
+async function loadShootNodeContext(nodeId: string, actor: Actor) {
+  const node = await loadNodeOrThrow(nodeId);
+  if (node.kind !== "SHOOT") {
+    throw new HttpError(400, "Ops dispatch is only available on SHOOT nodes");
+  }
+  const content = await loadContentOrThrow(node.contentId);
+  assertContentCreator(content, actor);
+  return { node, content };
+}
+
+function formatShootBriefNotes(input: {
+  location: string;
+  scriptLink?: string | null;
+  scenes?: string | null;
+  notes?: string | null;
+}): string {
+  const lines: string[] = [`Location: ${input.location}`];
+  if (input.scriptLink) lines.push(`Script: ${input.scriptLink}`);
+  if (input.scenes) lines.push(`Scenes: ${input.scenes}`);
+  if (input.notes) lines.push(`Notes: ${input.notes}`);
+  return lines.join("\n");
+}
+
+function formatEditAssignNotes(input: {
+  footage?: string | null;
+  notes?: string | null;
+}): string {
+  const lines: string[] = [];
+  if (input.footage) lines.push(`Footage: ${input.footage}`);
+  if (input.notes) lines.push(`Notes: ${input.notes}`);
+  return lines.join("\n");
+}
+
+function formatBuildAssignNotes(input: {
+  projectName: string;
+  phase?: string | null;
+  materials?: string | null;
+  files?: string | null;
+  notes?: string | null;
+}): string {
+  const lines: string[] = [`Project: ${input.projectName}`];
+  if (input.phase) lines.push(`Phase: ${input.phase}`);
+  if (input.materials) lines.push(`Materials: ${input.materials}`);
+  if (input.files) lines.push(`Files: ${input.files}`);
+  if (input.notes) lines.push(`Notes: ${input.notes}`);
+  return lines.join("\n");
 }
 
 async function loadOutputOrThrow(outputId: string) {
@@ -974,4 +1031,201 @@ async function notifyRentalResourceReviewed(
       : null,
     recipientUserIds: Array.from(recipients)
   });
+}
+
+// ── Ops hub (shoot brief / edit / build) ──────────────────
+
+export async function dispatchShootBriefService(
+  nodeId: string,
+  input: {
+    location: string;
+    callTime: string;
+    wrapTime?: string | null;
+    people: string[];
+    equipment?: string[];
+    scriptLink?: string | null;
+    scenes?: string | null;
+    notes?: string | null;
+  },
+  actor: Actor
+) {
+  const { node, content } = await loadShootNodeContext(nodeId, actor);
+
+  const startsAt = parseOptionalDate(input.callTime);
+  if (!startsAt) {
+    throw new HttpError(400, "callTime is required");
+  }
+  const wrapTime =
+    input.wrapTime !== undefined ? parseOptionalDate(input.wrapTime) : undefined;
+
+  await updateNode(nodeId, {
+    startsAt,
+    dueDate: wrapTime,
+    notes: formatShootBriefNotes(input)
+  });
+  await syncReservationsForNode(nodeId);
+
+  const existingTeamUserIds = new Set(node.team.map((member) => member.userId));
+  for (const userId of input.people) {
+    if (!existingTeamUserIds.has(userId)) {
+      await addNodeTeamMember({ nodeId, userId, role: "CREW" });
+    }
+  }
+
+  const existingResourceNames = new Set(
+    node.resources.map((resource) => resource.name.toLowerCase())
+  );
+  for (const name of input.equipment ?? []) {
+    if (existingResourceNames.has(name.toLowerCase())) continue;
+    await createResource({
+      nodeId,
+      name,
+      sourceType: "IN_HOUSE",
+      approvalState: "APPROVED",
+      requestedByUserId: actor.userId
+    });
+    existingResourceNames.add(name.toLowerCase());
+  }
+
+  void notifyShootBriefDispatched({
+    contentId: content.id,
+    contentTitle: content.title,
+    nodeId,
+    location: input.location,
+    callTime: startsAt,
+    wrapTime: wrapTime ?? null,
+    scriptLink: input.scriptLink ?? null,
+    scenes: input.scenes ?? null,
+    notes: input.notes ?? null,
+    equipment: input.equipment ?? [],
+    recipientUserIds: input.people
+  }).catch((error) => {
+    console.error(`[notifications] shoot-brief fan-out failed for node ${nodeId}:`, error);
+  });
+
+  const refreshed = await getNodeById(nodeId);
+  if (!refreshed) throw new HttpError(404, "Content node not found");
+  return refreshed;
+}
+
+export async function dispatchEditAssignService(
+  shootNodeId: string,
+  input: {
+    editorUserId: string;
+    deadline: string;
+    footage?: string | null;
+    notes?: string | null;
+  },
+  actor: Actor
+) {
+  const { content } = await loadShootNodeContext(shootNodeId, actor);
+  const fullContent = await repoGetContentById(content.id);
+  const editingNode = fullContent?.nodes.find((node) => node.kind === "EDITING");
+  if (!editingNode) {
+    throw new HttpError(400, "No EDITING node exists on this content");
+  }
+
+  const deadline = parseOptionalDate(input.deadline);
+  if (!deadline) {
+    throw new HttpError(400, "deadline is required");
+  }
+
+  await updateNode(editingNode.id, {
+    dueDate: deadline,
+    notes: formatEditAssignNotes(input)
+  });
+
+  await addNodeTeamMember({
+    nodeId: editingNode.id,
+    userId: input.editorUserId,
+    role: "EDITOR"
+  });
+
+  void notifyEditAssigned({
+    contentId: content.id,
+    contentTitle: content.title,
+    nodeId: editingNode.id,
+    editorUserId: input.editorUserId,
+    deadline,
+    footage: input.footage ?? null,
+    notes: input.notes ?? null
+  }).catch((error) => {
+    console.error(
+      `[notifications] edit-assign fan-out failed for node ${editingNode.id}:`,
+      error
+    );
+  });
+
+  const refreshed = await getNodeById(editingNode.id);
+  if (!refreshed) throw new HttpError(404, "Content node not found");
+  return refreshed;
+}
+
+export async function dispatchBuildAssignService(
+  shootNodeId: string,
+  input: {
+    projectName: string;
+    builderUserIds: string[];
+    deadline: string;
+    phase?: string | null;
+    materials?: string | null;
+    files?: string | null;
+    notes?: string | null;
+  },
+  actor: Actor
+) {
+  const { content } = await loadShootNodeContext(shootNodeId, actor);
+  const fullContent = await repoGetContentById(content.id);
+  let buildNode = fullContent?.nodes.find((node) => node.kind === "BUILD");
+
+  const deadline = parseOptionalDate(input.deadline);
+  if (!deadline) {
+    throw new HttpError(400, "deadline is required");
+  }
+
+  const notes = formatBuildAssignNotes(input);
+
+  if (!buildNode) {
+    const maxOrder = await getMaxOrderIndexForContent(content.id);
+    buildNode = await createNode({
+      contentId: content.id,
+      kind: "BUILD",
+      name: "Build",
+      orderIndex: maxOrder === null ? 0 : maxOrder + 1,
+      notes,
+      dueDate: deadline
+    });
+  } else {
+    await updateNode(buildNode.id, { dueDate: deadline, notes });
+  }
+
+  const buildNodeId = buildNode.id;
+  const refreshed = await getNodeById(buildNodeId);
+  const existingTeamUserIds = new Set(
+    (refreshed?.team ?? buildNode.team).map((member) => member.userId)
+  );
+  for (const userId of input.builderUserIds) {
+    if (!existingTeamUserIds.has(userId)) {
+      await addNodeTeamMember({ nodeId: buildNodeId, userId, role: "CREW" });
+    }
+  }
+
+  void notifyBuildAssigned({
+    contentId: content.id,
+    contentTitle: content.title,
+    nodeId: buildNodeId,
+    projectName: input.projectName,
+    phase: input.phase ?? null,
+    deadline,
+    materials: input.materials ?? null,
+    files: input.files ?? null,
+    notes: input.notes ?? null,
+    recipientUserIds: input.builderUserIds
+  }).catch((error) => {
+    console.error(`[notifications] build-assign fan-out failed for node ${buildNodeId}:`, error);
+  });
+
+  const result = await getNodeById(buildNodeId);
+  if (!result) throw new HttpError(404, "Content node not found");
+  return result;
 }

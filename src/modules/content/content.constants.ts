@@ -8,6 +8,7 @@ export const NODE_KINDS = [
   "SCRIPTING",
   "SHOOT",
   "EDITING",
+  "BUILD",
   "BRIEF",
   "PUBLISHING",
   "OTHER"

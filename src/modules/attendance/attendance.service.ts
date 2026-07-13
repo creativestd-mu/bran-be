@@ -98,7 +98,7 @@ export function canManageAttendance(roleName: string): boolean {
 
 export function assertCanManageAttendance(roleName: string): void {
   if (!canManageAttendance(roleName)) {
-    throw new HttpError(403, "Only chief of staff can access attendance");
+    throw new HttpError(403, "Only admin or chief of staff can access attendance");
   }
 }
 

@@ -12,5 +12,5 @@ export type RecordType = (typeof RECORD_TYPES)[number];
 export const ENTRY_STATUSES = ["submitted", "missing"] as const;
 export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 
-/** Attendance UI + admin APIs are restricted to chief of staff only. */
-export const ATTENDANCE_ADMIN_ROLES = new Set(["chief_of_staff"]);
+/** Attendance UI + admin APIs are restricted to admin and chief of staff. */
+export const ATTENDANCE_ADMIN_ROLES = new Set(["admin", "chief_of_staff"]);

@@ -241,8 +241,20 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
   ].join("\n");
 
   if (manager?.managerSlackUserId && manager.managerSlackUserId !== slackUserId) {
-    const channel = await openConversation([slackUserId, manager.managerSlackUserId]);
-    return postSlackMessage(channel, text);
+    try {
+      const channel = await openConversation([slackUserId, manager.managerSlackUserId]);
+      return await postSlackMessage(channel, text);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // mpim:write may be missing — fall back to a normal 1:1 DM with the employee.
+      if (message.includes("missing_scope") || message.includes("cannot_dm") || message.includes("user_not_found")) {
+        console.warn(
+          `[attendance] Group DM with manager failed (${message}); falling back to 1:1 DM for ${slackUserId}`
+        );
+        return sendDm(slackUserId, text);
+      }
+      throw error;
+    }
   }
 
   return sendDm(slackUserId, text);

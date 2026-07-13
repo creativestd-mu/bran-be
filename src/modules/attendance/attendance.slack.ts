@@ -38,7 +38,10 @@ async function slackApi<T extends SlackApiResponse>(
 
   const data = (await response.json()) as T;
   if (!data.ok) {
-    throw new HttpError(502, `Slack API ${method} failed: ${data.error ?? "unknown_error"}`);
+    const needed = typeof (data as { needed?: string }).needed === "string"
+      ? ` (needed: ${(data as { needed?: string }).needed})`
+      : "";
+    throw new HttpError(502, `Slack API ${method} failed: ${data.error ?? "unknown_error"}${needed}`);
   }
   return data;
 }

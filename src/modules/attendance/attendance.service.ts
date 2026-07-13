@@ -11,6 +11,7 @@ import {
   todayInIST
 } from "./attendance.dates";
 import { parseAttendanceMessage } from "./attendance.parser";
+import type { AttendanceListFilter } from "./attendance.schemas";
 import {
   bulkUpsertSubmittedEntries,
   cleanupStaleMissingEntries,
@@ -498,16 +499,46 @@ async function buildMonthCountsBySlackUserId(
   return counts;
 }
 
-export async function listTodayAttendance(dateStr: string = todayInIST()) {
+function entryMatchesListFilter(
+  entry: { status: string; recordType: string | null },
+  filter: AttendanceListFilter
+): boolean {
+  switch (filter) {
+    case "total":
+      return true;
+    case "submitted":
+      return entry.status === "submitted";
+    case "missing":
+      return entry.status === "missing";
+    case "office":
+      return entry.recordType === "office";
+    case "wfh":
+      return entry.recordType === "wfh";
+    case "leave":
+      return entry.recordType === "leave";
+    case "compOff":
+      return entry.recordType === "comp_off";
+    default:
+      return true;
+  }
+}
+
+export async function listTodayAttendance(
+  dateStr: string = todayInIST(),
+  filter: AttendanceListFilter = "total"
+) {
   const entries = await findEntriesForDate(dateStr);
+  const filteredEntries =
+    filter === "total" ? entries : entries.filter((entry) => entryMatchesListFilter(entry, filter));
+
   const monthCounts = await buildMonthCountsBySlackUserId(
-    entries.map((e) => e.slackUserId).filter((id): id is string => Boolean(id)),
+    filteredEntries.map((e) => e.slackUserId).filter((id): id is string => Boolean(id)),
     dateStr
   );
 
   return {
     date: dateStr,
-    entries: entries.map((entry) => ({
+    entries: filteredEntries.map((entry) => ({
       ...serializeEntry(entry),
       monthCounts: entry.slackUserId
         ? monthCounts.get(entry.slackUserId) ?? emptyMonthCounts()

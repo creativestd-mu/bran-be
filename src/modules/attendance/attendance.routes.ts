@@ -36,11 +36,11 @@ attendanceRouter.use((req, _res, next) => {
   }
 });
 
-/** GET /attendance — today's (or ?date=) entries for the UI */
+/** GET /attendance — today's (or ?date=&filter=) entries for the UI */
 attendanceRouter.get("/", async (req, res, next) => {
   try {
     const query = attendanceDateQuerySchema.parse(req.query);
-    const data = await listTodayAttendance(query.date ?? todayInIST());
+    const data = await listTodayAttendance(query.date ?? todayInIST(), query.filter);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

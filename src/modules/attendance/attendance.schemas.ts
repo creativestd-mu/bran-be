@@ -1,10 +1,23 @@
 import { z } from "zod";
 
+export const attendanceListFilterValues = [
+  "total",
+  "submitted",
+  "missing",
+  "office",
+  "wfh",
+  "leave",
+  "compOff"
+] as const;
+
+export type AttendanceListFilter = (typeof attendanceListFilterValues)[number];
+
 export const attendanceDateQuerySchema = z.object({
   date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD")
-    .optional()
+    .optional(),
+  filter: z.enum(attendanceListFilterValues).optional().default("total")
 });
 
 export const attendanceCheckBodySchema = z.object({

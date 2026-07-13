@@ -138,6 +138,30 @@ export async function findEntriesForDate(dateStr: string) {
   });
 }
 
+/** Entries for users within an inclusive YYYY-MM-DD date range. */
+export async function findEntriesForUsersInDateRange(
+  slackUserIds: string[],
+  startDate: string,
+  endDate: string
+) {
+  if (slackUserIds.length === 0) return [];
+
+  return prisma.etaEntry.findMany({
+    where: {
+      slackUserId: { in: slackUserIds },
+      entryDate: {
+        gte: entryDateFromString(startDate),
+        lte: entryDateFromString(endDate)
+      }
+    },
+    select: {
+      slackUserId: true,
+      status: true,
+      recordType: true
+    }
+  });
+}
+
 export async function findSubmittedUserIdsForDate(dateStr: string): Promise<Set<string>> {
   const rows = await prisma.etaEntry.findMany({
     where: {

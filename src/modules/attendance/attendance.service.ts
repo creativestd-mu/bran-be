@@ -15,6 +15,7 @@ import {
   bulkUpsertSubmittedEntries,
   cleanupStaleMissingEntries,
   findEntriesForDate,
+  findEntriesForUsersInDateRange,
   findMissingEntries,
   findPersonStatsBySlackUserId,
   findSlackMember,
@@ -451,11 +452,67 @@ export async function runEtaCheck(
   };
 }
 
+export type AttendanceMonthCounts = {
+  leave: number;
+  wfh: number;
+  missing: number;
+};
+
+function emptyMonthCounts(): AttendanceMonthCounts {
+  return { leave: 0, wfh: 0, missing: 0 };
+}
+
+/** Inclusive calendar-month bounds (IST YYYY-MM-DD) for the month containing dateStr. */
+export function monthBoundsForDate(dateStr: string): { start: string; end: string } {
+  const [year, month] = dateStr.split("-").map(Number);
+  const start = `${year}-${String(month).padStart(2, "0")}-01`;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const end = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+  return { start, end };
+}
+
+async function buildMonthCountsBySlackUserId(
+  slackUserIds: string[],
+  dateStr: string
+): Promise<Map<string, AttendanceMonthCounts>> {
+  const counts = new Map<string, AttendanceMonthCounts>();
+  const uniqueIds = [...new Set(slackUserIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return counts;
+
+  const { start, end } = monthBoundsForDate(dateStr);
+  const history = await findEntriesForUsersInDateRange(uniqueIds, start, end);
+
+  for (const slackUserId of uniqueIds) {
+    counts.set(slackUserId, emptyMonthCounts());
+  }
+
+  for (const row of history) {
+    if (!row.slackUserId) continue;
+    const current = counts.get(row.slackUserId) ?? emptyMonthCounts();
+    if (row.status === "missing") current.missing += 1;
+    else if (row.recordType === "leave") current.leave += 1;
+    else if (row.recordType === "wfh") current.wfh += 1;
+    counts.set(row.slackUserId, current);
+  }
+
+  return counts;
+}
+
 export async function listTodayAttendance(dateStr: string = todayInIST()) {
   const entries = await findEntriesForDate(dateStr);
+  const monthCounts = await buildMonthCountsBySlackUserId(
+    entries.map((e) => e.slackUserId).filter((id): id is string => Boolean(id)),
+    dateStr
+  );
+
   return {
     date: dateStr,
-    entries: entries.map(serializeEntry),
+    entries: entries.map((entry) => ({
+      ...serializeEntry(entry),
+      monthCounts: entry.slackUserId
+        ? monthCounts.get(entry.slackUserId) ?? emptyMonthCounts()
+        : emptyMonthCounts()
+    })),
     summary: {
       total: entries.length,
       submitted: entries.filter((e) => e.status === "submitted").length,

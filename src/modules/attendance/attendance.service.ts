@@ -2,10 +2,12 @@ import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../utils/httpError";
 import { notifyWfhToManager } from "../notifications/notifications.service";
+import { classifyWfhApprovalReply } from "./attendance.approval";
 import { ATTENDANCE_ADMIN_ROLES } from "./attendance.constants";
 import {
   classifyFlags,
   dateInIST,
+  formatEntryDate,
   isWeekendIST,
   slackTsToDate,
   todayInIST
@@ -13,10 +15,13 @@ import {
 import { parseAttendanceMessage } from "./attendance.parser";
 import type { AttendanceListFilter } from "./attendance.schemas";
 import {
+  applyWfhApproval,
   bulkUpsertSubmittedEntries,
   cleanupStaleMissingEntries,
   findEntriesForDate,
   findEntriesForUsersInDateRange,
+  findEntryByReminderChannel,
+  findEntryBySlackMessageTs,
   findMissingEntries,
   findPersonStatsBySlackUserId,
   findSlackMember,
@@ -40,6 +45,9 @@ import {
   fetchChannelMessagesForDate,
   getSlackUserInfo,
   listChannelMemberIds,
+  lookupSlackUserByEmail,
+  openConversation,
+  postSlackMessage,
   resolveChannelId,
   sendDm,
   type SlackMessage
@@ -160,9 +168,263 @@ function isIngestibleMessage(message: SlackMessage): boolean {
   if (!message.user || !message.text || !message.ts) return false;
   if (message.bot_id) return false;
   if (message.subtype) return false;
-  // Thread replies (not the parent) are ignored
+  // Thread replies (not the parent) are ignored for attendance *submission*
   if (message.thread_ts && message.thread_ts !== message.ts) return false;
   return true;
+}
+
+async function resolveManagerSlackContext(employeeEmail: string | null): Promise<{
+  managerName: string | null;
+  managerSlackUserId: string | null;
+} | null> {
+  if (!employeeEmail?.trim()) return null;
+
+  const employee = await prisma.user.findFirst({
+    where: {
+      isActive: true,
+      email: { equals: employeeEmail.trim().toLowerCase(), mode: "insensitive" }
+    },
+    select: {
+      manager: {
+        select: { name: true, email: true, isActive: true }
+      }
+    }
+  });
+
+  const manager = employee?.manager;
+  if (!manager?.isActive || !manager.email) {
+    return manager?.name ? { managerName: manager.name, managerSlackUserId: null } : null;
+  }
+
+  const slackManager = await lookupSlackUserByEmail(manager.email);
+  return {
+    managerName: manager.name,
+    managerSlackUserId: slackManager?.id ?? null
+  };
+}
+
+function firstName(fullName: string | null | undefined): string {
+  const trimmed = fullName?.trim();
+  if (!trimmed) return "there";
+  return trimmed.split(/\s+/)[0] ?? "there";
+}
+
+export async function sendReminder(slackUserId: string): Promise<{ channel: string; ts: string }> {
+  const channelLabel = env.slackChannelName.replace(/^#/, "");
+  const member = await findSlackMember(slackUserId);
+  const slackUser = member ? null : await getSlackUserInfo(slackUserId);
+  const employeeName = member?.realName ?? member?.name ?? slackUser?.profile?.real_name ?? null;
+  const employeeEmail = member?.email ?? slackUser?.profile?.email ?? null;
+  const manager = await resolveManagerSlackContext(employeeEmail);
+
+  const managerTag = manager?.managerSlackUserId
+    ? `<@${manager.managerSlackUserId}>`
+    : manager?.managerName
+      ? manager.managerName
+      : "your manager";
+
+  const text = [
+    `Hey ${firstName(employeeName)} — quick nudge from Bran.`,
+    "",
+    `I haven't seen your attendance update in #${channelLabel} yet today.`,
+    `If you're working from home, was that approved by ${managerTag}?`,
+    "",
+    `${managerTag} — could you confirm here if you approved their WFH? A simple "yes, approved" / "no" is enough.`,
+    "",
+    `Otherwise please post one of these in #${channelLabel}:`,
+    "• eta 12:30  (coming to office)",
+    "• wfh",
+    "• leave",
+    "• comp off",
+    "",
+    "Thanks!"
+  ].join("\n");
+
+  if (manager?.managerSlackUserId && manager.managerSlackUserId !== slackUserId) {
+    const channel = await openConversation([slackUserId, manager.managerSlackUserId]);
+    return postSlackMessage(channel, text);
+  }
+
+  return sendDm(slackUserId, text);
+}
+
+export async function sendRemindersForDate(dateStr: string): Promise<{
+  sent: number;
+  skipped: number;
+  errors: string[];
+}> {
+  const missing = await findMissingEntries(dateStr);
+  let sent = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const entry of missing) {
+    if (!entry.slackUserId) {
+      skipped += 1;
+      continue;
+    }
+    if (entry.reminderSentAt) {
+      skipped += 1;
+      continue;
+    }
+
+    const member = await findSlackMember(entry.slackUserId);
+    if (member?.pod === "production") {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const posted = await sendReminder(entry.slackUserId);
+      await markReminderSent(entry.id, { channelId: posted.channel, slackTs: posted.ts });
+      sent += 1;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(`${entry.slackUserId}: ${msg}`);
+    }
+  }
+
+  return { sent, skipped, errors };
+}
+
+export async function sendReminderForUser(
+  dateStr: string,
+  slackUserId: string
+): Promise<{ sent: number; skipped: number; errors: string[] }> {
+  const missing = await findMissingEntries(dateStr);
+  const entry = missing.find((e) => e.slackUserId === slackUserId);
+  if (!entry) {
+    throw new HttpError(404, "No missing attendance entry for this user on that date");
+  }
+
+  if (entry.reminderSentAt) {
+    return { sent: 0, skipped: 1, errors: [] };
+  }
+
+  const member = await findSlackMember(slackUserId);
+  if (member?.pod === "production") {
+    return { sent: 0, skipped: 1, errors: [] };
+  }
+
+  try {
+    const posted = await sendReminder(slackUserId);
+    await markReminderSent(entry.id, { channelId: posted.channel, slackTs: posted.ts });
+    return { sent: 1, skipped: 0, errors: [] };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { sent: 0, skipped: 0, errors: [`${slackUserId}: ${msg}`] };
+  }
+}
+
+/**
+ * Process a Slack reply (DM/MPIM reminder thread or channel thread on a WFH post).
+ * AI is used only to decide approved / denied / unclear.
+ */
+export async function processWfhApprovalReply(input: {
+  channelId: string;
+  userId: string;
+  text: string;
+  ts: string;
+  threadTs?: string;
+  channelType?: string;
+}): Promise<{ handled: boolean; reason?: string; decision?: string }> {
+  if (!input.text.trim()) {
+    return { handled: false, reason: "empty_text" };
+  }
+
+  let entry =
+    (input.threadTs ? await findEntryBySlackMessageTs(input.threadTs) : null) ??
+    (await findEntryByReminderChannel(input.channelId, todayInIST()));
+
+  // Reminder thread reply: parent is the reminder message ts
+  if (!entry && input.threadTs) {
+    entry = await prisma.etaEntry.findFirst({
+      where: { reminderSlackTs: input.threadTs }
+    });
+  }
+
+  if (!entry?.slackUserId) {
+    return { handled: false, reason: "no_matching_entry" };
+  }
+
+  // Don't re-process already decided approvals
+  if (entry.wfhApprovalState === "approved" || entry.wfhApprovalState === "denied") {
+    return { handled: false, reason: "already_decided" };
+  }
+
+  const employeeEmail = entry.userEmail;
+  const manager = await resolveManagerSlackContext(employeeEmail);
+  const isManager = Boolean(
+    manager?.managerSlackUserId && manager.managerSlackUserId === input.userId
+  );
+  const isEmployee = entry.slackUserId === input.userId;
+
+  // Only manager (preferred) or employee confirming manager approval
+  if (!isManager && !isEmployee) {
+    return { handled: false, reason: "not_manager_or_employee" };
+  }
+
+  let classification: Awaited<ReturnType<typeof classifyWfhApprovalReply>>;
+  try {
+    classification = await classifyWfhApprovalReply({
+      replyText: input.text,
+      employeeName: entry.userName,
+      entryDate: formatEntryDate(entry.entryDate),
+      originalMessage: entry.rawMessage
+    });
+  } catch (error) {
+    console.error("[attendance] WFH approval AI failed:", error);
+    return { handled: false, reason: "ai_failed" };
+  }
+
+  if (classification.decision === "unclear") {
+    return { handled: true, reason: "unclear", decision: "unclear" };
+  }
+
+  const markSubmittedAsWfh =
+    classification.decision === "approved" &&
+    (entry.status === "missing" || entry.recordType !== "wfh");
+
+  const updated = await applyWfhApproval({
+    entryId: entry.id,
+    state: classification.decision,
+    approvedBySlackUserId: isManager ? input.userId : manager?.managerSlackUserId ?? input.userId,
+    note: classification.reason ?? input.text,
+    markSubmittedAsWfh,
+    userEmail: entry.userEmail,
+    userName: entry.userName
+  });
+
+  if (markSubmittedAsWfh) {
+    await cleanupStaleMissingEntries(formatEntryDate(entry.entryDate));
+  }
+  if (entry.slackUserId) {
+    await recomputePersonStats(entry.slackUserId);
+  }
+
+  if (classification.decision === "approved" && updated.recordType === "wfh") {
+    await maybeNotifyWfhManager({
+      recordType: "wfh",
+      userEmail: updated.userEmail,
+      userName: updated.userName,
+      entryDate: formatEntryDate(updated.entryDate),
+      rawMessage: updated.rawMessage
+    });
+  }
+
+  try {
+    await postSlackMessage(
+      input.channelId,
+      classification.decision === "approved"
+        ? `Got it — marked <@${entry.slackUserId}> as approved WFH for ${formatEntryDate(entry.entryDate)}.`
+        : `Noted — WFH was not approved for <@${entry.slackUserId}> on ${formatEntryDate(entry.entryDate)}.`,
+      { threadTs: input.threadTs ?? input.ts }
+    );
+  } catch (error) {
+    console.error("[attendance] Failed to post approval confirmation:", error);
+  }
+
+  return { handled: true, decision: classification.decision };
 }
 
 export async function processSlackChannelMessage(input: {
@@ -173,12 +435,30 @@ export async function processSlackChannelMessage(input: {
   botId?: string;
   subtype?: string;
   threadTs?: string;
+  channelType?: string;
 }): Promise<{ recorded: boolean; reason?: string }> {
   if (input.botId || input.subtype) {
     return { recorded: false, reason: "ignored_bot_or_subtype" };
   }
-  if (input.threadTs && input.threadTs !== input.ts) {
-    return { recorded: false, reason: "ignored_thread_reply" };
+
+  const isThreadReply = Boolean(input.threadTs && input.threadTs !== input.ts);
+  const isImOrMpim = input.channelType === "im" || input.channelType === "mpim";
+
+  // Manager/employee approval replies (AI-classified) — DM/MPIM or channel thread
+  if (isThreadReply || isImOrMpim) {
+    const approval = await processWfhApprovalReply({
+      channelId: input.channelId,
+      userId: input.userId,
+      text: input.text,
+      ts: input.ts,
+      threadTs: input.threadTs,
+      channelType: input.channelType
+    });
+    if (approval.handled) {
+      return { recorded: false, reason: `wfh_approval_${approval.decision ?? approval.reason}` };
+    }
+    // Don't treat DM/MPIM or thread replies as attendance submissions
+    return { recorded: false, reason: approval.reason ?? "ignored_non_attendance_reply" };
   }
 
   const targetChannelId = await resolveChannelId();
@@ -331,87 +611,6 @@ export async function syncAttendanceFromSlackHistory(dateStr: string): Promise<{
     recorded,
     errors
   };
-}
-
-export async function sendReminder(slackUserId: string): Promise<void> {
-  const channelLabel = env.slackChannelName.replace(/^#/, "");
-  const text = [
-    `Please post in #${channelLabel} before 11am:`,
-    "• eta 12:30  (office)",
-    "• wfh",
-    "• leave",
-    "• comp off"
-  ].join("\n");
-
-  await sendDm(slackUserId, text);
-}
-
-export async function sendRemindersForDate(dateStr: string): Promise<{
-  sent: number;
-  skipped: number;
-  errors: string[];
-}> {
-  const missing = await findMissingEntries(dateStr);
-  let sent = 0;
-  let skipped = 0;
-  const errors: string[] = [];
-
-  for (const entry of missing) {
-    if (!entry.slackUserId) {
-      skipped += 1;
-      continue;
-    }
-    if (entry.reminderSentAt) {
-      skipped += 1;
-      continue;
-    }
-
-    const member = await findSlackMember(entry.slackUserId);
-    if (member?.pod === "production") {
-      skipped += 1;
-      continue;
-    }
-
-    try {
-      await sendReminder(entry.slackUserId);
-      await markReminderSent(entry.id);
-      sent += 1;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      errors.push(`${entry.slackUserId}: ${msg}`);
-    }
-  }
-
-  return { sent, skipped, errors };
-}
-
-export async function sendReminderForUser(
-  dateStr: string,
-  slackUserId: string
-): Promise<{ sent: number; skipped: number; errors: string[] }> {
-  const missing = await findMissingEntries(dateStr);
-  const entry = missing.find((e) => e.slackUserId === slackUserId);
-  if (!entry) {
-    throw new HttpError(404, "No missing attendance entry for this user on that date");
-  }
-
-  if (entry.reminderSentAt) {
-    return { sent: 0, skipped: 1, errors: [] };
-  }
-
-  const member = await findSlackMember(slackUserId);
-  if (member?.pod === "production") {
-    return { sent: 0, skipped: 1, errors: [] };
-  }
-
-  try {
-    await sendReminder(slackUserId);
-    await markReminderSent(entry.id);
-    return { sent: 1, skipped: 0, errors: [] };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return { sent: 0, skipped: 0, errors: [`${slackUserId}: ${msg}`] };
-  }
 }
 
 export async function runEtaCheck(

@@ -108,7 +108,8 @@ export async function slackEventsHandler(
       ts: event.ts,
       botId: event.bot_id,
       subtype: event.subtype,
-      threadTs: event.thread_ts
+      threadTs: event.thread_ts,
+      channelType: event.channel_type
     }).catch((error) => {
       console.error("Slack attendance event processing failed:", error);
     });

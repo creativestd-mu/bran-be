@@ -849,27 +849,36 @@ model SlackMember {
 }
 
 model EtaEntry {
-  id               Int       @id @default(autoincrement())
-  slackUserId      String?   @map("slack_user_id")
-  userEmail        String?   @map("user_email")
-  userName         String?   @map("user_name")
-  entryDate        DateTime  @map("entry_date") @db.Date
-  etaText          String?   @map("eta_text")
-  etaMinutes       Int?      @map("eta_minutes")
-  status           String // 'submitted' | 'missing'
-  recordType       String?   @map("record_type") // 'office' | 'wfh' | 'leave' | 'comp_off'
-  submittedAt      DateTime? @map("submitted_at")
-  submittedOnTime  Boolean?  @map("submitted_on_time")
-  isLateArrival    Boolean?  @map("is_late_arrival")
-  rawMessage       String?   @map("raw_message")
-  slackMessageTs   String?   @map("slack_message_ts")
-  reminderSentAt   DateTime? @map("reminder_sent_at")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  id                       Int       @id @default(autoincrement())
+  slackUserId              String?   @map("slack_user_id")
+  userEmail                String?   @map("user_email")
+  userName                 String?   @map("user_name")
+  entryDate                DateTime  @map("entry_date") @db.Date
+  etaText                  String?   @map("eta_text")
+  etaMinutes               Int?      @map("eta_minutes")
+  status                   String // 'submitted' | 'missing'
+  recordType               String?   @map("record_type") // 'office' | 'wfh' | 'leave' | 'comp_off'
+  submittedAt              DateTime? @map("submitted_at")
+  submittedOnTime          Boolean?  @map("submitted_on_time")
+  isLateArrival            Boolean?  @map("is_late_arrival")
+  rawMessage               String?   @map("raw_message")
+  slackMessageTs           String?   @map("slack_message_ts")
+  reminderSentAt           DateTime? @map("reminder_sent_at")
+  reminderChannelId        String?   @map("reminder_channel_id")
+  reminderSlackTs          String?   @map("reminder_slack_ts")
+  /// null | pending | approved | denied — WFH manager approval
+  wfhApprovalState         String?   @map("wfh_approval_state")
+  wfhApprovedAt            DateTime? @map("wfh_approved_at")
+  wfhApprovedBySlackUserId String?   @map("wfh_approved_by_slack_user_id")
+  wfhApprovalNote          String?   @map("wfh_approval_note") @db.Text
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
 
   @@unique([slackUserId, entryDate])
   @@index([entryDate, recordType], map: "idx_eta_entries_date_type")
   @@index([entryDate, status])
+  @@index([reminderChannelId])
+  @@index([slackMessageTs])
   @@map("eta_entries")
 }
 

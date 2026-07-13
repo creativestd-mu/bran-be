@@ -39,7 +39,8 @@ export async function upsertSubmittedEntry(input: UpsertSubmittedInput) {
       submittedOnTime: input.submittedOnTime,
       isLateArrival: input.isLateArrival,
       rawMessage: input.rawMessage,
-      slackMessageTs: input.slackMessageTs
+      slackMessageTs: input.slackMessageTs,
+      wfhApprovalState: input.recordType === "wfh" ? "pending" : null
     },
     update: {
       userEmail: input.userEmail,
@@ -52,7 +53,15 @@ export async function upsertSubmittedEntry(input: UpsertSubmittedInput) {
       submittedOnTime: input.submittedOnTime,
       isLateArrival: input.isLateArrival,
       rawMessage: input.rawMessage,
-      slackMessageTs: input.slackMessageTs
+      slackMessageTs: input.slackMessageTs,
+      ...(input.recordType === "wfh"
+        ? {}
+        : {
+            wfhApprovalState: null,
+            wfhApprovedAt: null,
+            wfhApprovedBySlackUserId: null,
+            wfhApprovalNote: null
+          })
     }
   });
 }
@@ -71,7 +80,7 @@ export async function bulkUpsertSubmittedEntries(entries: UpsertSubmittedInput[]
             entryDate
           }
         },
-        create: {
+          create: {
           slackUserId: input.slackUserId,
           userEmail: input.userEmail,
           userName: input.userName,
@@ -84,7 +93,8 @@ export async function bulkUpsertSubmittedEntries(entries: UpsertSubmittedInput[]
           submittedOnTime: input.submittedOnTime,
           isLateArrival: input.isLateArrival,
           rawMessage: input.rawMessage,
-          slackMessageTs: input.slackMessageTs
+          slackMessageTs: input.slackMessageTs,
+          wfhApprovalState: input.recordType === "wfh" ? "pending" : null
         },
         update: {
           userEmail: input.userEmail,
@@ -97,7 +107,15 @@ export async function bulkUpsertSubmittedEntries(entries: UpsertSubmittedInput[]
           submittedOnTime: input.submittedOnTime,
           isLateArrival: input.isLateArrival,
           rawMessage: input.rawMessage,
-          slackMessageTs: input.slackMessageTs
+          slackMessageTs: input.slackMessageTs,
+          ...(input.recordType === "wfh"
+            ? {}
+            : {
+                wfhApprovalState: null,
+                wfhApprovedAt: null,
+                wfhApprovedBySlackUserId: null,
+                wfhApprovalNote: null
+              })
         }
       });
     })
@@ -222,10 +240,82 @@ export async function findMissingEntries(dateStr: string) {
   });
 }
 
-export async function markReminderSent(id: number) {
+export async function markReminderSent(
+  id: number,
+  meta?: { channelId?: string | null; slackTs?: string | null }
+) {
   return prisma.etaEntry.update({
     where: { id },
-    data: { reminderSentAt: new Date() }
+    data: {
+      reminderSentAt: new Date(),
+      ...(meta?.channelId !== undefined ? { reminderChannelId: meta.channelId } : {}),
+      ...(meta?.slackTs !== undefined ? { reminderSlackTs: meta.slackTs } : {})
+    }
+  });
+}
+
+export async function findEntryById(id: number) {
+  return prisma.etaEntry.findUnique({ where: { id } });
+}
+
+export async function findEntryByReminderChannel(channelId: string, dateStr: string) {
+  return prisma.etaEntry.findFirst({
+    where: {
+      reminderChannelId: channelId,
+      entryDate: entryDateFromString(dateStr)
+    },
+    orderBy: { reminderSentAt: "desc" }
+  });
+}
+
+export async function findEntryBySlackMessageTs(slackMessageTs: string) {
+  return prisma.etaEntry.findFirst({
+    where: { slackMessageTs }
+  });
+}
+
+export async function findMissingEntryForUser(dateStr: string, slackUserId: string) {
+  return prisma.etaEntry.findFirst({
+    where: {
+      entryDate: entryDateFromString(dateStr),
+      slackUserId,
+      status: "missing"
+    }
+  });
+}
+
+export async function applyWfhApproval(input: {
+  entryId: number;
+  state: "approved" | "denied" | "pending";
+  approvedBySlackUserId?: string | null;
+  note?: string | null;
+  /** When approving a missing entry, also mark it submitted as WFH. */
+  markSubmittedAsWfh?: boolean;
+  userEmail?: string | null;
+  userName?: string | null;
+}) {
+  const approvedAt = input.state === "approved" ? new Date() : null;
+
+  return prisma.etaEntry.update({
+    where: { id: input.entryId },
+    data: {
+      wfhApprovalState: input.state,
+      wfhApprovedAt: approvedAt,
+      wfhApprovedBySlackUserId: input.approvedBySlackUserId ?? null,
+      wfhApprovalNote: input.note ?? null,
+      ...(input.markSubmittedAsWfh && input.state === "approved"
+        ? {
+            status: "submitted",
+            recordType: "wfh",
+            submittedAt: new Date(),
+            etaText: null,
+            etaMinutes: null,
+            isLateArrival: false,
+            ...(input.userEmail !== undefined ? { userEmail: input.userEmail } : {}),
+            ...(input.userName !== undefined ? { userName: input.userName } : {})
+          }
+        : {})
+    }
   });
 }
 
@@ -286,6 +376,10 @@ export function serializeEntry(entry: {
   rawMessage: string | null;
   slackMessageTs: string | null;
   reminderSentAt: Date | null;
+  wfhApprovalState?: string | null;
+  wfhApprovedAt?: Date | null;
+  wfhApprovedBySlackUserId?: string | null;
+  wfhApprovalNote?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -305,6 +399,10 @@ export function serializeEntry(entry: {
     rawMessage: entry.rawMessage,
     slackMessageTs: entry.slackMessageTs,
     reminderSentAt: entry.reminderSentAt?.toISOString() ?? null,
+    wfhApprovalState: entry.wfhApprovalState ?? null,
+    wfhApprovedAt: entry.wfhApprovedAt?.toISOString() ?? null,
+    wfhApprovedBySlackUserId: entry.wfhApprovedBySlackUserId ?? null,
+    wfhApprovalNote: entry.wfhApprovalNote ?? null,
     createdAt: entry.createdAt.toISOString(),
     updatedAt: entry.updatedAt.toISOString(),
     badge: deriveBadge(entry)
@@ -316,14 +414,21 @@ export function deriveBadge(entry: {
   recordType: string | null;
   submittedOnTime: boolean | null;
   isLateArrival: boolean | null;
+  wfhApprovalState?: string | null;
 }): string {
   if (entry.status === "missing") return "missing";
-  if (entry.recordType === "wfh") return "wfh";
+  if (entry.recordType === "wfh") {
+    if (entry.wfhApprovalState === "approved") return "wfh_approved";
+    if (entry.wfhApprovalState === "denied") return "wfh_denied";
+    if (entry.wfhApprovalState === "pending") return "wfh_pending";
+    return "wfh";
+  }
   if (entry.recordType === "leave") return "leave";
   if (entry.recordType === "comp_off") return "comp_off";
   if (entry.isLateArrival) return "late_arrival";
   if (entry.submittedOnTime === false) return "late_submission";
   if (entry.submittedOnTime === true) return "on_time";
+  if (entry.recordType === "office") return "office";
   return "submitted";
 }
 

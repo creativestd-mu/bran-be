@@ -187,23 +187,47 @@ export async function fetchChannelMessagesForDate(dateStr: string): Promise<Slac
   return messages;
 }
 
-export async function openDmChannel(userId: string): Promise<string> {
+export async function openConversation(userIds: string[]): Promise<string> {
+  const unique = [...new Set(userIds.filter(Boolean))];
+  if (unique.length === 0) {
+    throw new HttpError(400, "At least one Slack user is required to open a conversation");
+  }
+
   const data = await slackApi<{ ok: boolean; channel?: { id: string } }>("conversations.open", {
-    users: userId
+    users: unique.join(",")
   });
   if (!data.channel?.id) {
-    throw new HttpError(502, `Failed to open DM with Slack user ${userId}`);
+    throw new HttpError(502, `Failed to open conversation with Slack users ${unique.join(",")}`);
   }
   return data.channel.id;
 }
 
-export async function postSlackMessage(channel: string, text: string): Promise<void> {
-  await slackApi("chat.postMessage", { channel, text });
+export async function openDmChannel(userId: string): Promise<string> {
+  return openConversation([userId]);
 }
 
-export async function sendDm(userId: string, text: string): Promise<void> {
+export async function postSlackMessage(
+  channel: string,
+  text: string,
+  options?: { threadTs?: string }
+): Promise<{ channel: string; ts: string }> {
+  const data = await slackApi<{ ok: boolean; channel?: string; ts?: string }>("chat.postMessage", {
+    channel,
+    text,
+    thread_ts: options?.threadTs
+  });
+  if (!data.ts) {
+    throw new HttpError(502, "Slack chat.postMessage did not return a message ts");
+  }
+  return { channel: data.channel ?? channel, ts: data.ts };
+}
+
+export async function sendDm(
+  userId: string,
+  text: string
+): Promise<{ channel: string; ts: string }> {
   const channel = await openDmChannel(userId);
-  await postSlackMessage(channel, text);
+  return postSlackMessage(channel, text);
 }
 
 export async function authTest(): Promise<{ ok: boolean; user?: string; team?: string }> {

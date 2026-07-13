@@ -394,18 +394,24 @@ export async function sendReminderForUser(
   if (!entry) {
     throw new HttpError(404, "No missing attendance entry for this user on that date");
   }
+
   if (entry.reminderSentAt) {
-    throw new HttpError(409, "Reminder already sent for this user");
+    return { sent: 0, skipped: 1, errors: [] };
   }
 
   const member = await findSlackMember(slackUserId);
   if (member?.pod === "production") {
-    throw new HttpError(400, "Production pod is exempt from reminders");
+    return { sent: 0, skipped: 1, errors: [] };
   }
 
-  await sendReminder(slackUserId);
-  await markReminderSent(entry.id);
-  return { sent: 1, skipped: 0, errors: [] };
+  try {
+    await sendReminder(slackUserId);
+    await markReminderSent(entry.id);
+    return { sent: 1, skipped: 0, errors: [] };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { sent: 0, skipped: 0, errors: [`${slackUserId}: ${msg}`] };
+  }
 }
 
 export async function runEtaCheck(

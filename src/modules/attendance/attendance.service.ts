@@ -385,6 +385,29 @@ export async function sendRemindersForDate(dateStr: string): Promise<{
   return { sent, skipped, errors };
 }
 
+export async function sendReminderForUser(
+  dateStr: string,
+  slackUserId: string
+): Promise<{ sent: number; skipped: number; errors: string[] }> {
+  const missing = await findMissingEntries(dateStr);
+  const entry = missing.find((e) => e.slackUserId === slackUserId);
+  if (!entry) {
+    throw new HttpError(404, "No missing attendance entry for this user on that date");
+  }
+  if (entry.reminderSentAt) {
+    throw new HttpError(409, "Reminder already sent for this user");
+  }
+
+  const member = await findSlackMember(slackUserId);
+  if (member?.pod === "production") {
+    throw new HttpError(400, "Production pod is exempt from reminders");
+  }
+
+  await sendReminder(slackUserId);
+  await markReminderSent(entry.id);
+  return { sent: 1, skipped: 0, errors: [] };
+}
+
 export async function runEtaCheck(
   dateStr: string = todayInIST(),
   options: { sendReminders?: boolean } = {}

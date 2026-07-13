@@ -17,6 +17,7 @@ import {
   listTodayAttendance,
   rebuildAllAttendancePersonStats,
   runEtaCheck,
+  sendReminderForUser,
   sendRemindersForDate,
   setAttendancePersonAction,
   updateMemberPod
@@ -64,7 +65,10 @@ attendanceRouter.post("/check", async (req, res, next) => {
 attendanceRouter.post("/remind", async (req, res, next) => {
   try {
     const body = attendanceRemindBodySchema.parse(req.body ?? {});
-    const result = await sendRemindersForDate(body.date ?? todayInIST());
+    const date = body.date ?? todayInIST();
+    const result = body.slackUserId
+      ? await sendReminderForUser(date, body.slackUserId)
+      : await sendRemindersForDate(date);
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     next(error);

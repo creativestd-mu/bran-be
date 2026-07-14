@@ -46,6 +46,7 @@ import {
   getSlackUserInfo,
   listChannelMemberIds,
   lookupSlackUserByEmail,
+  openConversation,
   postSlackMessage,
   resolveChannelId,
   sendDm,
@@ -221,6 +222,7 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
     : manager?.managerName
       ? manager.managerName
       : "your manager";
+  const employeeTag = `<@${slackUserId}>`;
 
   const text = [
     `Hey ${firstName(employeeName)} — quick nudge from Bran.`,
@@ -228,9 +230,9 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
     `I haven't seen your attendance update in #${channelLabel} yet today.`,
     `If you're working from home, was that approved by ${managerTag}?`,
     "",
-    manager?.managerName
-      ? `Please confirm with ${manager.managerName} if needed, then reply here with whether WFH was approved (e.g. "yes, approved" / "no"), or post in #${channelLabel}:`
-      : `If you're on WFH, reply here once your manager has approved it (e.g. "yes, approved" / "no"), or post in #${channelLabel}:`,
+    `${managerTag} — could you confirm if you approved ${employeeTag}'s WFH? A simple "yes, approved" / "no" is enough.`,
+    "",
+    `Otherwise please post one of these in #${channelLabel}:`,
     "• eta 12:30  (coming to office)",
     "• wfh",
     "• leave",
@@ -239,8 +241,42 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
     "Thanks!"
   ].join("\n");
 
-  // Bot only has im:write — always 1:1 DM (mpim:write would be needed for employee+manager group chats).
-  return sendDm(slackUserId, text);
+  const isMissingScope = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return (
+      message.includes("missing_scope") ||
+      message.includes("cannot_dm") ||
+      message.includes("user_not_found") ||
+      message.includes("not_allowed_token_type")
+    );
+  };
+
+  // 1) Prefer employee + manager group DM when scopes allow it.
+  if (manager?.managerSlackUserId && manager.managerSlackUserId !== slackUserId) {
+    try {
+      const channel = await openConversation([slackUserId, manager.managerSlackUserId]);
+      return await postSlackMessage(channel, text);
+    } catch (error) {
+      if (!isMissingScope(error)) throw error;
+      console.warn(
+        `[attendance] Group DM failed (${error instanceof Error ? error.message : error}); trying 1:1 / channel`
+      );
+    }
+  }
+
+  // 2) Fall back to 1:1 DM (needs classic bot scope im:write).
+  try {
+    return await sendDm(slackUserId, text);
+  } catch (error) {
+    if (!isMissingScope(error)) throw error;
+    console.warn(
+      `[attendance] 1:1 DM failed (${error instanceof Error ? error.message : error}); posting in #${channelLabel}`
+    );
+  }
+
+  // 3) Last resort: attendance channel (only needs chat:write, which the bot already has).
+  const channelId = await resolveChannelId();
+  return postSlackMessage(channelId, `${employeeTag} ${text}`);
 }
 
 export async function sendRemindersForDate(dateStr: string): Promise<{

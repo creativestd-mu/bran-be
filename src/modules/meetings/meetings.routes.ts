@@ -7,7 +7,8 @@ import {
   getCalendarStatus,
   joinMeetingManually,
   listMeetings,
-  startCalendarConnect
+  startCalendarConnect,
+  syncMyCalendar
 } from "./meetings.service";
 
 const meetingsRouter = Router();
@@ -26,6 +27,15 @@ meetingsRouter.post("/calendar/connect", async (req, res, next) => {
 meetingsRouter.get("/calendar/status", async (req, res, next) => {
   try {
     const result = await getCalendarStatus(req.user!.userId);
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+meetingsRouter.post("/calendar/sync", async (req, res, next) => {
+  try {
+    const result = await syncMyCalendar(req.user!.userId);
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     next(error);

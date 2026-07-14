@@ -135,8 +135,9 @@ export async function scheduleBotForCalendarEvent(params: {
   meetingUrl: string;
   startTime?: string | null;
 }): Promise<string> {
+  // One bot per Meet instance across all connected Bran calendars.
   const startKey = params.startTime ?? "unscheduled";
-  const deduplicationKey = `${startKey}-${params.meetingUrl}-${params.calendarEventId}`;
+  const deduplicationKey = `${startKey}-${params.meetingUrl}`;
 
   const response = await recallFetch<RecallCalendarEvent>(
     `/api/v2/calendar-events/${params.calendarEventId}/bot/`,

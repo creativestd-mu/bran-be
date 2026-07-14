@@ -93,6 +93,11 @@ export async function handleCalendarOAuthCallback(req: Request, res: Response): 
       status: "CONNECTED"
     });
 
+    // Schedule bots for existing upcoming Meet events immediately (don't wait for webhook).
+    void syncCalendarEvents(recallCalendar.id).catch((error) => {
+      console.error("Initial calendar sync failed after connect:", error);
+    });
+
     redirectToApp("/meetings?calendar=connected", res);
   } catch (error) {
     const message = error instanceof Error ? error.message : "calendar_connect_failed";
@@ -296,6 +301,8 @@ export async function syncCalendarEvents(recallCalendarId: string, updatedAtGte?
     updatedAtGte
   });
 
+  const now = Date.now();
+
   for (const event of events) {
     if (event.is_deleted) {
       const existing = await findMeetingByCalendarEventId(event.id);
@@ -309,7 +316,19 @@ export async function syncCalendarEvents(recallCalendarId: string, updatedAtGte?
       continue;
     }
 
+    // Skip meetings that already ended (with a small grace window).
+    if (event.start_time) {
+      const startMs = new Date(event.start_time).getTime();
+      if (!Number.isNaN(startMs) && startMs < now - 2 * 60 * 60 * 1000) {
+        continue;
+      }
+    }
+
     let meeting = await findMeetingByCalendarEventId(event.id);
+    const previousStart = meeting?.startTime?.toISOString() ?? null;
+    const nextStart = event.start_time ?? null;
+    const startChanged = Boolean(meeting?.recallBotId && previousStart !== nextStart);
+
     if (!meeting) {
       meeting = await createMeeting({
         organizerUserId: connection.userId,
@@ -327,7 +346,8 @@ export async function syncCalendarEvents(recallCalendarId: string, updatedAtGte?
       });
     }
 
-    if (meeting.recallBotId) {
+    // Already scheduled and time unchanged — keep existing bot.
+    if (meeting.recallBotId && !startChanged) {
       continue;
     }
 
@@ -337,12 +357,31 @@ export async function syncCalendarEvents(recallCalendarId: string, updatedAtGte?
         meetingUrl: event.meeting_url!,
         startTime: event.start_time
       });
-      await updateMeeting(meeting.id, { recallBotId, status: "SCHEDULED" });
+      await updateMeeting(meeting.id, {
+        recallBotId,
+        status: "SCHEDULED",
+        errorMessage: null
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to schedule meeting bot";
       await updateMeeting(meeting.id, { status: "FAILED", errorMessage: message });
     }
   }
+}
+
+/** Force-sync upcoming Meet events for the viewer's connected calendar and schedule bots. */
+export async function syncMyCalendar(userId: string) {
+  const connection = await findCalendarConnectionByUserId(userId);
+  if (!connection || connection.status !== "CONNECTED") {
+    throw new HttpError(400, "Connect Google Calendar first to auto-join Meet calls");
+  }
+
+  await syncCalendarEvents(connection.recallCalendarId);
+  const meetings = await listMeetingsForUser(userId, { limit: 50 });
+  return {
+    synced: true,
+    meetings: meetings.map(formatMeetingResponse)
+  };
 }
 
 async function handleBotStatusChange(botId: string, statusCode: string) {

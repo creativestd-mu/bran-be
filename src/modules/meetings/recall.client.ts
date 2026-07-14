@@ -130,12 +130,22 @@ export async function listRecallCalendarEvents(params: {
   return events;
 }
 
-export async function scheduleBotForCalendarEvent(calendarEventId: string): Promise<string> {
+export async function scheduleBotForCalendarEvent(params: {
+  calendarEventId: string;
+  meetingUrl: string;
+  startTime?: string | null;
+}): Promise<string> {
+  const startKey = params.startTime ?? "unscheduled";
+  const deduplicationKey = `${startKey}-${params.meetingUrl}-${params.calendarEventId}`;
+
   const response = await recallFetch<RecallCalendarEvent>(
-    `/api/v2/calendar-events/${calendarEventId}/bot/`,
+    `/api/v2/calendar-events/${params.calendarEventId}/bot/`,
     {
       method: "POST",
-      body: JSON.stringify({ bot_config: botConfig() })
+      body: JSON.stringify({
+        deduplication_key: deduplicationKey,
+        bot_config: botConfig()
+      })
     }
   );
 
@@ -154,13 +164,20 @@ export async function deleteBotFromCalendarEvent(calendarEventId: string): Promi
 export async function createAdHocBot(params: {
   meetingUrl: string;
   metadata?: Record<string, string>;
+  deduplicationKey?: string;
 }): Promise<string> {
+  const deduplicationKey =
+    params.deduplicationKey ?? `adhoc-${params.meetingUrl}-${Date.now()}`;
+
   const response = await recallFetch<RecallBot>("/api/v1/bot/", {
     method: "POST",
     body: JSON.stringify({
       meeting_url: params.meetingUrl,
       bot_name: env.meetingBotName,
-      metadata: params.metadata ?? {}
+      metadata: {
+        ...params.metadata,
+        deduplication_key: deduplicationKey
+      }
     })
   });
 

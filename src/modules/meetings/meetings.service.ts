@@ -155,6 +155,7 @@ export async function joinMeetingManually(
 
   const recallBotId = await createAdHocBot({
     meetingUrl: data.meetingUrl,
+    deduplicationKey: `adhoc-${data.meetingUrl}`,
     metadata: {
       branMeetingId: meeting.id,
       branUserId: userId
@@ -330,7 +331,11 @@ export async function syncCalendarEvents(recallCalendarId: string, updatedAtGte?
     }
 
     try {
-      const recallBotId = await scheduleBotForCalendarEvent(event.id);
+      const recallBotId = await scheduleBotForCalendarEvent({
+        calendarEventId: event.id,
+        meetingUrl: event.meeting_url!,
+        startTime: event.start_time
+      });
       await updateMeeting(meeting.id, { recallBotId, status: "SCHEDULED" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to schedule meeting bot";

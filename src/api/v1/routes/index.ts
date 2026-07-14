@@ -28,6 +28,7 @@ import { utilitiesRouter } from "../../../modules/utilities/utilities.routes";
 import { inventoryRouter } from "../../../modules/inventory/inventory.routes";
 import { meetingsRouter } from "../../../modules/meetings/meetings.routes";
 import { attendanceRouter } from "../../../modules/attendance/attendance.routes";
+import { graphRouter } from "../../../modules/graph/graph.routes";
 
 const v1Router = Router();
 
@@ -59,6 +60,7 @@ v1Router.use("/utilities", utilitiesRouter);
 v1Router.use("/inventory", inventoryRouter);
 v1Router.use("/meetings", meetingsRouter);
 v1Router.use("/attendance", attendanceRouter);
+v1Router.use("/graph", graphRouter);
 
 // Existing Meltwater-based routes
 v1Router.use("/instagram", instagramRouter);

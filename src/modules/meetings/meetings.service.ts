@@ -7,6 +7,7 @@ import { createWorkUnitsFromRecording } from "../work/work.service";
 import { archiveVoiceRecording } from "../voice-recording/voice-recording.service";
 import { translateAudioWithSarvam } from "../ai/ai.sarvam";
 import { updateVoiceRecording } from "../voice-recording/voice-recording.repository";
+import { invalidateBrainGraphCache } from "../graph/graph.service";
 import {
   buildCalendarAuthorizationUrl,
   buildCalendarOAuthState,
@@ -428,6 +429,8 @@ export async function processMeetingRecording(recallBotId: string) {
       status: "COMPLETED",
       errorMessage: null
     });
+
+    invalidateBrainGraphCache(meeting.organizerUserId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Transcription failed";
     await updateVoiceRecording(recording.id, {

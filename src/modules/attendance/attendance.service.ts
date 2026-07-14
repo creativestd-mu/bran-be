@@ -46,7 +46,6 @@ import {
   getSlackUserInfo,
   listChannelMemberIds,
   lookupSlackUserByEmail,
-  openConversation,
   postSlackMessage,
   resolveChannelId,
   sendDm,
@@ -229,9 +228,9 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
     `I haven't seen your attendance update in #${channelLabel} yet today.`,
     `If you're working from home, was that approved by ${managerTag}?`,
     "",
-    `${managerTag} — could you confirm here if you approved their WFH? A simple "yes, approved" / "no" is enough.`,
-    "",
-    `Otherwise please post one of these in #${channelLabel}:`,
+    manager?.managerName
+      ? `Please confirm with ${manager.managerName} if needed, then reply here with whether WFH was approved (e.g. "yes, approved" / "no"), or post in #${channelLabel}:`
+      : `If you're on WFH, reply here once your manager has approved it (e.g. "yes, approved" / "no"), or post in #${channelLabel}:`,
     "• eta 12:30  (coming to office)",
     "• wfh",
     "• leave",
@@ -240,23 +239,7 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
     "Thanks!"
   ].join("\n");
 
-  if (manager?.managerSlackUserId && manager.managerSlackUserId !== slackUserId) {
-    try {
-      const channel = await openConversation([slackUserId, manager.managerSlackUserId]);
-      return await postSlackMessage(channel, text);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // mpim:write may be missing — fall back to a normal 1:1 DM with the employee.
-      if (message.includes("missing_scope") || message.includes("cannot_dm") || message.includes("user_not_found")) {
-        console.warn(
-          `[attendance] Group DM with manager failed (${message}); falling back to 1:1 DM for ${slackUserId}`
-        );
-        return sendDm(slackUserId, text);
-      }
-      throw error;
-    }
-  }
-
+  // Bot only has im:write — always 1:1 DM (mpim:write would be needed for employee+manager group chats).
   return sendDm(slackUserId, text);
 }
 

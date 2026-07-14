@@ -9,7 +9,7 @@ export type ParsedAttendance = {
 
 /**
  * Parse a Slack attendance message. First match wins:
- * comp off → leave → wfh → eta …
+ * comp off → leave → wfh → eta / in office …
  */
 export function parseAttendanceMessage(text: string): ParsedAttendance | null {
   const raw = text.trim();
@@ -29,9 +29,9 @@ export function parseAttendanceMessage(text: string): ParsedAttendance | null {
     return { recordType: "wfh", etaText: null, etaMinutes: null };
   }
 
-  // eta 12:30 | eta 1 | eta 12 pm | ETA - 1:30
+  // eta 12:30 | in office 12:45 | office 1:30 | ETA - 1:30
   const etaMatch = lower.match(
-    /\beta\b[\s\-–—:]*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/
+    /(?:\beta\b|in\s+office\b|\boffice\b)[\s\-–—:]*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/
   );
   if (!etaMatch) return null;
 
@@ -53,7 +53,7 @@ export function parseAttendanceMessage(text: string): ParsedAttendance | null {
       hours += 12;
     }
   } else if (!meridiem && etaMatch[2] != null) {
-    // eta 1:30 without am/pm — treat 1–7 as PM
+    // eta / in office 1:30 without am/pm — treat 1–7 as PM
     if (hours >= 1 && hours <= 7) {
       hours += 12;
     }

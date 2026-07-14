@@ -222,7 +222,6 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
     : manager?.managerName
       ? manager.managerName
       : "your manager";
-  const employeeTag = `<@${slackUserId}>`;
 
   const text = [
     `Hey ${firstName(employeeName)} — quick nudge from Bran.`,
@@ -230,10 +229,10 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
     `I haven't seen your attendance update in #${channelLabel} yet today.`,
     `If you're working from home, was that approved by ${managerTag}?`,
     "",
-    `${managerTag} — could you confirm if you approved ${employeeTag}'s WFH? A simple "yes, approved" / "no" is enough.`,
+    `${managerTag} — could you confirm here if you approved their WFH? A simple "yes, approved" / "no" is enough.`,
     "",
     `Otherwise please post one of these in #${channelLabel}:`,
-    "• eta 12:30  (coming to office)",
+    "• eta 12:30  (or in office 12:30)",
     "• wfh",
     "• leave",
     "• comp off",
@@ -241,42 +240,24 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
     "Thanks!"
   ].join("\n");
 
-  const isMissingScope = (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    return (
-      message.includes("missing_scope") ||
-      message.includes("cannot_dm") ||
-      message.includes("user_not_found") ||
-      message.includes("not_allowed_token_type")
-    );
-  };
-
-  // 1) Prefer employee + manager group DM when scopes allow it.
   if (manager?.managerSlackUserId && manager.managerSlackUserId !== slackUserId) {
     try {
       const channel = await openConversation([slackUserId, manager.managerSlackUserId]);
       return await postSlackMessage(channel, text);
     } catch (error) {
-      if (!isMissingScope(error)) throw error;
-      console.warn(
-        `[attendance] Group DM failed (${error instanceof Error ? error.message : error}); trying 1:1 / channel`
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      // mpim:write may be missing — fall back to a normal 1:1 DM with the employee.
+      if (message.includes("missing_scope") || message.includes("cannot_dm") || message.includes("user_not_found")) {
+        console.warn(
+          `[attendance] Group DM with manager failed (${message}); falling back to 1:1 DM for ${slackUserId}`
+        );
+        return sendDm(slackUserId, text);
+      }
+      throw error;
     }
   }
 
-  // 2) Fall back to 1:1 DM (needs classic bot scope im:write).
-  try {
-    return await sendDm(slackUserId, text);
-  } catch (error) {
-    if (!isMissingScope(error)) throw error;
-    console.warn(
-      `[attendance] 1:1 DM failed (${error instanceof Error ? error.message : error}); posting in #${channelLabel}`
-    );
-  }
-
-  // 3) Last resort: attendance channel (only needs chat:write, which the bot already has).
-  const channelId = await resolveChannelId();
-  return postSlackMessage(channelId, `${employeeTag} ${text}`);
+  return sendDm(slackUserId, text);
 }
 
 export async function sendRemindersForDate(dateStr: string): Promise<{
@@ -349,7 +330,7 @@ export async function sendReminderForUser(
 
 /**
  * Process a Slack reply (DM/MPIM reminder thread or channel thread on a WFH post).
- * AI is used only to decide approved / denied / unclear.
+ * Clear yes/no phrases are resolved directly; ambiguous replies use the AI layer.
  */
 export async function processWfhApprovalReply(input: {
   channelId: string;
@@ -365,7 +346,8 @@ export async function processWfhApprovalReply(input: {
 
   let entry =
     (input.threadTs ? await findEntryBySlackMessageTs(input.threadTs) : null) ??
-    (await findEntryByReminderChannel(input.channelId, todayInIST()));
+    (await findEntryByReminderChannel(input.channelId, todayInIST())) ??
+    (await findEntryByReminderChannel(input.channelId));
 
   // Reminder thread reply: parent is the reminder message ts
   if (!entry && input.threadTs) {
@@ -390,8 +372,9 @@ export async function processWfhApprovalReply(input: {
   );
   const isEmployee = entry.slackUserId === input.userId;
 
-  // Only manager (preferred) or employee confirming manager approval
-  if (!isManager && !isEmployee) {
+  // Anyone already in the reminder conversation can confirm; prefer manager match.
+  // (Slack events for MPIMs sometimes omit useful membership checks.)
+  if (!isManager && !isEmployee && entry.reminderChannelId !== input.channelId) {
     return { handled: false, reason: "not_manager_or_employee" };
   }
 
@@ -409,6 +392,11 @@ export async function processWfhApprovalReply(input: {
   }
 
   if (classification.decision === "unclear") {
+    console.log("[attendance] WFH approval unclear", {
+      entryId: entry.id,
+      userId: input.userId,
+      text: input.text.slice(0, 120)
+    });
     return { handled: true, reason: "unclear", decision: "unclear" };
   }
 
@@ -444,12 +432,13 @@ export async function processWfhApprovalReply(input: {
   }
 
   try {
+    const isThreadReply = Boolean(input.threadTs && input.threadTs !== input.ts);
     await postSlackMessage(
       input.channelId,
       classification.decision === "approved"
         ? `Got it — marked <@${entry.slackUserId}> as approved WFH for ${formatEntryDate(entry.entryDate)}.`
         : `Noted — WFH was not approved for <@${entry.slackUserId}> on ${formatEntryDate(entry.entryDate)}.`,
-      { threadTs: input.threadTs ?? input.ts }
+      isThreadReply ? { threadTs: input.threadTs } : undefined
     );
   } catch (error) {
     console.error("[attendance] Failed to post approval confirmation:", error);
@@ -473,10 +462,24 @@ export async function processSlackChannelMessage(input: {
   }
 
   const isThreadReply = Boolean(input.threadTs && input.threadTs !== input.ts);
-  const isImOrMpim = input.channelType === "im" || input.channelType === "mpim";
+  const isImOrMpim =
+    input.channelType === "im" ||
+    input.channelType === "mpim" ||
+    input.channelId.startsWith("D");
+  const reminderEntry = await findEntryByReminderChannel(input.channelId, todayInIST());
+  const isReminderChannel = Boolean(reminderEntry);
 
-  // Manager/employee approval replies (AI-classified) — DM/MPIM or channel thread
-  if (isThreadReply || isImOrMpim) {
+  // Manager/employee approval replies — DM/MPIM, reminder conversation, or channel thread
+  if (isThreadReply || isImOrMpim || isReminderChannel) {
+    console.log("[attendance] Trying WFH approval reply", {
+      channelId: input.channelId,
+      channelType: input.channelType,
+      userId: input.userId,
+      isThreadReply,
+      isImOrMpim,
+      isReminderChannel,
+      textPreview: input.text.slice(0, 80)
+    });
     const approval = await processWfhApprovalReply({
       channelId: input.channelId,
       userId: input.userId,
@@ -488,8 +491,10 @@ export async function processSlackChannelMessage(input: {
     if (approval.handled) {
       return { recorded: false, reason: `wfh_approval_${approval.decision ?? approval.reason}` };
     }
-    // Don't treat DM/MPIM or thread replies as attendance submissions
-    return { recorded: false, reason: approval.reason ?? "ignored_non_attendance_reply" };
+    // Don't treat DM/MPIM or reminder-channel replies as attendance submissions
+    if (isImOrMpim || isReminderChannel || isThreadReply) {
+      return { recorded: false, reason: approval.reason ?? "ignored_non_attendance_reply" };
+    }
   }
 
   const targetChannelId = await resolveChannelId();

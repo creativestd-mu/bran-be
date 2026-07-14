@@ -258,11 +258,11 @@ export async function findEntryById(id: number) {
   return prisma.etaEntry.findUnique({ where: { id } });
 }
 
-export async function findEntryByReminderChannel(channelId: string, dateStr: string) {
+export async function findEntryByReminderChannel(channelId: string, dateStr?: string) {
   return prisma.etaEntry.findFirst({
     where: {
       reminderChannelId: channelId,
-      entryDate: entryDateFromString(dateStr)
+      ...(dateStr ? { entryDate: entryDateFromString(dateStr) } : {})
     },
     orderBy: { reminderSentAt: "desc" }
   });

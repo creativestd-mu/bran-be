@@ -50,6 +50,24 @@ describe("parseAttendanceMessage", () => {
     });
   });
 
+  it("parses in office / office times as eta", () => {
+    expect(parseAttendanceMessage("in office 12:45")).toEqual({
+      recordType: "office",
+      etaText: "12:45",
+      etaMinutes: 12 * 60 + 45
+    });
+    expect(parseAttendanceMessage("In Office 1:30")).toEqual({
+      recordType: "office",
+      etaText: "13:30",
+      etaMinutes: 13 * 60 + 30
+    });
+    expect(parseAttendanceMessage("office 12:45")).toEqual({
+      recordType: "office",
+      etaText: "12:45",
+      etaMinutes: 12 * 60 + 45
+    });
+  });
+
   it("ignores unrecognized messages", () => {
     expect(parseAttendanceMessage("hello team")).toBeNull();
   });

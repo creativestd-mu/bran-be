@@ -79,6 +79,41 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
 }
 
 /**
+ * Fast path for unambiguous replies (exact phrases we ask managers to use).
+ * Returns null when the AI layer should decide.
+ */
+export function classifyClearWfhApproval(text: string): WfhApprovalDecision | null {
+  const normalized = text
+    .trim()
+    .toLowerCase()
+    .replace(/<@[a-z0-9]+>/gi, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) return null;
+
+  if (
+    /^(yes|yep|yeah|yup)?\s*(approved|approve|ok|okay|sure|fine|go ahead|all good|confirmed|confirm)\b/.test(
+      normalized
+    ) ||
+    normalized === "yes" ||
+    normalized === "approved"
+  ) {
+    return "approved";
+  }
+
+  if (
+    /^(no|nope|nah|denied|reject|rejected|not approved)\b/.test(normalized) ||
+    /\bnot approved\b/.test(normalized)
+  ) {
+    return "denied";
+  }
+
+  return null;
+}
+
+/**
  * Use the AI layer only to decide whether a Slack reply is a WFH approval,
  * a denial, or unclear. Attendance parsing itself stays regex-based.
  */
@@ -88,6 +123,11 @@ export async function classifyWfhApprovalReply(input: {
   entryDate?: string | null;
   originalMessage?: string | null;
 }): Promise<WfhApprovalClassification> {
+  const clear = classifyClearWfhApproval(input.replyText);
+  if (clear) {
+    return { decision: clear, reason: "clear_phrase" };
+  }
+
   const systemPrompt =
     "You classify whether a Slack reply is a manager approving an employee's work-from-home (WFH) request. " +
     "Return STRICT JSON only (no markdown) with shape: " +

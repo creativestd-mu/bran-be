@@ -227,7 +227,7 @@ export async function handleRecallWebhookEvent(payload: {
   }
 
   if (event === "bot.status_change") {
-    const botId = typeof data.bot_id === "string" ? data.bot_id : null;
+    const botId = extractRecallBotId(data);
     const status = data.status as { code?: string } | undefined;
     if (botId && status?.code) {
       await handleBotStatusChange(botId, status.code);
@@ -235,13 +235,33 @@ export async function handleRecallWebhookEvent(payload: {
     return;
   }
 
-  if (event === "bot.done") {
-    const bot = data.bot as { id?: string } | undefined;
-    const botId = bot?.id ?? (typeof data.bot_id === "string" ? data.bot_id : null);
-    if (botId) {
+  if (event?.startsWith("bot.")) {
+    const botId = extractRecallBotId(data);
+    if (!botId) return;
+
+    const statusCode = event.slice("bot.".length);
+    if (statusCode === "done") {
       await handleBotDone(botId);
+      return;
+    }
+
+    if (
+      statusCode === "joining_call" ||
+      statusCode === "in_waiting_room" ||
+      statusCode === "in_call_recording" ||
+      statusCode === "call_ended" ||
+      statusCode === "fatal"
+    ) {
+      await handleBotStatusChange(botId, statusCode);
     }
   }
+}
+
+function extractRecallBotId(data: Record<string, unknown>): string | null {
+  const bot = data.bot as { id?: string } | undefined;
+  if (bot?.id) return bot.id;
+  if (typeof data.bot_id === "string") return data.bot_id;
+  return null;
 }
 
 async function handleCalendarUpdate(recallCalendarId: string) {

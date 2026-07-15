@@ -7,6 +7,7 @@ import {
   getCalendarStatus,
   joinMeetingManually,
   listMeetings,
+  retryMeetingProcessing,
   startCalendarConnect,
   syncMyCalendar
 } from "./meetings.service";
@@ -66,6 +67,15 @@ meetingsRouter.post("/join", async (req, res, next) => {
     const payload = joinMeetingSchema.parse(req.body);
     const result = await joinMeetingManually(req.user!.userId, payload);
     res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+meetingsRouter.post("/:meetingId/retry", async (req, res, next) => {
+  try {
+    const result = await retryMeetingProcessing(req.user!.userId, req.params.meetingId);
+    res.status(200).json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

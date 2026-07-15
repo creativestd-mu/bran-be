@@ -71,9 +71,17 @@ export interface RecallBot {
   }>;
 }
 
+// Recall only produces a recording artifact when it's explicitly requested.
+// Without `recording_config`, `media_shortcuts.audio_mixed(_mp3)` never gets a
+// download URL and downloadRecallBotAudio can never succeed.
+const RECORDING_CONFIG = {
+  audio_mixed_mp3: {}
+} as const;
+
 function botConfig() {
   return {
     bot_name: env.meetingBotName,
+    recording_config: RECORDING_CONFIG,
     metadata: {}
   };
 }
@@ -175,6 +183,7 @@ export async function createAdHocBot(params: {
     body: JSON.stringify({
       meeting_url: params.meetingUrl,
       bot_name: env.meetingBotName,
+      recording_config: RECORDING_CONFIG,
       metadata: {
         ...params.metadata,
         deduplication_key: deduplicationKey

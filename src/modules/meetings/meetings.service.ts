@@ -19,6 +19,7 @@ import {
   createMeeting,
   findCalendarConnectionByRecallId,
   findCalendarConnectionByUserId,
+  findMeetingById,
   findMeetingByCalendarEventId,
   findMeetingByRecallBotId,
   listConnectedCalendarConnections,
@@ -383,6 +384,41 @@ export async function syncMyCalendar(userId: string) {
     synced: true,
     meetings: meetings.map(formatMeetingResponse)
   };
+}
+
+/**
+ * Re-run processing for a meeting that previously failed (e.g. the recording
+ * wasn't ready yet at bot.done). Runs in the background because downloading the
+ * recording can poll Recall for several minutes.
+ */
+export async function retryMeetingProcessing(userId: string, meetingId: string) {
+  const meeting = await findMeetingById(meetingId);
+  if (!meeting || meeting.organizerUserId !== userId) {
+    throw new HttpError(404, "Meeting not found");
+  }
+  if (!meeting.recallBotId) {
+    throw new HttpError(
+      400,
+      "This meeting has no recording bot yet, so there is nothing to reprocess"
+    );
+  }
+  if (meeting.status === "PROCESSING") {
+    throw new HttpError(409, "This meeting is already being processed");
+  }
+
+  const botId = meeting.recallBotId;
+  await updateMeeting(meeting.id, { status: "PROCESSING", errorMessage: null });
+  void processMeetingRecording(botId).catch(async (error) => {
+    const message = error instanceof Error ? error.message : "Meeting processing failed";
+    const current = await findMeetingByRecallBotId(botId);
+    if (current) {
+      await updateMeeting(current.id, { status: "FAILED", errorMessage: message });
+    }
+    console.error(`[meetings] Retry processing failed for bot ${botId}:`, error);
+  });
+
+  const refreshed = await findMeetingById(meeting.id);
+  return formatMeetingResponse(refreshed ?? meeting);
 }
 
 /**

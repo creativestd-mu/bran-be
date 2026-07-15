@@ -193,16 +193,46 @@ export async function getRecallBot(botId: string): Promise<RecallBot> {
   return recallFetch<RecallBot>(`/api/v1/bot/${botId}/`);
 }
 
-export async function downloadRecallBotAudio(botId: string): Promise<{
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractAudioDownloadUrl(bot: RecallBot): string | undefined {
+  const recording = bot.recordings?.[0];
+  return (
+    recording?.media_shortcuts?.audio_mixed_mp3?.data?.download_url ??
+    recording?.media_shortcuts?.audio_mixed?.data?.download_url ??
+    undefined
+  );
+}
+
+/**
+ * On `bot.done`, Recall has finished the call but the mixed-audio artifact is
+ * often still being processed for a short while, so the download_url isn't
+ * populated yet. Poll the bot until the audio is ready before giving up.
+ */
+export async function downloadRecallBotAudio(
+  botId: string,
+  options: { maxAttempts?: number; delayMs?: number } = {}
+): Promise<{
   buffer: Buffer;
   mimeType: string;
   filename: string;
 }> {
-  const bot = await getRecallBot(botId);
-  const recording = bot.recordings?.[0];
-  const downloadUrl =
-    recording?.media_shortcuts?.audio_mixed_mp3?.data?.download_url ??
-    recording?.media_shortcuts?.audio_mixed?.data?.download_url;
+  const maxAttempts = options.maxAttempts ?? 20;
+  const delayMs = options.delayMs ?? 15_000;
+
+  let downloadUrl: string | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const bot = await getRecallBot(botId);
+    downloadUrl = extractAudioDownloadUrl(bot);
+    if (downloadUrl) {
+      break;
+    }
+    if (attempt < maxAttempts) {
+      await sleep(delayMs);
+    }
+  }
 
   if (!downloadUrl) {
     throw new HttpError(422, "Recall bot recording audio is not available yet");

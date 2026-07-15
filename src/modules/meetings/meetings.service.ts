@@ -21,6 +21,7 @@ import {
   findCalendarConnectionByUserId,
   findMeetingByCalendarEventId,
   findMeetingByRecallBotId,
+  listConnectedCalendarConnections,
   listMeetingsForUser,
   updateCalendarConnection,
   updateMeeting,
@@ -93,10 +94,10 @@ export async function handleCalendarOAuthCallback(req: Request, res: Response): 
       status: "CONNECTED"
     });
 
-    // Schedule bots for existing upcoming Meet events immediately (don't wait for webhook).
-    void syncCalendarEvents(recallCalendar.id).catch((error) => {
-      console.error("Initial calendar sync failed after connect:", error);
-    });
+    // Recall pulls events from Google asynchronously after the calendar is
+    // created, so an immediate sync usually finds nothing. Retry a few times
+    // (and the periodic cron + calendar.sync_events webhook are the safety net).
+    scheduleInitialCalendarSync(recallCalendar.id);
 
     redirectToApp("/meetings?calendar=connected", res);
   } catch (error) {
@@ -382,6 +383,55 @@ export async function syncMyCalendar(userId: string) {
     synced: true,
     meetings: meetings.map(formatMeetingResponse)
   };
+}
+
+/**
+ * Retry the initial sync a few times after a calendar is connected, because
+ * Recall imports Google events asynchronously and the first attempt usually
+ * runs before any events are available.
+ */
+function scheduleInitialCalendarSync(recallCalendarId: string): void {
+  const delaysMs = [0, 15_000, 45_000, 120_000];
+  for (const delay of delaysMs) {
+    const timer = setTimeout(() => {
+      void syncCalendarEvents(recallCalendarId).catch((error) => {
+        console.error(
+          `[meetings] Initial calendar sync failed for ${recallCalendarId}:`,
+          error
+        );
+      });
+    }, delay);
+    if (typeof timer === "object" && timer && "unref" in timer) {
+      timer.unref();
+    }
+  }
+}
+
+/**
+ * Safety-net re-sync over every connected calendar so bots get scheduled for
+ * all upcoming Meet calls even if a Recall webhook was missed. Invoked by the
+ * meetings cron on a fixed interval.
+ */
+export async function syncAllConnectedCalendars(): Promise<{
+  calendars: number;
+  failures: number;
+}> {
+  const connections = await listConnectedCalendarConnections();
+  let failures = 0;
+
+  for (const connection of connections) {
+    try {
+      await syncCalendarEvents(connection.recallCalendarId);
+    } catch (error) {
+      failures += 1;
+      console.error(
+        `[meetings] Cron sync failed for calendar ${connection.recallCalendarId}:`,
+        error
+      );
+    }
+  }
+
+  return { calendars: connections.length, failures };
 }
 
 async function handleBotStatusChange(botId: string, statusCode: string) {

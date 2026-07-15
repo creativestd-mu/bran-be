@@ -8,6 +8,13 @@ export async function findCalendarConnectionByRecallId(recallCalendarId: string)
   return prisma.calendarConnection.findUnique({ where: { recallCalendarId } });
 }
 
+export async function listConnectedCalendarConnections() {
+  return prisma.calendarConnection.findMany({
+    where: { status: "CONNECTED" },
+    select: { userId: true, recallCalendarId: true }
+  });
+}
+
 export async function upsertCalendarConnection(data: {
   userId: string;
   recallCalendarId: string;

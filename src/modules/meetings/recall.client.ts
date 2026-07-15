@@ -253,11 +253,20 @@ export async function downloadRecallBotAudio(
   }
 
   const arrayBuffer = await response.arrayBuffer();
-  const contentType = response.headers.get("content-type") ?? "audio/mpeg";
+
+  // We always request `audio_mixed_mp3`, so the artifact is an MP3. S3 serves
+  // the presigned download with a generic `binary/octet-stream` content-type,
+  // which downstream transcription rejects — normalise it to audio/mpeg.
+  const rawContentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  const isGeneric =
+    rawContentType === "" ||
+    rawContentType.startsWith("binary/octet-stream") ||
+    rawContentType.startsWith("application/octet-stream");
+  const mimeType = isGeneric ? "audio/mpeg" : rawContentType;
 
   return {
     buffer: Buffer.from(arrayBuffer),
-    mimeType: contentType,
+    mimeType,
     filename: `meeting-${botId}.mp3`
   };
 }

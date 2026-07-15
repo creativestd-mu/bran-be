@@ -327,9 +327,19 @@ export async function syncCalendarEvents(recallCalendarId: string, updatedAtGte?
     }
 
     let meeting = await findMeetingByCalendarEventId(event.id);
-    const previousStart = meeting?.startTime?.toISOString() ?? null;
-    const nextStart = event.start_time ?? null;
-    const startChanged = Boolean(meeting?.recallBotId && previousStart !== nextStart);
+
+    // Once a bot has started joining/recording (or the meeting is done), leave
+    // it alone — re-syncing must never knock an in-flight meeting back to
+    // SCHEDULED or swap its bot, which would break the recording pipeline.
+    if (meeting && meeting.status !== "SCHEDULED" && meeting.status !== "CANCELLED") {
+      continue;
+    }
+
+    // Compare start times by epoch, not raw string, so formatting differences
+    // (e.g. trailing ".000Z") don't register as a spurious reschedule.
+    const previousStartMs = meeting?.startTime ? meeting.startTime.getTime() : null;
+    const nextStartMs = event.start_time ? new Date(event.start_time).getTime() : null;
+    const startChanged = Boolean(meeting?.recallBotId && previousStartMs !== nextStartMs);
 
     if (!meeting) {
       meeting = await createMeeting({
@@ -344,7 +354,8 @@ export async function syncCalendarEvents(recallCalendarId: string, updatedAtGte?
       meeting = await updateMeeting(meeting.id, {
         title: event.title ?? meeting.title,
         startTime: event.start_time ? new Date(event.start_time) : meeting.startTime,
-        meetingUrl: event.meeting_url ?? meeting.meetingUrl
+        meetingUrl: event.meeting_url ?? meeting.meetingUrl,
+        status: "SCHEDULED"
       });
     }
 

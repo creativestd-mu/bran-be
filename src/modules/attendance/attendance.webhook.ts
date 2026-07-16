@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
+import { AUTO_REMINDERS_ENABLED } from "./attendance.constants";
 import { todayInIST } from "./attendance.dates";
 import { parseAttendanceMessage } from "./attendance.parser";
 import { upsertSlackMember } from "./attendance.repository";
@@ -262,10 +263,13 @@ export async function etaCronHandler(
     }
 
     const result = await runEtaCheck(todayInIST(), {
-      sendReminders: true,
+      sendReminders: AUTO_REMINDERS_ENABLED,
       missingOnlyReminders: true
     });
-    res.status(200).json({ success: true, data: result });
+    res.status(200).json({
+      success: true,
+      data: { ...result, autoRemindersEnabled: AUTO_REMINDERS_ENABLED }
+    });
   } catch (error) {
     next(error);
   }

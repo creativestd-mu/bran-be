@@ -10,6 +10,12 @@ export const LATE_ARRIVAL_CUTOFF_MINUTES = 12 * 60 + 30;
 /** Weekday reminder hour in IST (missing ETA nudges). */
 export const REMINDER_HOUR_IST = 11;
 
+/**
+ * Auto 11:00 IST reminder DMs (in-process cron + /api/cron/eta-check).
+ * Keep false until explicitly re-enabled.
+ */
+export const AUTO_REMINDERS_ENABLED = false;
+
 export const ATTENDANCE_TIMEZONE = "Asia/Kolkata";
 
 export const RECORD_TYPES = ["office", "wfh", "leave", "comp_off"] as const;

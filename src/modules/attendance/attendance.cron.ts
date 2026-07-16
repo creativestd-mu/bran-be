@@ -1,5 +1,5 @@
 import { env } from "../../config/env";
-import { REMINDER_HOUR_IST } from "./attendance.constants";
+import { AUTO_REMINDERS_ENABLED, REMINDER_HOUR_IST } from "./attendance.constants";
 import { todayInIST } from "./attendance.dates";
 import { runEtaCheck } from "./attendance.service";
 
@@ -56,12 +56,15 @@ async function runScheduledCheck(): Promise<void> {
   }
 
   try {
-    // At 11:00 IST: sync, flag missing, DM everyone who hasn't posted yet.
+    // At 11:00 IST: sync + flag missing. Auto DMs gated by AUTO_REMINDERS_ENABLED.
     const result = await runEtaCheck(todayInIST(), {
-      sendReminders: true,
+      sendReminders: AUTO_REMINDERS_ENABLED,
       missingOnlyReminders: true
     });
-    console.log("[attendance-cron] ETA check complete:", JSON.stringify(result));
+    console.log(
+      `[attendance-cron] ETA check complete (autoReminders=${AUTO_REMINDERS_ENABLED}):`,
+      JSON.stringify(result)
+    );
   } catch (error) {
     console.error("[attendance-cron] ETA check failed:", error);
   }

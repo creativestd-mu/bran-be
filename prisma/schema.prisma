@@ -933,8 +933,8 @@ model AttendancePersonStats {
 model Escalation {
   id                 String    @id @default(uuid())
   title              String    @db.VarChar(500)
-  problemContext     String    @db.Text
-  latestContext      String    @db.Text
+  problemContext     String    @map("problem_context") @db.Text
+  latestContext      String    @map("latest_context") @db.Text
   status             String    @default("open") // open | in_progress | waiting | resolved | closed
   priority           String    @default("medium") // low | medium | high | urgent
   slackChannelId     String    @map("slack_channel_id")

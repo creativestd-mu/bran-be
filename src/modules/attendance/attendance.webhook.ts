@@ -171,7 +171,7 @@ export async function slackCommandsHandler(
     if (!userId) {
       res.status(200).json({
         response_type: "ephemeral",
-        text: "Could not identify Slack user."
+        text: "Hmm, I couldn't tell who you are in Slack. Mind trying again from your account?"
       });
       return;
     }
@@ -181,7 +181,7 @@ export async function slackCommandsHandler(
     if (!parsed || parsed.recordType !== "office" || !parsed.etaText) {
       res.status(200).json({
         response_type: "ephemeral",
-        text: "Usage: `/eta 12:30` (or `/eta 1`, `/eta 12 pm`)"
+        text: "Happy to help — try `/eta 12:30` (or `/eta 1`, `/eta 12 pm`). That'll log your office arrival time for today."
       });
       return;
     }
@@ -198,7 +198,7 @@ export async function slackCommandsHandler(
       if (!email || !email.toLowerCase().endsWith(`@${domain}`)) {
         res.status(200).json({
           response_type: "ephemeral",
-          text: `Your Slack email must end with @${domain} to submit attendance.`
+          text: `Looks like your Slack email isn't on @${domain} yet — once it is, I can record your attendance from here.`
         });
         return;
       }
@@ -231,13 +231,13 @@ export async function slackCommandsHandler(
 
       res.status(200).json({
         response_type: "ephemeral",
-        text: `Recorded office ETA ${parsed.etaText} for today.`
+        text: `All set — I've noted you'll be in around ${parsed.etaText} today. Have a good one!`
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to record ETA";
       res.status(200).json({
         response_type: "ephemeral",
-        text: `Error: ${message}`
+        text: `Sorry, I couldn't save that ETA (${message}). Mind trying once more?`
       });
     }
   } catch (error) {

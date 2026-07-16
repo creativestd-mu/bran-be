@@ -774,8 +774,8 @@ export async function notifyWfhToManager(
 
   const displayName = input.employeeName?.trim() || employee.name;
   const link = buildAttendanceLink(input.entryDate);
-  const title = `${displayName} is WFH today`;
-  const body = `${displayName} marked work from home for ${input.entryDate}.`;
+  const title = `${displayName} is working from home today`;
+  const body = `${displayName} let the team know they'll be working from home on ${input.entryDate}. Just a heads-up so you're in the loop.`;
   const dedupeKey = `attendance_wfh:${employee.id}:${input.entryDate}`;
 
   const payload = {

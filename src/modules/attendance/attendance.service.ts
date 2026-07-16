@@ -5,6 +5,13 @@ import { notifyWfhToManager } from "../notifications/notifications.service";
 import { classifyApprovalReply } from "./attendance.approval";
 import { ATTENDANCE_ADMIN_ROLES } from "./attendance.constants";
 import {
+  approvalConfirmedReply,
+  approvalDeniedReply,
+  missingAttendanceReminder,
+  pendingLeaveApprovalReminder,
+  pendingWfhApprovalReminder
+} from "./attendance.messages";
+import {
   classifyFlags,
   dateInIST,
   formatEntryDate,
@@ -209,12 +216,6 @@ async function resolveManagerSlackContext(employeeEmail: string | null): Promise
   };
 }
 
-function firstName(fullName: string | null | undefined): string {
-  const trimmed = fullName?.trim();
-  if (!trimmed) return "there";
-  return trimmed.split(/\s+/)[0] ?? "there";
-}
-
 export async function sendReminder(
   slackUserId: string,
   entry: {
@@ -248,43 +249,18 @@ export async function sendReminder(
 
   const text =
     reminderKind === "wfh_pending"
-      ? [
-          `Hey ${firstName(employeeName)} — quick follow-up from Bran.`,
-          "",
-          `You posted WFH for today, but ${managerTag} hasn't confirmed approval yet.`,
-          "",
-          `${managerTag} — could you confirm here if you approved their WFH? A simple "yes, approved" / "no" is enough.`,
-          "",
-          "Thanks!"
-        ].join("\n")
+      ? pendingWfhApprovalReminder({ employeeName, managerTag })
       : reminderKind === "leave_pending"
-        ? [
-            `Hey ${firstName(employeeName)} — quick follow-up from Bran.`,
-            "",
-            `You posted leave for today, but ${managerTag} hasn't confirmed approval yet.`,
-            "",
-            `${managerTag} — could you confirm here if you approved their leave? A simple "yes, approved" / "no" is enough.`,
-            "",
-            "Thanks!"
-          ].join("\n")
-        : [
-            `Hey ${firstName(employeeName)} — quick nudge from Bran.`,
-            "",
-            `I haven't seen your attendance update in #${channelLabel} yet today.`,
-            `If you're working from home, was that approved by ${managerTag}?`,
-            "",
-            `${managerTag} — could you confirm here if you approved their WFH? A simple "yes, approved" / "no" is enough.`,
-            "",
-            `Please post in #${channelLabel} before 11:30am IST:`,
-            "• eta 12:30  (or in office 12:30)",
-            "• wfh",
-            "• leave",
-            "• comp off",
-            "",
-            "Thanks!"
-          ].join("\n");
+        ? pendingLeaveApprovalReminder({ employeeName, managerTag })
+        : missingAttendanceReminder({ employeeName, channelLabel });
 
-  if (manager?.managerSlackUserId && manager.managerSlackUserId !== slackUserId) {
+  // Missing-attendance nudges go to the person only — don't loop in manager approval copy.
+  const includeManager =
+    reminderKind !== "missing" &&
+    Boolean(manager?.managerSlackUserId) &&
+    manager!.managerSlackUserId !== slackUserId;
+
+  if (includeManager && manager?.managerSlackUserId) {
     try {
       const channel = await openConversation([slackUserId, manager.managerSlackUserId]);
       return await postSlackMessage(channel, text);
@@ -518,11 +494,21 @@ export async function processWfhApprovalReply(input: {
   try {
     const isThreadReply = Boolean(input.threadTs && input.threadTs !== input.ts);
     const label = approvalKind === "leave" ? "leave" : "WFH";
+    const reply =
+      classification.decision === "approved"
+        ? approvalConfirmedReply({
+            slackUserId: entry.slackUserId!,
+            label,
+            date: formatEntryDate(entry.entryDate)
+          })
+        : approvalDeniedReply({
+            slackUserId: entry.slackUserId!,
+            label,
+            date: formatEntryDate(entry.entryDate)
+          });
     await postSlackMessage(
       input.channelId,
-      classification.decision === "approved"
-        ? `Got it — marked <@${entry.slackUserId}> as approved ${label} for ${formatEntryDate(entry.entryDate)}.`
-        : `Noted — ${label} was not approved for <@${entry.slackUserId}> on ${formatEntryDate(entry.entryDate)}.`,
+      reply,
       isThreadReply ? { threadTs: input.threadTs } : undefined
     );
   } catch (error) {

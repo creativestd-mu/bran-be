@@ -945,6 +945,7 @@ model Escalation {
   latestUpdateAt     DateTime? @map("latest_update_at")
   resolvedAt         DateTime? @map("resolved_at")
   aiSummary          String?   @map("ai_summary") @db.Text
+  aiIssueDescription String?   @map("ai_issue_description") @db.Text
   suggestedNextSteps String?   @map("suggested_next_steps") @db.Text
   aiBlockers         String?   @map("ai_blockers") @db.Text
   aiAnalyzedAt       DateTime? @map("ai_analyzed_at")
@@ -967,6 +968,7 @@ model EscalationUpdate {
   authorName      String?  @map("author_name")
   authorEmail     String?  @map("author_email")
   body            String   @db.Text
+  attachments     String?  @db.Text // JSON: [{ id, name, mimetype, urlPrivate, permalink }]
   slackMessageTs  String   @unique @map("slack_message_ts")
   inferredStatus  String?  @map("inferred_status")
   isManual        Boolean  @default(false) @map("is_manual")

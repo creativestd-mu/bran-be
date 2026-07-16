@@ -9,9 +9,16 @@ import {
   type EscalationPriority,
   type EscalationStatus
 } from "./escalation.constants";
+import {
+  downloadSlackImages,
+  resolveSlackMentionsInText,
+  type SlackAttachmentMeta,
+  type SlackImageBytes
+} from "./escalation.slack";
 
 export type EscalationAiAnalysis = {
   summary: string;
+  issueDescription: string;
   status: EscalationStatus;
   priority: EscalationPriority;
   blockers: string[];
@@ -58,6 +65,7 @@ function stripCodeFences(text: string): string {
 
 const analysisSchema = z.object({
   summary: z.string().trim().min(1),
+  issueDescription: z.string().trim().min(1),
   status: z.enum(ESCALATION_STATUSES),
   priority: z.enum(ESCALATION_PRIORITIES),
   blockers: z
@@ -72,25 +80,52 @@ const analysisSchema = z.object({
     .transform((value) => (value && value.length > 0 ? value : null))
 });
 
-async function callLlm(systemPrompt: string, userPrompt: string): Promise<string> {
+async function callLlm(
+  systemPrompt: string,
+  userPrompt: string,
+  images: SlackImageBytes[]
+): Promise<string> {
   const provider = getAiProvider();
 
   if (provider === "gemini") {
     const model = getGemini().getGenerativeModel({
       model: env.geminiModel,
       systemInstruction: systemPrompt,
-      generationConfig: { maxOutputTokens: 1024, temperature: 0.2 }
+      generationConfig: { maxOutputTokens: 1536, temperature: 0.2 }
     });
-    const result = await model.generateContent(userPrompt);
+    const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+      { text: userPrompt },
+      ...images.map((image) => ({
+        inlineData: {
+          mimeType: image.mimetype,
+          data: image.buffer.toString("base64")
+        }
+      }))
+    ];
+    const result = await model.generateContent(parts);
     return result.response.text() || "";
   }
 
+  const imageBlocks = images.map((image) => ({
+    type: "image" as const,
+    source: {
+      type: "base64" as const,
+      media_type: image.mimetype,
+      data: image.buffer.toString("base64")
+    }
+  }));
+
   const response = await getAnthropic().messages.create({
     model: env.anthropicModel,
-    max_tokens: 1024,
+    max_tokens: 1536,
     temperature: 0.2,
     system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }]
+    messages: [
+      {
+        role: "user",
+        content: [...imageBlocks, { type: "text", text: userPrompt }]
+      }
+    ]
   });
 
   const textBlock = response.content.find((block) => block.type === "text");
@@ -103,6 +138,7 @@ function formatTimeline(
     body: string;
     createdAt: Date;
     isManual: boolean;
+    attachmentCount: number;
   }>
 ): string {
   return updates
@@ -110,14 +146,18 @@ function formatTimeline(
       const author = update.authorName ?? "Unknown";
       const source = update.isManual ? "admin" : "slack";
       const at = update.createdAt.toISOString();
-      return `${index + 1}. [${at}] ${author} (${source}): ${update.body}`;
+      const media =
+        update.attachmentCount > 0
+          ? ` [${update.attachmentCount} image attachment${update.attachmentCount === 1 ? "" : "s"}]`
+          : "";
+      return `${index + 1}. [${at}] ${author} (${source})${media}: ${update.body || "(image only)"}`;
     })
     .join("\n");
 }
 
 /**
- * Analyze an escalation thread with the configured LLM.
- * Returns a concise "where it stands" summary.
+ * Analyze an escalation thread with the configured LLM (text + Slack images).
+ * Returns a concise "where it stands" summary and a richer issue description.
  */
 export async function analyzeEscalationWithAi(input: {
   title: string;
@@ -130,37 +170,61 @@ export async function analyzeEscalationWithAi(input: {
     body: string;
     createdAt: Date;
     isManual: boolean;
+    attachments?: SlackAttachmentMeta[];
   }>;
 }): Promise<EscalationAiAnalysis | null> {
   if (!isEscalationAiConfigured()) {
     return null;
   }
 
+  const attachmentMetas = input.updates.flatMap((update) => update.attachments ?? []);
+  const images = await downloadSlackImages(attachmentMetas);
+
   const systemPrompt =
     "You are an operations escalation analyst for a customer-success team. " +
-    "Read the original problem and the full update timeline, then return STRICT JSON only (no markdown) with shape: " +
-    '{ "summary": string, "status": "open"|"in_progress"|"waiting"|"resolved"|"closed", ' +
+    "Read the original problem, the full update timeline, and any attached screenshot/images, then return STRICT JSON only (no markdown) with shape: " +
+    '{ "summary": string, "issueDescription": string, "status": "open"|"in_progress"|"waiting"|"resolved"|"closed", ' +
     '"priority": "low"|"medium"|"high"|"urgent", "blockers": string[], "reasoning": string|null }. ' +
     "Rules: " +
-    "summary = 2-4 sentences on current state and impact; " +
+    "issueDescription = a rich problem write-up (3-6 sentences) that combines the Slack text with visual evidence from screenshots " +
+    "(error messages, UI state, emails, WhatsApp/chat snippets, product names, dates, customer impact). " +
+    "If images are attached, explicitly include what they show. " +
+    "summary = 2-4 sentences on current state and where it stands now; " +
     "blockers = current blockers or waiting-on items (empty array if none); " +
     "status = best fit from timeline (open=new/unassigned, in_progress=actively worked, waiting=blocked/pending external, resolved=fixed, closed=no further action); " +
     "priority = severity/urgency based on customer impact and SLA risk; " +
     "reasoning = brief note on status/priority choice (1 sentence max); " +
-    "Do not invent facts not present in the messages. Prefer waiting when blocked on someone else.";
+    "Always use human display names for people — never Slack user IDs like U0B8MRPU2AG or <@U…> mentions. " +
+    "Do not invent facts not present in the messages or images. Prefer waiting when blocked on someone else.";
+
+  const [title, problemContext, ...resolvedBodies] = await Promise.all([
+    resolveSlackMentionsInText(input.title),
+    resolveSlackMentionsInText(input.problemContext),
+    ...input.updates.map((update) => resolveSlackMentionsInText(update.body))
+  ]);
+
+  const updates = input.updates.map((update, index) => ({
+    ...update,
+    body: resolvedBodies[index] ?? update.body,
+    attachmentCount: update.attachments?.length ?? 0
+  }));
 
   const userPrompt = [
-    `Title: ${input.title}`,
+    `Title: ${title}`,
     input.reporterName ? `Reporter: ${input.reporterName}` : null,
     `Current status (system): ${input.currentStatus}`,
     `Current priority (system): ${input.currentPriority}`,
-    `Original problem:\n"""${input.problemContext}"""`,
-    `Timeline (${input.updates.length} updates):\n${formatTimeline(input.updates)}`
+    `Attached images provided to the model: ${images.length}`,
+    `Original problem:\n"""${problemContext || "(see attached images)"}"""`,
+    `Timeline (${updates.length} updates):\n${formatTimeline(updates)}`,
+    images.length > 0
+      ? "Attached images follow in order. Use them to enrich issueDescription with concrete visual details (errors, UI copy, names, dates)."
+      : null
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  const raw = await callLlm(systemPrompt, userPrompt);
+  const raw = await callLlm(systemPrompt, userPrompt, images);
 
   let parsed: unknown;
   try {
@@ -179,5 +243,16 @@ export async function analyzeEscalationWithAi(input: {
     return null;
   }
 
-  return result.data;
+  const [summary, issueDescription, ...blockers] = await Promise.all([
+    resolveSlackMentionsInText(result.data.summary),
+    resolveSlackMentionsInText(result.data.issueDescription),
+    ...result.data.blockers.map((blocker) => resolveSlackMentionsInText(blocker))
+  ]);
+
+  return {
+    ...result.data,
+    summary,
+    issueDescription,
+    blockers
+  };
 }

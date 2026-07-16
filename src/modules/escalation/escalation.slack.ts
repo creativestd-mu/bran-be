@@ -1,6 +1,7 @@
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { slackTsToDate } from "../attendance/attendance.dates";
+import { getSlackUserInfo } from "../attendance/attendance.slack";
 
 const SLACK_API = "https://slack.com/api";
 
@@ -8,6 +9,33 @@ type SlackApiResponse = {
   ok: boolean;
   error?: string;
   [key: string]: unknown;
+};
+
+export type SlackFile = {
+  id: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  filetype?: string;
+  url_private?: string;
+  url_private_download?: string;
+  permalink?: string;
+  thumb_360?: string;
+};
+
+export type SlackAttachmentMeta = {
+  id: string;
+  name: string;
+  mimetype: string;
+  urlPrivate: string;
+  permalink: string | null;
+};
+
+export type SlackImageBytes = {
+  id: string;
+  name: string;
+  mimetype: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  buffer: Buffer;
 };
 
 export type SlackMessage = {
@@ -18,7 +46,76 @@ export type SlackMessage = {
   bot_id?: string;
   subtype?: string;
   thread_ts?: string;
+  files?: SlackFile[];
 };
+
+const IMAGE_MIME_PREFIX = "image/";
+const SUPPORTED_IMAGE_MIME = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif"
+]);
+
+export function extractSlackImageAttachments(
+  files: SlackFile[] | undefined
+): SlackAttachmentMeta[] {
+  if (!files?.length) return [];
+
+  return files
+    .filter((file) => {
+      const mime = (file.mimetype ?? "").toLowerCase();
+      return mime.startsWith(IMAGE_MIME_PREFIX) && Boolean(file.url_private || file.url_private_download);
+    })
+    .slice(0, 8)
+    .map((file) => ({
+      id: file.id,
+      name: file.name || file.title || file.id,
+      mimetype: (file.mimetype ?? "image/png").toLowerCase(),
+      urlPrivate: file.url_private_download || file.url_private || "",
+      permalink: file.permalink ?? null
+    }))
+    .filter((file) => file.urlPrivate);
+}
+
+export async function downloadSlackImage(
+  attachment: SlackAttachmentMeta
+): Promise<SlackImageBytes | null> {
+  if (!env.slackBotToken) return null;
+  const mime = attachment.mimetype.toLowerCase();
+  if (!SUPPORTED_IMAGE_MIME.has(mime)) return null;
+
+  try {
+    const response = await fetch(attachment.urlPrivate, {
+      headers: { Authorization: `Bearer ${env.slackBotToken}` }
+    });
+    if (!response.ok) {
+      console.error("[escalation.slack] image download failed", {
+        id: attachment.id,
+        status: response.status
+      });
+      return null;
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length === 0 || buffer.length > 8 * 1024 * 1024) return null;
+    return {
+      id: attachment.id,
+      name: attachment.name,
+      mimetype: mime as SlackImageBytes["mimetype"],
+      buffer
+    };
+  } catch (error) {
+    console.error("[escalation.slack] image download error", { id: attachment.id, error });
+    return null;
+  }
+}
+
+export async function downloadSlackImages(
+  attachments: SlackAttachmentMeta[]
+): Promise<SlackImageBytes[]> {
+  const images = await Promise.all(attachments.slice(0, 6).map((file) => downloadSlackImage(file)));
+  return images.filter((image): image is SlackImageBytes => Boolean(image));
+}
 
 async function slackApi<T extends SlackApiResponse>(
   method: string,
@@ -156,4 +253,52 @@ export async function fetchEscalationThreadReplies(
 
 export function slackMessageInstant(ts: string): Date {
   return slackTsToDate(ts);
+}
+
+const slackMentionCache = new Map<string, string>();
+
+/** Slack user IDs look like U0B8MRPU2AG / W0123456789. */
+const SLACK_USER_ID_RE = /\b([UW][A-Z0-9]{8,})\b/g;
+const SLACK_MENTION_RE = /<@([UW][A-Z0-9]+)(?:\|[^>]+)?>/g;
+
+async function resolveSlackUserDisplayName(userId: string): Promise<string> {
+  const cached = slackMentionCache.get(userId);
+  if (cached) return cached;
+
+  try {
+    const user = await getSlackUserInfo(userId);
+    const name =
+      user.profile?.real_name ||
+      user.real_name ||
+      user.profile?.display_name ||
+      user.name ||
+      userId;
+    slackMentionCache.set(userId, name);
+    return name;
+  } catch {
+    slackMentionCache.set(userId, userId);
+    return userId;
+  }
+}
+
+/**
+ * Replace Slack mention markup and bare user IDs with display names
+ * so AI summaries / UI never show codes like U0B8MRPU2AG.
+ */
+export async function resolveSlackMentionsInText(text: string): Promise<string> {
+  if (!text) return text;
+
+  const ids = new Set<string>();
+  for (const match of text.matchAll(SLACK_MENTION_RE)) {
+    ids.add(match[1]);
+  }
+  for (const match of text.matchAll(SLACK_USER_ID_RE)) {
+    ids.add(match[1]);
+  }
+
+  await Promise.all([...ids].map((id) => resolveSlackUserDisplayName(id)));
+
+  return text
+    .replace(SLACK_MENTION_RE, (_full, id: string) => slackMentionCache.get(id) ?? id)
+    .replace(SLACK_USER_ID_RE, (id) => slackMentionCache.get(id) ?? id);
 }

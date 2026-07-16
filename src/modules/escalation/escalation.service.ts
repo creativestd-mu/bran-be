@@ -15,6 +15,7 @@ import {
   findEscalationById,
   findEscalationBySlackMessageTs,
   listEscalations,
+  parseStoredAttachments,
   serializeEscalation,
   updateEscalationAiAnalysis,
   updateEscalationStatus,
@@ -22,11 +23,14 @@ import {
   upsertEscalationUpdate
 } from "./escalation.repository";
 import {
+  extractSlackImageAttachments,
   fetchEscalationChannelHistory,
   fetchEscalationThreadReplies,
   isEscalationConfigured,
   resolveEscalationChannelId,
+  resolveSlackMentionsInText,
   slackMessageInstant,
+  type SlackFile,
   type SlackMessage
 } from "./escalation.slack";
 
@@ -39,10 +43,12 @@ type AuthorInfo = {
 };
 
 function isIngestibleMessage(message: SlackMessage): boolean {
-  if (!message.user || !message.text || !message.ts) return false;
+  if (!message.user || !message.ts) return false;
   if (message.bot_id) return false;
-  if (message.subtype) return false;
-  return true;
+  if (message.subtype && message.subtype !== "file_share") return false;
+  const text = (message.text ?? "").trim();
+  const hasImages = extractSlackImageAttachments(message.files).length > 0;
+  return Boolean(text || hasImages);
 }
 
 async function resolveAuthor(userId: string | undefined): Promise<AuthorInfo> {
@@ -100,7 +106,8 @@ export async function refreshEscalationAiAnalysis(escalationId: string) {
       authorName: update.authorName,
       body: update.body,
       createdAt: update.createdAt,
-      isManual: update.isManual
+      isManual: update.isManual,
+      attachments: parseStoredAttachments(update.attachments)
     }))
   });
 
@@ -115,6 +122,7 @@ export async function refreshEscalationAiAnalysis(escalationId: string) {
     status: analysis.status,
     priority: analysis.priority,
     aiSummary: analysis.summary,
+    aiIssueDescription: analysis.issueDescription,
     aiBlockers: analysis.blockers,
     aiAnalyzedAt: now,
     resolvedAt: resolvedAtForStatus(analysis.status)
@@ -160,15 +168,19 @@ async function ingestThreadReply(
   if (!parent) return { handled: false, reason: "parent_not_found" as const };
 
   const author = await resolveAuthor(input.message.user);
-  const inferredStatus = inferStatusFromText(input.message.text!);
+  const text = (input.message.text ?? "").trim();
+  const attachments = extractSlackImageAttachments(input.message.files);
+  const inferredStatus = inferStatusFromText(text);
   const createdAt = slackMessageInstant(input.message.ts);
+  const body = text || (attachments.length ? `[${attachments.length} image attachment(s)]` : "");
 
   await upsertEscalationUpdate({
     escalationId: parent.id,
     slackUserId: author.slackUserId,
     authorName: author.authorName,
     authorEmail: author.authorEmail,
-    body: input.message.text!,
+    body,
+    attachments,
     slackMessageTs: input.message.ts,
     inferredStatus,
     createdAt
@@ -178,7 +190,7 @@ async function ingestThreadReply(
     parent.id,
     parent.status as EscalationStatus,
     inferredStatus,
-    input.message.text!,
+    body,
     createdAt
   );
 
@@ -197,16 +209,20 @@ async function ingestTopLevelEscalation(
   options?: { scheduleAi?: boolean }
 ) {
   const author = await resolveAuthor(input.message.user);
-  const text = input.message.text!.trim();
-  const title = extractEscalationTitle(text);
+  const text = (input.message.text ?? "").trim();
+  const attachments = extractSlackImageAttachments(input.message.files);
+  const body = text || (attachments.length ? `[${attachments.length} image attachment(s)]` : "");
+  const title = text
+    ? extractEscalationTitle(text)
+    : attachments[0]?.name ?? "Escalation";
   const priority = inferPriority(text);
   const status: EscalationStatus = inferStatusFromText(text) ?? "open";
   const createdAt = slackMessageInstant(input.message.ts);
 
   const escalation = await upsertEscalation({
     title,
-    problemContext: text,
-    latestContext: text,
+    problemContext: body,
+    latestContext: body,
     status,
     priority,
     slackChannelId: input.channelId,
@@ -223,7 +239,8 @@ async function ingestTopLevelEscalation(
     slackUserId: author.slackUserId,
     authorName: author.authorName,
     authorEmail: author.authorEmail,
-    body: text,
+    body,
+    attachments,
     slackMessageTs: input.message.ts,
     inferredStatus: status,
     createdAt
@@ -239,17 +256,21 @@ async function ingestTopLevelEscalation(
 export async function processSlackEscalationMessage(input: {
   channelId: string;
   userId: string;
-  text: string;
+  text?: string;
   ts: string;
   botId?: string;
   subtype?: string;
   threadTs?: string;
+  files?: SlackFile[];
 }): Promise<{ handled: boolean; reason?: string }> {
   if (!isEscalationConfigured()) {
     return { handled: false, reason: "not_configured" };
   }
 
-  if (input.botId || input.subtype) {
+  if (input.botId) {
+    return { handled: false, reason: "ignored_bot_or_subtype" };
+  }
+  if (input.subtype && input.subtype !== "file_share") {
     return { handled: false, reason: "ignored_bot_or_subtype" };
   }
 
@@ -268,7 +289,9 @@ export async function processSlackEscalationMessage(input: {
     user: input.userId,
     text: input.text,
     ts: input.ts,
-    thread_ts: input.threadTs
+    thread_ts: input.threadTs,
+    subtype: input.subtype,
+    files: input.files
   };
 
   if (!isIngestibleMessage(message)) {
@@ -358,6 +381,43 @@ export async function syncEscalationsFromSlack(days = 30): Promise<{
   };
 }
 
+async function withResolvedMentions<T extends ReturnType<typeof serializeEscalation>>(
+  item: T
+): Promise<T> {
+  const [title, problemContext, latestContext, aiSummary, aiIssueDescription, ...aiBlockers] =
+    await Promise.all([
+      resolveSlackMentionsInText(item.title),
+      resolveSlackMentionsInText(item.problemContext),
+      resolveSlackMentionsInText(item.latestContext),
+      resolveSlackMentionsInText(item.ai.summary ?? ""),
+      resolveSlackMentionsInText(item.ai.issueDescription ?? ""),
+      ...item.ai.blockers.map((blocker) => resolveSlackMentionsInText(blocker))
+    ]);
+
+  const updates = item.updates
+    ? await Promise.all(
+        item.updates.map(async (update) => ({
+          ...update,
+          body: await resolveSlackMentionsInText(update.body)
+        }))
+      )
+    : item.updates;
+
+  return {
+    ...item,
+    title,
+    problemContext,
+    latestContext,
+    ai: {
+      ...item.ai,
+      summary: item.ai.summary ? aiSummary : null,
+      issueDescription: item.ai.issueDescription ? aiIssueDescription : null,
+      blockers: aiBlockers
+    },
+    updates
+  };
+}
+
 export async function listEscalationTracker(filters: {
   status?: EscalationStatus;
   priority?: EscalationPriority;
@@ -367,10 +427,13 @@ export async function listEscalationTracker(filters: {
   skip?: number;
 }) {
   const result = await listEscalations(filters);
+  const items = await Promise.all(
+    result.items.map((item) => withResolvedMentions(serializeEscalation(item)))
+  );
   return {
     summary: result.summary,
     total: result.total,
-    items: result.items.map((item) => serializeEscalation(item))
+    items
   };
 }
 
@@ -379,7 +442,7 @@ export async function getEscalationDetail(id: string) {
   if (!row) {
     throw new HttpError(404, "Escalation not found");
   }
-  return serializeEscalation(row);
+  return withResolvedMentions(serializeEscalation(row));
 }
 
 export async function setEscalationStatus(input: {

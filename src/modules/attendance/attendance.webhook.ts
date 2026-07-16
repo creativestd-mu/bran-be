@@ -73,6 +73,17 @@ export async function slackEventsHandler(
         subtype?: string;
         thread_ts?: string;
         channel_type?: string;
+        files?: Array<{
+          id: string;
+          name?: string;
+          title?: string;
+          mimetype?: string;
+          filetype?: string;
+          url_private?: string;
+          url_private_download?: string;
+          permalink?: string;
+          thumb_360?: string;
+        }>;
       };
     };
 
@@ -98,28 +109,42 @@ export async function slackEventsHandler(
       return;
     }
 
-    if (!event.channel || !event.user || !event.text || !event.ts) {
+    if (!event.channel || !event.user || !event.ts) {
       return;
     }
 
-    const slackMessage = {
-      channelId: event.channel,
-      userId: event.user,
-      text: event.text,
-      ts: event.ts,
-      botId: event.bot_id,
-      subtype: event.subtype,
-      threadTs: event.thread_ts,
-      channelType: event.channel_type
-    };
+    const hasText = Boolean(event.text?.trim());
+    const hasFiles = Boolean(event.files?.length);
 
-    void processSlackChannelMessage(slackMessage).catch((error) => {
-      console.error("Slack attendance event processing failed:", error);
-    });
+    if (hasText) {
+      void processSlackChannelMessage({
+        channelId: event.channel,
+        userId: event.user,
+        text: event.text!,
+        ts: event.ts,
+        botId: event.bot_id,
+        subtype: event.subtype,
+        threadTs: event.thread_ts,
+        channelType: event.channel_type
+      }).catch((error) => {
+        console.error("Slack attendance event processing failed:", error);
+      });
+    }
 
-    void processSlackEscalationMessage(slackMessage).catch((error) => {
-      console.error("Slack escalation event processing failed:", error);
-    });
+    if (hasText || hasFiles) {
+      void processSlackEscalationMessage({
+        channelId: event.channel,
+        userId: event.user,
+        text: event.text,
+        ts: event.ts,
+        botId: event.bot_id,
+        subtype: event.subtype,
+        threadTs: event.thread_ts,
+        files: event.files
+      }).catch((error) => {
+        console.error("Slack escalation event processing failed:", error);
+      });
+    }
   } catch (error) {
     next(error);
   }

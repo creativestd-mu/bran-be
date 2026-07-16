@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import type { EscalationPriority, EscalationStatus } from "./escalation.constants";
+import type { SlackAttachmentMeta } from "./escalation.slack";
 
 export type UpsertEscalationInput = {
   title: string;
@@ -15,6 +16,7 @@ export type UpsertEscalationInput = {
   latestUpdateAt: Date | null;
   resolvedAt: Date | null;
   aiSummary?: string | null;
+  aiIssueDescription?: string | null;
   aiBlockers?: string | null;
   aiAnalyzedAt?: Date | null;
 };
@@ -25,11 +27,29 @@ export type UpsertEscalationUpdateInput = {
   authorName: string | null;
   authorEmail: string | null;
   body: string;
+  attachments?: SlackAttachmentMeta[];
   slackMessageTs: string;
   inferredStatus: EscalationStatus | null;
   isManual?: boolean;
   createdAt?: Date;
 };
+
+export function parseStoredAttachments(
+  value: string | null | undefined
+): SlackAttachmentMeta[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is SlackAttachmentMeta => {
+      if (!item || typeof item !== "object") return false;
+      const row = item as SlackAttachmentMeta;
+      return Boolean(row.id && row.urlPrivate && row.mimetype);
+    });
+  } catch {
+    return [];
+  }
+}
 
 export async function upsertEscalation(input: UpsertEscalationInput) {
   return prisma.escalation.upsert({
@@ -47,6 +67,9 @@ export async function upsertEscalation(input: UpsertEscalationInput) {
       latestUpdateAt: input.latestUpdateAt,
       resolvedAt: input.resolvedAt,
       ...(input.aiSummary !== undefined ? { aiSummary: input.aiSummary } : {}),
+      ...(input.aiIssueDescription !== undefined
+        ? { aiIssueDescription: input.aiIssueDescription }
+        : {}),
       ...(input.aiBlockers !== undefined ? { aiBlockers: input.aiBlockers } : {}),
       ...(input.aiAnalyzedAt !== undefined ? { aiAnalyzedAt: input.aiAnalyzedAt } : {})
     }
@@ -54,6 +77,9 @@ export async function upsertEscalation(input: UpsertEscalationInput) {
 }
 
 export async function upsertEscalationUpdate(input: UpsertEscalationUpdateInput) {
+  const attachmentsJson =
+    input.attachments !== undefined ? JSON.stringify(input.attachments) : undefined;
+
   return prisma.escalationUpdate.upsert({
     where: { slackMessageTs: input.slackMessageTs },
     create: {
@@ -62,6 +88,7 @@ export async function upsertEscalationUpdate(input: UpsertEscalationUpdateInput)
       authorName: input.authorName,
       authorEmail: input.authorEmail,
       body: input.body,
+      attachments: attachmentsJson ?? null,
       slackMessageTs: input.slackMessageTs,
       inferredStatus: input.inferredStatus,
       isManual: input.isManual ?? false,
@@ -71,7 +98,8 @@ export async function upsertEscalationUpdate(input: UpsertEscalationUpdateInput)
       body: input.body,
       authorName: input.authorName,
       authorEmail: input.authorEmail,
-      inferredStatus: input.inferredStatus
+      inferredStatus: input.inferredStatus,
+      ...(attachmentsJson !== undefined ? { attachments: attachmentsJson } : {})
     }
   });
 }
@@ -159,6 +187,7 @@ export async function updateEscalationAiAnalysis(input: {
   status: EscalationStatus;
   priority: EscalationPriority;
   aiSummary: string;
+  aiIssueDescription: string;
   aiBlockers: string[];
   aiAnalyzedAt: Date;
   resolvedAt?: Date | null;
@@ -170,6 +199,7 @@ export async function updateEscalationAiAnalysis(input: {
       status: input.status,
       priority: input.priority,
       aiSummary: input.aiSummary,
+      aiIssueDescription: input.aiIssueDescription,
       aiBlockers: JSON.stringify(input.aiBlockers),
       aiAnalyzedAt: input.aiAnalyzedAt,
       ...(input.resolvedAt !== undefined ? { resolvedAt: input.resolvedAt } : {})
@@ -231,6 +261,7 @@ export function serializeEscalation(row: {
   latestUpdateAt: Date | null;
   resolvedAt: Date | null;
   aiSummary?: string | null;
+  aiIssueDescription?: string | null;
   aiBlockers?: string | null;
   aiAnalyzedAt?: Date | null;
   createdAt: Date;
@@ -242,6 +273,7 @@ export function serializeEscalation(row: {
     authorName: string | null;
     authorEmail: string | null;
     body: string;
+    attachments?: string | null;
     slackMessageTs: string;
     inferredStatus: string | null;
     isManual: boolean;
@@ -251,6 +283,10 @@ export function serializeEscalation(row: {
   const latestUpdate = row.updates?.length
     ? [...row.updates].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
     : null;
+
+  const allAttachments = (row.updates ?? []).flatMap((update) =>
+    parseStoredAttachments(update.attachments)
+  );
 
   return {
     id: row.id,
@@ -278,8 +314,15 @@ export function serializeEscalation(row: {
       : null,
     latestUpdateAt: row.latestUpdateAt?.toISOString() ?? null,
     resolvedAt: row.resolvedAt?.toISOString() ?? null,
+    attachments: allAttachments.map((file) => ({
+      id: file.id,
+      name: file.name,
+      mimetype: file.mimetype,
+      permalink: file.permalink
+    })),
     ai: {
       summary: row.aiSummary ?? null,
+      issueDescription: row.aiIssueDescription ?? null,
       blockers: parseStoredStringArray(row.aiBlockers),
       analyzedAt: row.aiAnalyzedAt?.toISOString() ?? null
     },
@@ -294,6 +337,12 @@ export function serializeEscalation(row: {
       slackMessageTs: update.slackMessageTs,
       inferredStatus: update.inferredStatus,
       isManual: update.isManual,
+      attachments: parseStoredAttachments(update.attachments).map((file) => ({
+        id: file.id,
+        name: file.name,
+        mimetype: file.mimetype,
+        permalink: file.permalink
+      })),
       createdAt: update.createdAt.toISOString()
     }))
   };

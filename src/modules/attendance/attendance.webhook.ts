@@ -231,7 +231,7 @@ export async function slackCommandsHandler(
 
       res.status(200).json({
         response_type: "ephemeral",
-        text: `All set — I've noted you'll be in around ${parsed.etaText} today. Have a good one!`
+        text: `Got it — office ETA ${parsed.etaText} for today.`
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to record ETA";

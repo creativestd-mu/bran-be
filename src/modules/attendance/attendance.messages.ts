@@ -18,12 +18,12 @@ export function missingAttendanceReminder(input: {
     "",
     `Hope your morning's going okay — just a gentle reminder that we don't have your attendance note in #${input.channelLabel} yet.`,
     "",
-    "No stress if you're still getting settled. Whenever you can, drop a quick update there:",
+    "Whenever you can, drop a quick update there:",
     "• `eta 12:30` — if you're coming to the office",
     "• `wfh` — if you're working from home",
     "• `leave` / `comp off` — if you're out today",
     "",
-    "Ideally before 11:30am IST so the team board stays accurate. Thanks — we've got you."
+    "Ideally before 11:30am IST. Thanks."
   ].join("\n");
 }
 
@@ -37,11 +37,11 @@ export function pendingWfhApprovalReminder(input: {
     "",
     `${name} marked WFH for today. Could you take a quick look when you have a moment, ${input.managerTag}?`,
     "",
-    "A short reply here works perfectly:",
+    "A short reply here works:",
     '• "yes, approved" — all good for WFH',
     '• "no" — please come to office / not approved',
     "",
-    "Appreciate you both — thanks for keeping this clear for the team."
+    "Thanks."
   ].join("\n");
 }
 
@@ -59,7 +59,7 @@ export function pendingLeaveApprovalReminder(input: {
     '• "yes, approved"',
     '• "no" / not approved',
     "",
-    "Thank you — hope the day goes smoothly for everyone."
+    "Thanks."
   ].join("\n");
 }
 
@@ -68,7 +68,7 @@ export function approvalConfirmedReply(input: {
   label: "WFH" | "leave";
   date: string;
 }): string {
-  return `All set — I've marked <@${input.slackUserId}>'s ${input.label} as approved for ${input.date}. Take care!`;
+  return `Done — <@${input.slackUserId}>'s ${input.label} is approved for ${input.date}.`;
 }
 
 export function approvalDeniedReply(input: {
@@ -76,5 +76,5 @@ export function approvalDeniedReply(input: {
   label: "WFH" | "leave";
   date: string;
 }): string {
-  return `Noted — <@${input.slackUserId}>'s ${input.label} wasn't approved for ${input.date}. I've updated the board accordingly.`;
+  return `Noted — <@${input.slackUserId}>'s ${input.label} wasn't approved for ${input.date}.`;
 }

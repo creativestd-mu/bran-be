@@ -794,9 +794,13 @@ export async function runEtaCheck(
 export type AttendanceMonthCounts = {
   leave: number;
   leaveApproved: number;
+  leaveDenied: number;
+  leavePending: number;
   leaveUnapproved: number;
   wfh: number;
   wfhApproved: number;
+  wfhDenied: number;
+  wfhPending: number;
   wfhUnapproved: number;
   office: number;
   onTime: number;
@@ -808,9 +812,13 @@ function emptyMonthCounts(): AttendanceMonthCounts {
   return {
     leave: 0,
     leaveApproved: 0,
+    leaveDenied: 0,
+    leavePending: 0,
     leaveUnapproved: 0,
     wfh: 0,
     wfhApproved: 0,
+    wfhDenied: 0,
+    wfhPending: 0,
     wfhUnapproved: 0,
     office: 0,
     onTime: 0,
@@ -851,11 +859,19 @@ async function buildMonthCountsBySlackUserId(
     } else if (row.recordType === "leave") {
       current.leave += 1;
       if (row.leaveApprovalState === "approved") current.leaveApproved += 1;
-      else current.leaveUnapproved += 1;
+      else {
+        current.leaveUnapproved += 1;
+        if (row.leaveApprovalState === "denied") current.leaveDenied += 1;
+        else current.leavePending += 1;
+      }
     } else if (row.recordType === "wfh") {
       current.wfh += 1;
       if (row.wfhApprovalState === "approved") current.wfhApproved += 1;
-      else current.wfhUnapproved += 1;
+      else {
+        current.wfhUnapproved += 1;
+        if (row.wfhApprovalState === "denied") current.wfhDenied += 1;
+        else current.wfhPending += 1;
+      }
     } else if (row.recordType === "office") {
       current.office += 1;
       if (row.submittedOnTime === true) current.onTime += 1;

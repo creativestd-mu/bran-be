@@ -579,9 +579,13 @@ export type AttendanceActionStatus = (typeof ATTENDANCE_ACTION_STATUSES)[number]
 type StatsCounters = {
   wfhCount: number;
   wfhApprovedCount: number;
+  wfhDeniedCount: number;
+  wfhPendingCount: number;
   wfhUnapprovedCount: number;
   leaveCount: number;
   leaveApprovedCount: number;
+  leaveDeniedCount: number;
+  leavePendingCount: number;
   leaveUnapprovedCount: number;
   compOffCount: number;
   officeCount: number;
@@ -599,9 +603,13 @@ function emptyCounters(): StatsCounters {
   return {
     wfhCount: 0,
     wfhApprovedCount: 0,
+    wfhDeniedCount: 0,
+    wfhPendingCount: 0,
     wfhUnapprovedCount: 0,
     leaveCount: 0,
     leaveApprovedCount: 0,
+    leaveDeniedCount: 0,
+    leavePendingCount: 0,
     leaveUnapprovedCount: 0,
     compOffCount: 0,
     officeCount: 0,
@@ -653,12 +661,22 @@ function accumulateEntry(
 
   if (entry.recordType === "wfh") {
     counters.wfhCount += 1;
-    if (isApprovedState(entry.wfhApprovalState)) counters.wfhApprovedCount += 1;
-    else counters.wfhUnapprovedCount += 1;
+    if (isApprovedState(entry.wfhApprovalState)) {
+      counters.wfhApprovedCount += 1;
+    } else {
+      counters.wfhUnapprovedCount += 1;
+      if (entry.wfhApprovalState === "denied") counters.wfhDeniedCount += 1;
+      else counters.wfhPendingCount += 1;
+    }
   } else if (entry.recordType === "leave") {
     counters.leaveCount += 1;
-    if (isApprovedState(entry.leaveApprovalState)) counters.leaveApprovedCount += 1;
-    else counters.leaveUnapprovedCount += 1;
+    if (isApprovedState(entry.leaveApprovalState)) {
+      counters.leaveApprovedCount += 1;
+    } else {
+      counters.leaveUnapprovedCount += 1;
+      if (entry.leaveApprovalState === "denied") counters.leaveDeniedCount += 1;
+      else counters.leavePendingCount += 1;
+    }
   } else if (entry.recordType === "comp_off") {
     counters.compOffCount += 1;
   } else if (entry.recordType === "office") {
@@ -794,11 +812,15 @@ export function summarizeApprovalBreakdown(
     wfh: {
       total: counters.wfhCount,
       approved: counters.wfhApprovedCount,
+      denied: counters.wfhDeniedCount,
+      pending: counters.wfhPendingCount,
       unapproved: counters.wfhUnapprovedCount
     },
     leave: {
       total: counters.leaveCount,
       approved: counters.leaveApprovedCount,
+      denied: counters.leaveDeniedCount,
+      pending: counters.leavePendingCount,
       unapproved: counters.leaveUnapprovedCount
     },
     office: counters.officeCount,

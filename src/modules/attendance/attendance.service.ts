@@ -975,6 +975,12 @@ export async function getAttendanceUserDetail(
         approved: serialized.filter(
           (e) => e.recordType === "wfh" && e.wfhApprovalState === "approved"
         ),
+        denied: serialized.filter(
+          (e) => e.recordType === "wfh" && e.wfhApprovalState === "denied"
+        ),
+        pending: serialized.filter(
+          (e) => e.recordType === "wfh" && e.wfhApprovalState === "pending"
+        ),
         unapproved: serialized.filter(
           (e) => e.recordType === "wfh" && e.wfhApprovalState !== "approved"
         )
@@ -982,6 +988,12 @@ export async function getAttendanceUserDetail(
       leave: {
         approved: serialized.filter(
           (e) => e.recordType === "leave" && e.leaveApprovalState === "approved"
+        ),
+        denied: serialized.filter(
+          (e) => e.recordType === "leave" && e.leaveApprovalState === "denied"
+        ),
+        pending: serialized.filter(
+          (e) => e.recordType === "leave" && e.leaveApprovalState === "pending"
         ),
         unapproved: serialized.filter(
           (e) => e.recordType === "leave" && e.leaveApprovalState !== "approved"

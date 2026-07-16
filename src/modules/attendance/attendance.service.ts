@@ -34,7 +34,8 @@ import {
   findEntriesForUser,
   findRemindableEntries,
   resetPersonStatsCounts,
-  summarizeApprovalBreakdown,
+  setPersonStatsCounts,
+  getRollingApprovalBreakdown,
   findRemindableEntryForUser,
   findPersonStatsBySlackUserId,
   findSlackMember,
@@ -964,7 +965,8 @@ export async function getAttendanceUserDetail(
   const stats = await getAttendancePersonStats(slackUserId);
   const entries = await findEntriesForUser(slackUserId, options);
   const serialized = entries.map(serializeEntry);
-  const breakdown = summarizeApprovalBreakdown(entries);
+  // Chips use rolling counters (baselines + entries since reset); lists keep full history.
+  const breakdown = await getRollingApprovalBreakdown(slackUserId);
 
   return {
     stats,
@@ -1012,16 +1014,41 @@ export async function getAttendanceUserDetail(
   };
 }
 
-export async function resetAttendancePersonCounts(slackUserId: string) {
+async function ensurePersonStatsRow(slackUserId: string) {
   const existing = await findPersonStatsBySlackUserId(slackUserId);
-  if (!existing) {
-    const hasEntries = await prisma.etaEntry.count({ where: { slackUserId } });
-    if (hasEntries === 0) {
-      throw new HttpError(404, "Attendance stats not found for this Slack user");
-    }
+  if (existing) return existing;
+  const hasEntries = await prisma.etaEntry.count({ where: { slackUserId } });
+  if (hasEntries === 0) {
+    throw new HttpError(404, "Attendance stats not found for this Slack user");
   }
+  await recomputePersonStats(slackUserId);
+  return findPersonStatsBySlackUserId(slackUserId);
+}
 
+export async function resetAttendancePersonCounts(slackUserId: string) {
+  await ensurePersonStatsRow(slackUserId);
   const row = await resetPersonStatsCounts(slackUserId);
+  const withRelations = await findPersonStatsBySlackUserId(slackUserId);
+  return serializePersonStats(withRelations ?? row);
+}
+
+export async function setAttendancePersonCounts(
+  slackUserId: string,
+  input: {
+    wfhApproved: number;
+    wfhDenied: number;
+    wfhPending: number;
+    leaveApproved: number;
+    leaveDenied: number;
+    leavePending: number;
+    missing: number;
+    onTime: number;
+    lateSubmission: number;
+    lateArrival: number;
+  }
+) {
+  await ensurePersonStatsRow(slackUserId);
+  const row = await setPersonStatsCounts(slackUserId, input);
   const withRelations = await findPersonStatsBySlackUserId(slackUserId);
   return serializePersonStats(withRelations ?? row);
 }

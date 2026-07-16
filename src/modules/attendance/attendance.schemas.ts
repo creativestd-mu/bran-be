@@ -66,6 +66,22 @@ export const updatePersonStatsActionSchema = z.object({
   actionNote: z.string().max(5000).nullable().optional()
 });
 
+const nonNegInt = z.coerce.number().int().min(0).max(100_000);
+
+/** Set rolling counters to exact values (baselines; history kept). */
+export const setPersonStatsCountsSchema = z.object({
+  wfhApproved: nonNegInt,
+  wfhDenied: nonNegInt,
+  wfhPending: nonNegInt.default(0),
+  leaveApproved: nonNegInt,
+  leaveDenied: nonNegInt,
+  leavePending: nonNegInt.default(0),
+  missing: nonNegInt,
+  onTime: nonNegInt,
+  lateSubmission: nonNegInt,
+  lateArrival: nonNegInt
+});
+
 export const userDetailQuerySchema = z.object({
   from: z
     .string()

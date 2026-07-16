@@ -911,6 +911,9 @@ model AttendancePersonStats {
   actionTakenAt        DateTime? @map("action_taken_at")
   /// When set, rolling counts only include eta_entries on/after this IST date.
   countsResetAt        DateTime? @map("counts_reset_at")
+  /// Admin-set baselines added on top of entries since countsResetAt.
+  /// Keys: wfhApprovedCount, wfhDeniedCount, wfhPendingCount, leaveApprovedCount, …
+  countBaselines       Json?     @map("count_baselines")
   lastEntryDate        DateTime? @map("last_entry_date") @db.Date
   lastComputedAt       DateTime  @default(now()) @map("last_computed_at")
   createdAt            DateTime  @default(now()) @map("created_at")

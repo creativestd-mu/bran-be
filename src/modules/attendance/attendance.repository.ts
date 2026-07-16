@@ -700,12 +700,68 @@ async function resolveUserIdByEmail(email: string | null): Promise<string | null
   return user?.id ?? null;
 }
 
-/** Recompute one person's rolling stats from eta_entries (honors countsResetAt). */
+export type AttendanceCountBaselines = {
+  wfhApprovedCount?: number;
+  wfhDeniedCount?: number;
+  wfhPendingCount?: number;
+  leaveApprovedCount?: number;
+  leaveDeniedCount?: number;
+  leavePendingCount?: number;
+  missingCount?: number;
+  onTimeCount?: number;
+  lateSubmissionCount?: number;
+  lateArrivalCount?: number;
+  compOffCount?: number;
+  officeCount?: number;
+  submittedCount?: number;
+};
+
+function parseCountBaselines(raw: unknown): AttendanceCountBaselines {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const src = raw as Record<string, unknown>;
+  const out: AttendanceCountBaselines = {};
+  const keys: (keyof AttendanceCountBaselines)[] = [
+    "wfhApprovedCount",
+    "wfhDeniedCount",
+    "wfhPendingCount",
+    "leaveApprovedCount",
+    "leaveDeniedCount",
+    "leavePendingCount",
+    "missingCount",
+    "onTimeCount",
+    "lateSubmissionCount",
+    "lateArrivalCount",
+    "compOffCount",
+    "officeCount",
+    "submittedCount"
+  ];
+  for (const key of keys) {
+    const value = src[key];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      out[key] = Math.floor(value);
+    }
+  }
+  return out;
+}
+
+function baselineInt(baselines: AttendanceCountBaselines, key: keyof AttendanceCountBaselines): number {
+  return baselines[key] ?? 0;
+}
+
+function tomorrowResetDate(): Date {
+  const todayNoon = new Date(`${todayInIST()}T12:00:00+05:30`);
+  // Start counting from tomorrow so current totals apply immediately.
+  const tomorrow = dateInIST(new Date(todayNoon.getTime() + 24 * 60 * 60 * 1000));
+  return entryDateFromString(tomorrow);
+}
+
+/** Recompute one person's rolling stats from eta_entries (honors countsResetAt + baselines). */
 export async function recomputePersonStats(slackUserId: string) {
   const existing = await prisma.attendancePersonStats.findUnique({
     where: { slackUserId },
-    select: { countsResetAt: true }
+    select: { countsResetAt: true, countBaselines: true }
   });
+  const baselines = parseCountBaselines(existing?.countBaselines);
 
   const entries = await prisma.etaEntry.findMany({
     where: {
@@ -737,19 +793,34 @@ export async function recomputePersonStats(slackUserId: string) {
 
   const userId = await resolveUserIdByEmail(counters.userEmail);
 
+  const wfhApproved =
+    baselineInt(baselines, "wfhApprovedCount") + counters.wfhApprovedCount;
+  const wfhDenied = baselineInt(baselines, "wfhDeniedCount") + counters.wfhDeniedCount;
+  const wfhPending =
+    baselineInt(baselines, "wfhPendingCount") + counters.wfhPendingCount;
+  const leaveApproved =
+    baselineInt(baselines, "leaveApprovedCount") + counters.leaveApprovedCount;
+  const leaveDenied =
+    baselineInt(baselines, "leaveDeniedCount") + counters.leaveDeniedCount;
+  const leavePending =
+    baselineInt(baselines, "leavePendingCount") + counters.leavePendingCount;
+
   const counts = {
     userId,
     userEmail: counters.userEmail,
     userName: counters.userName,
-    wfhCount: counters.wfhCount,
-    leaveCount: counters.leaveCount,
-    compOffCount: counters.compOffCount,
-    officeCount: counters.officeCount,
-    onTimeCount: counters.onTimeCount,
-    lateSubmissionCount: counters.lateSubmissionCount,
-    lateArrivalCount: counters.lateArrivalCount,
-    missingCount: counters.missingCount,
-    submittedCount: counters.submittedCount,
+    wfhCount: wfhApproved + wfhDenied + wfhPending,
+    leaveCount: leaveApproved + leaveDenied + leavePending,
+    compOffCount: baselineInt(baselines, "compOffCount") + counters.compOffCount,
+    officeCount: baselineInt(baselines, "officeCount") + counters.officeCount,
+    onTimeCount: baselineInt(baselines, "onTimeCount") + counters.onTimeCount,
+    lateSubmissionCount:
+      baselineInt(baselines, "lateSubmissionCount") + counters.lateSubmissionCount,
+    lateArrivalCount:
+      baselineInt(baselines, "lateArrivalCount") + counters.lateArrivalCount,
+    missingCount: baselineInt(baselines, "missingCount") + counters.missingCount,
+    submittedCount:
+      baselineInt(baselines, "submittedCount") + counters.submittedCount,
     lastEntryDate: counters.lastEntryDate,
     lastComputedAt: new Date()
   };
@@ -765,27 +836,143 @@ export async function recomputePersonStats(slackUserId: string) {
 }
 
 /**
- * Zero rolling counters by advancing countsResetAt past today (IST) and recomputing.
+ * Zero rolling counters by advancing countsResetAt past today (IST) and clearing baselines.
  * Historical eta_entries are kept for the user modal.
  */
 export async function resetPersonStatsCounts(slackUserId: string) {
-  const todayNoon = new Date(`${todayInIST()}T12:00:00+05:30`);
-  // Start counting from tomorrow so current totals drop to zero immediately.
-  const tomorrow = dateInIST(new Date(todayNoon.getTime() + 24 * 60 * 60 * 1000));
-  const resetDate = entryDateFromString(tomorrow);
+  const resetDate = tomorrowResetDate();
 
   await prisma.attendancePersonStats.upsert({
     where: { slackUserId },
     create: {
       slackUserId,
-      countsResetAt: resetDate
+      countsResetAt: resetDate,
+      countBaselines: {}
     },
     update: {
-      countsResetAt: resetDate
+      countsResetAt: resetDate,
+      countBaselines: {}
     }
   });
 
   return recomputePersonStats(slackUserId);
+}
+
+export type SetPersonStatsCountsInput = {
+  wfhApproved: number;
+  wfhDenied: number;
+  wfhPending: number;
+  leaveApproved: number;
+  leaveDenied: number;
+  leavePending: number;
+  missing: number;
+  onTime: number;
+  lateSubmission: number;
+  lateArrival: number;
+};
+
+/**
+ * Set rolling counters to exact values. Advances countsResetAt so historical entries
+ * no longer contribute; stores values as baselines so future entries still add on.
+ * History lists are unchanged.
+ */
+export async function setPersonStatsCounts(
+  slackUserId: string,
+  input: SetPersonStatsCountsInput
+) {
+  const existing = await prisma.attendancePersonStats.findUnique({
+    where: { slackUserId },
+    select: { countBaselines: true }
+  });
+  const previous = parseCountBaselines(existing?.countBaselines);
+  const resetDate = tomorrowResetDate();
+
+  const baselines: AttendanceCountBaselines = {
+    wfhApprovedCount: input.wfhApproved,
+    wfhDeniedCount: input.wfhDenied,
+    wfhPendingCount: input.wfhPending,
+    leaveApprovedCount: input.leaveApproved,
+    leaveDeniedCount: input.leaveDenied,
+    leavePendingCount: input.leavePending,
+    missingCount: input.missing,
+    onTimeCount: input.onTime,
+    lateSubmissionCount: input.lateSubmission,
+    lateArrivalCount: input.lateArrival,
+    compOffCount: previous.compOffCount ?? 0,
+    officeCount: previous.officeCount ?? 0,
+    submittedCount: previous.submittedCount ?? 0
+  };
+
+  await prisma.attendancePersonStats.upsert({
+    where: { slackUserId },
+    create: {
+      slackUserId,
+      countsResetAt: resetDate,
+      countBaselines: baselines
+    },
+    update: {
+      countsResetAt: resetDate,
+      countBaselines: baselines
+    }
+  });
+
+  return recomputePersonStats(slackUserId);
+}
+
+/** Rolling WFH/leave/other breakdown = baselines + entries since countsResetAt. */
+export async function getRollingApprovalBreakdown(slackUserId: string) {
+  const existing = await prisma.attendancePersonStats.findUnique({
+    where: { slackUserId },
+    select: { countsResetAt: true, countBaselines: true }
+  });
+  const baselines = parseCountBaselines(existing?.countBaselines);
+
+  const entries = await prisma.etaEntry.findMany({
+    where: {
+      slackUserId,
+      ...(existing?.countsResetAt
+        ? { entryDate: { gte: existing.countsResetAt } }
+        : {})
+    }
+  });
+
+  const fromEntries = summarizeApprovalBreakdown(entries);
+  const wfhApproved =
+    baselineInt(baselines, "wfhApprovedCount") + fromEntries.wfh.approved;
+  const wfhDenied = baselineInt(baselines, "wfhDeniedCount") + fromEntries.wfh.denied;
+  const wfhPending =
+    baselineInt(baselines, "wfhPendingCount") + fromEntries.wfh.pending;
+  const leaveApproved =
+    baselineInt(baselines, "leaveApprovedCount") + fromEntries.leave.approved;
+  const leaveDenied =
+    baselineInt(baselines, "leaveDeniedCount") + fromEntries.leave.denied;
+  const leavePending =
+    baselineInt(baselines, "leavePendingCount") + fromEntries.leave.pending;
+
+  return {
+    wfh: {
+      total: wfhApproved + wfhDenied + wfhPending,
+      approved: wfhApproved,
+      denied: wfhDenied,
+      pending: wfhPending,
+      unapproved: wfhDenied + wfhPending
+    },
+    leave: {
+      total: leaveApproved + leaveDenied + leavePending,
+      approved: leaveApproved,
+      denied: leaveDenied,
+      pending: leavePending,
+      unapproved: leaveDenied + leavePending
+    },
+    office: baselineInt(baselines, "officeCount") + fromEntries.office,
+    onTime: baselineInt(baselines, "onTimeCount") + fromEntries.onTime,
+    lateSubmission:
+      baselineInt(baselines, "lateSubmissionCount") + fromEntries.lateSubmission,
+    lateArrival: baselineInt(baselines, "lateArrivalCount") + fromEntries.lateArrival,
+    missing: baselineInt(baselines, "missingCount") + fromEntries.missing,
+    submitted: baselineInt(baselines, "submittedCount") + fromEntries.submitted,
+    compOff: baselineInt(baselines, "compOffCount") + fromEntries.compOff
+  };
 }
 
 /** In-memory breakdown for modal (does not require new DB columns). */

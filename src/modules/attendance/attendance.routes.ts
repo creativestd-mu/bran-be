@@ -7,6 +7,7 @@ import {
   attendanceDateQuerySchema,
   attendanceRemindBodySchema,
   listPersonStatsQuerySchema,
+  setPersonStatsCountsSchema,
   updateMemberPodSchema,
   updatePersonStatsActionSchema,
   userDetailQuerySchema
@@ -23,6 +24,7 @@ import {
   sendReminderForUser,
   sendRemindersForDate,
   setAttendancePersonAction,
+  setAttendancePersonCounts,
   updateMemberPod
 } from "./attendance.service";
 import { todayInIST } from "./attendance.dates";
@@ -118,6 +120,17 @@ attendanceRouter.get("/stats/:slackUserId/detail", async (req, res, next) => {
 attendanceRouter.post("/stats/:slackUserId/reset-counts", async (req, res, next) => {
   try {
     const data = await resetAttendancePersonCounts(param(req.params.slackUserId));
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** POST /attendance/stats/:slackUserId/set-counts — set rolling counters to exact values */
+attendanceRouter.post("/stats/:slackUserId/set-counts", async (req, res, next) => {
+  try {
+    const body = setPersonStatsCountsSchema.parse(req.body);
+    const data = await setAttendancePersonCounts(param(req.params.slackUserId), body);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

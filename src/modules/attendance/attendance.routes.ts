@@ -8,14 +8,17 @@ import {
   attendanceRemindBodySchema,
   listPersonStatsQuerySchema,
   updateMemberPodSchema,
-  updatePersonStatsActionSchema
+  updatePersonStatsActionSchema,
+  userDetailQuerySchema
 } from "./attendance.schemas";
 import {
   assertCanManageAttendance,
   getAttendancePersonStats,
+  getAttendanceUserDetail,
   listAttendancePersonStats,
   listTodayAttendance,
   rebuildAllAttendancePersonStats,
+  resetAttendancePersonCounts,
   runEtaCheck,
   sendReminderForUser,
   sendRemindersForDate,
@@ -24,6 +27,7 @@ import {
 } from "./attendance.service";
 import { todayInIST } from "./attendance.dates";
 import { listActiveSlackMembers } from "./attendance.repository";
+import { escalationRouter } from "../escalation/escalation.routes";
 
 const attendanceRouter = Router();
 
@@ -96,6 +100,30 @@ attendanceRouter.post("/stats/rebuild", async (req, res, next) => {
   }
 });
 
+/**
+ * GET /attendance/stats/:slackUserId/detail
+ * Modal payload: rolling stats + approved/unapproved WFH/leave + ETA history.
+ */
+attendanceRouter.get("/stats/:slackUserId/detail", async (req, res, next) => {
+  try {
+    const query = userDetailQuerySchema.parse(req.query);
+    const data = await getAttendanceUserDetail(param(req.params.slackUserId), query);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** POST /attendance/stats/:slackUserId/reset-counts — zero WFH/leave/etc counters */
+attendanceRouter.post("/stats/:slackUserId/reset-counts", async (req, res, next) => {
+  try {
+    const data = await resetAttendancePersonCounts(param(req.params.slackUserId));
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 /** GET /attendance/stats/:slackUserId */
 attendanceRouter.get("/stats/:slackUserId", async (req, res, next) => {
   try {
@@ -141,6 +169,9 @@ attendanceRouter.get("/members", async (req, res, next) => {
     next(error);
   }
 });
+
+/** Escalation tracker — Slack escalation group/channel */
+attendanceRouter.use("/escalations", escalationRouter);
 
 /** PATCH /attendance/members/:slackUserId/pod — set production exemption */
 attendanceRouter.patch("/members/:slackUserId/pod", async (req, res, next) => {

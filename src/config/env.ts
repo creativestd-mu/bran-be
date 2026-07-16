@@ -134,6 +134,8 @@ export const env = {
   cronSecret: process.env.CRON_SECRET ?? "",
   attendanceEmailDomain: process.env.ATTENDANCE_EMAIL_DOMAIN ?? "mastersunion.org",
   attendanceCronEnabled: (process.env.ATTENDANCE_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  slackEscalationChannelName: process.env.SLACK_ESCALATION_CHANNEL_NAME ?? "escalations",
+  slackEscalationChannelId: process.env.SLACK_ESCALATION_CHANNEL_ID ?? "",
   meetingsSyncCronEnabled:
     (process.env.MEETINGS_SYNC_CRON_ENABLED ?? "true").toLowerCase() !== "false",
   meetingsSyncIntervalMs: Number(process.env.MEETINGS_SYNC_INTERVAL_MS ?? 5 * 60 * 1000)

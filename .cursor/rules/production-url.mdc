@@ -21,3 +21,24 @@ A healthy attendance deploy returns `"build":"attendance-v1"` from `GET /` and e
 ## Attendance access
 
 JWT attendance APIs (`/api/eta/*`, `/:lang/v1/attendance/*`) are restricted to roles `admin` and `chief_of_staff`. Frontend should hide the Attendance nav/page for every other role.
+
+## Attendance rules
+
+- Reminders: auto-sent at **11:00 AM IST** weekdays to people with no attendance post yet.
+- Late submission: posts at/after **11:30 AM IST**.
+- User modal: `GET /api/eta/stats/:slackUserId/detail` (approved + unapproved WFH/leave + ETA).
+- Reset counters: `POST /api/eta/stats/:slackUserId/reset-counts` (history kept).
+
+## Escalation tracker
+
+- Slack channel: set `SLACK_ESCALATION_CHANNEL_NAME` (default `escalations`) or `SLACK_ESCALATION_CHANNEL_ID`.
+- Top-level channel messages = new escalation; thread replies = updates.
+- Status inferred from keywords (`resolved`, `in progress`, `waiting`, etc.) + manual override via API.
+- **LLM analysis** (`AI_PROVIDER` + `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`): auto-runs on new Slack updates; produces `ai.summary`, `ai.blockers`.
+- APIs (same JWT + role gate as attendance):
+  - `GET /api/eta/escalations` — list with latest context + summary counts
+  - `GET /api/eta/escalations/:id` — full timeline + AI summary
+  - `POST /api/eta/escalations/sync` — backfill from Slack (optional `days`, default 30)
+  - `POST /api/eta/escalations/:id/analyze` — re-run LLM analysis
+  - `PATCH /api/eta/escalations/:id/status` — manual status change
+  - `POST /api/eta/escalations/:id/notes` — admin note / update

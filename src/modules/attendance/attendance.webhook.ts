@@ -15,6 +15,7 @@ import {
   resolveChannelId,
   verifySlackSignature
 } from "./attendance.slack";
+import { processSlackEscalationMessage } from "../escalation/escalation.service";
 
 function readRawBody(req: Request): string {
   if (req.body instanceof Buffer) {
@@ -101,7 +102,7 @@ export async function slackEventsHandler(
       return;
     }
 
-    void processSlackChannelMessage({
+    const slackMessage = {
       channelId: event.channel,
       userId: event.user,
       text: event.text,
@@ -110,8 +111,14 @@ export async function slackEventsHandler(
       subtype: event.subtype,
       threadTs: event.thread_ts,
       channelType: event.channel_type
-    }).catch((error) => {
+    };
+
+    void processSlackChannelMessage(slackMessage).catch((error) => {
       console.error("Slack attendance event processing failed:", error);
+    });
+
+    void processSlackEscalationMessage(slackMessage).catch((error) => {
+      console.error("Slack escalation event processing failed:", error);
     });
   } catch (error) {
     next(error);
@@ -229,7 +236,10 @@ export async function etaCronHandler(
       throw new HttpError(401, "Unauthorized cron request");
     }
 
-    const result = await runEtaCheck(todayInIST(), { sendReminders: false });
+    const result = await runEtaCheck(todayInIST(), {
+      sendReminders: true,
+      missingOnlyReminders: true
+    });
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     next(error);

@@ -65,3 +65,15 @@ export const updatePersonStatsActionSchema = z.object({
   actionStatus: z.enum(["none", "flagged", "warned", "acknowledged", "resolved"]),
   actionNote: z.string().max(5000).nullable().optional()
 });
+
+export const userDetailQuerySchema = z.object({
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "from must be YYYY-MM-DD")
+    .optional(),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "to must be YYYY-MM-DD")
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional()
+});

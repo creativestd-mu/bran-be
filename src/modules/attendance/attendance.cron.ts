@@ -1,4 +1,5 @@
 import { env } from "../../config/env";
+import { REMINDER_HOUR_IST } from "./attendance.constants";
 import { todayInIST } from "./attendance.dates";
 import { runEtaCheck } from "./attendance.service";
 
@@ -12,8 +13,10 @@ export function nextEtaCheckAt(from: Date = new Date()): Date {
   const month = istNow.getUTCMonth();
   const day = istNow.getUTCDate();
 
-  // Candidate today 11:00 IST
-  let candidate = new Date(Date.UTC(year, month, day, 11, 0, 0, 0) - IST_OFFSET_MS);
+  // Candidate today REMINDER_HOUR_IST (11:00)
+  let candidate = new Date(
+    Date.UTC(year, month, day, REMINDER_HOUR_IST, 0, 0, 0) - IST_OFFSET_MS
+  );
 
   if (candidate.getTime() <= from.getTime()) {
     // Move to tomorrow IST
@@ -23,7 +26,7 @@ export function nextEtaCheckAt(from: Date = new Date()): Date {
         tomorrowIst.getUTCFullYear(),
         tomorrowIst.getUTCMonth(),
         tomorrowIst.getUTCDate(),
-        11,
+        REMINDER_HOUR_IST,
         0,
         0,
         0
@@ -53,7 +56,11 @@ async function runScheduledCheck(): Promise<void> {
   }
 
   try {
-    const result = await runEtaCheck(todayInIST(), { sendReminders: false });
+    // At 11:00 IST: sync, flag missing, DM everyone who hasn't posted yet.
+    const result = await runEtaCheck(todayInIST(), {
+      sendReminders: true,
+      missingOnlyReminders: true
+    });
     console.log("[attendance-cron] ETA check complete:", JSON.stringify(result));
   } catch (error) {
     console.error("[attendance-cron] ETA check failed:", error);

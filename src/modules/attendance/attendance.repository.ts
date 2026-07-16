@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma";
-import { entryDateFromString, formatEntryDate } from "./attendance.dates";
+import { dateInIST, entryDateFromString, formatEntryDate, todayInIST } from "./attendance.dates";
 
 export type UpsertSubmittedInput = {
   slackUserId: string;
@@ -40,7 +40,8 @@ export async function upsertSubmittedEntry(input: UpsertSubmittedInput) {
       isLateArrival: input.isLateArrival,
       rawMessage: input.rawMessage,
       slackMessageTs: input.slackMessageTs,
-      wfhApprovalState: input.recordType === "wfh" ? "pending" : null
+      wfhApprovalState: input.recordType === "wfh" ? "pending" : null,
+      leaveApprovalState: input.recordType === "leave" ? "pending" : null
     },
     update: {
       userEmail: input.userEmail,
@@ -61,6 +62,14 @@ export async function upsertSubmittedEntry(input: UpsertSubmittedInput) {
             wfhApprovedAt: null,
             wfhApprovedBySlackUserId: null,
             wfhApprovalNote: null
+          }),
+      ...(input.recordType === "leave"
+        ? {}
+        : {
+            leaveApprovalState: null,
+            leaveApprovedAt: null,
+            leaveApprovedBySlackUserId: null,
+            leaveApprovalNote: null
           })
     }
   });
@@ -94,7 +103,8 @@ export async function bulkUpsertSubmittedEntries(entries: UpsertSubmittedInput[]
           isLateArrival: input.isLateArrival,
           rawMessage: input.rawMessage,
           slackMessageTs: input.slackMessageTs,
-          wfhApprovalState: input.recordType === "wfh" ? "pending" : null
+          wfhApprovalState: input.recordType === "wfh" ? "pending" : null,
+          leaveApprovalState: input.recordType === "leave" ? "pending" : null
         },
         update: {
           userEmail: input.userEmail,
@@ -115,6 +125,14 @@ export async function bulkUpsertSubmittedEntries(entries: UpsertSubmittedInput[]
                 wfhApprovedAt: null,
                 wfhApprovedBySlackUserId: null,
                 wfhApprovalNote: null
+              }),
+          ...(input.recordType === "leave"
+            ? {}
+            : {
+                leaveApprovalState: null,
+                leaveApprovedAt: null,
+                leaveApprovedBySlackUserId: null,
+                leaveApprovalNote: null
               })
         }
       });
@@ -175,7 +193,10 @@ export async function findEntriesForUsersInDateRange(
     select: {
       slackUserId: true,
       status: true,
-      recordType: true
+      recordType: true,
+      submittedOnTime: true,
+      wfhApprovalState: true,
+      leaveApprovalState: true
     }
   });
 }
@@ -240,6 +261,51 @@ export async function findMissingEntries(dateStr: string) {
   });
 }
 
+/** Entries that still need a manager/employee nudge for the given date. */
+export async function findRemindableEntries(
+  dateStr: string,
+  options: { missingOnly?: boolean } = {}
+) {
+  const entryDate = entryDateFromString(dateStr);
+  if (options.missingOnly) {
+    return prisma.etaEntry.findMany({
+      where: { entryDate, status: "missing" }
+    });
+  }
+  return prisma.etaEntry.findMany({
+    where: {
+      entryDate,
+      OR: [
+        { status: "missing" },
+        { recordType: "wfh", wfhApprovalState: "pending" },
+        { recordType: "leave", leaveApprovalState: "pending" }
+      ]
+    }
+  });
+}
+
+/** Full history for one Slack user (for admin modal). */
+export async function findEntriesForUser(
+  slackUserId: string,
+  options: { from?: string; to?: string; limit?: number } = {}
+) {
+  return prisma.etaEntry.findMany({
+    where: {
+      slackUserId,
+      ...(options.from || options.to
+        ? {
+            entryDate: {
+              ...(options.from ? { gte: entryDateFromString(options.from) } : {}),
+              ...(options.to ? { lte: entryDateFromString(options.to) } : {})
+            }
+          }
+        : {})
+    },
+    orderBy: [{ entryDate: "desc" }, { id: "desc" }],
+    take: options.limit ?? 365
+  });
+}
+
 export async function markReminderSent(
   id: number,
   meta?: { channelId?: string | null; slackTs?: string | null }
@@ -274,12 +340,52 @@ export async function findEntryBySlackMessageTs(slackMessageTs: string) {
   });
 }
 
-export async function findMissingEntryForUser(dateStr: string, slackUserId: string) {
+export async function findRemindableEntryForUser(dateStr: string, slackUserId: string) {
+  const entryDate = entryDateFromString(dateStr);
   return prisma.etaEntry.findFirst({
     where: {
-      entryDate: entryDateFromString(dateStr),
+      entryDate,
       slackUserId,
-      status: "missing"
+      OR: [
+        { status: "missing" },
+        { recordType: "wfh", wfhApprovalState: "pending" },
+        { recordType: "leave", leaveApprovalState: "pending" }
+      ]
+    }
+  });
+}
+
+export async function applyLeaveApproval(input: {
+  entryId: number;
+  state: "approved" | "denied" | "pending";
+  approvedBySlackUserId?: string | null;
+  note?: string | null;
+  /** When approving a missing entry, also mark it submitted as leave. */
+  markSubmittedAsLeave?: boolean;
+  userEmail?: string | null;
+  userName?: string | null;
+}) {
+  const approvedAt = input.state === "approved" ? new Date() : null;
+
+  return prisma.etaEntry.update({
+    where: { id: input.entryId },
+    data: {
+      leaveApprovalState: input.state,
+      leaveApprovedAt: approvedAt,
+      leaveApprovedBySlackUserId: input.approvedBySlackUserId ?? null,
+      leaveApprovalNote: input.note ?? null,
+      ...(input.markSubmittedAsLeave && input.state === "approved"
+        ? {
+            status: "submitted",
+            recordType: "leave",
+            submittedAt: new Date(),
+            etaText: null,
+            etaMinutes: null,
+            isLateArrival: false,
+            ...(input.userEmail !== undefined ? { userEmail: input.userEmail } : {}),
+            ...(input.userName !== undefined ? { userName: input.userName } : {})
+          }
+        : {})
     }
   });
 }
@@ -360,6 +466,20 @@ export async function listActiveSlackMembers() {
   });
 }
 
+export function isRemindableEntry(entry: {
+  status: string;
+  recordType: string | null;
+  wfhApprovalState?: string | null;
+  leaveApprovalState?: string | null;
+  reminderSentAt?: string | null;
+}): boolean {
+  if (entry.reminderSentAt) return false;
+  if (entry.status === "missing") return true;
+  if (entry.recordType === "wfh" && entry.wfhApprovalState === "pending") return true;
+  if (entry.recordType === "leave" && entry.leaveApprovalState === "pending") return true;
+  return false;
+}
+
 export function serializeEntry(entry: {
   id: number;
   slackUserId: string | null;
@@ -380,6 +500,10 @@ export function serializeEntry(entry: {
   wfhApprovedAt?: Date | null;
   wfhApprovedBySlackUserId?: string | null;
   wfhApprovalNote?: string | null;
+  leaveApprovalState?: string | null;
+  leaveApprovedAt?: Date | null;
+  leaveApprovedBySlackUserId?: string | null;
+  leaveApprovalNote?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -403,6 +527,10 @@ export function serializeEntry(entry: {
     wfhApprovedAt: entry.wfhApprovedAt?.toISOString() ?? null,
     wfhApprovedBySlackUserId: entry.wfhApprovedBySlackUserId ?? null,
     wfhApprovalNote: entry.wfhApprovalNote ?? null,
+    leaveApprovalState: entry.leaveApprovalState ?? null,
+    leaveApprovedAt: entry.leaveApprovedAt?.toISOString() ?? null,
+    leaveApprovedBySlackUserId: entry.leaveApprovedBySlackUserId ?? null,
+    leaveApprovalNote: entry.leaveApprovalNote ?? null,
     createdAt: entry.createdAt.toISOString(),
     updatedAt: entry.updatedAt.toISOString(),
     badge: deriveBadge(entry)
@@ -415,6 +543,7 @@ export function deriveBadge(entry: {
   submittedOnTime: boolean | null;
   isLateArrival: boolean | null;
   wfhApprovalState?: string | null;
+  leaveApprovalState?: string | null;
 }): string {
   if (entry.status === "missing") return "missing";
   if (entry.recordType === "wfh") {
@@ -423,7 +552,12 @@ export function deriveBadge(entry: {
     if (entry.wfhApprovalState === "pending") return "wfh_pending";
     return "wfh";
   }
-  if (entry.recordType === "leave") return "leave";
+  if (entry.recordType === "leave") {
+    if (entry.leaveApprovalState === "approved") return "leave_approved";
+    if (entry.leaveApprovalState === "denied") return "leave_denied";
+    if (entry.leaveApprovalState === "pending") return "leave_pending";
+    return "leave";
+  }
   if (entry.recordType === "comp_off") return "comp_off";
   if (entry.isLateArrival) return "late_arrival";
   if (entry.submittedOnTime === false) return "late_submission";
@@ -444,7 +578,11 @@ export type AttendanceActionStatus = (typeof ATTENDANCE_ACTION_STATUSES)[number]
 
 type StatsCounters = {
   wfhCount: number;
+  wfhApprovedCount: number;
+  wfhUnapprovedCount: number;
   leaveCount: number;
+  leaveApprovedCount: number;
+  leaveUnapprovedCount: number;
   compOffCount: number;
   officeCount: number;
   onTimeCount: number;
@@ -460,7 +598,11 @@ type StatsCounters = {
 function emptyCounters(): StatsCounters {
   return {
     wfhCount: 0,
+    wfhApprovedCount: 0,
+    wfhUnapprovedCount: 0,
     leaveCount: 0,
+    leaveApprovedCount: 0,
+    leaveUnapprovedCount: 0,
     compOffCount: 0,
     officeCount: 0,
     onTimeCount: 0,
@@ -474,6 +616,10 @@ function emptyCounters(): StatsCounters {
   };
 }
 
+function isApprovedState(state: string | null | undefined): boolean {
+  return state === "approved";
+}
+
 function accumulateEntry(
   counters: StatsCounters,
   entry: {
@@ -484,6 +630,8 @@ function accumulateEntry(
     entryDate: Date;
     userEmail: string | null;
     userName: string | null;
+    wfhApprovalState?: string | null;
+    leaveApprovalState?: string | null;
   }
 ): void {
   if (entry.userEmail) counters.userEmail = entry.userEmail;
@@ -503,10 +651,19 @@ function accumulateEntry(
 
   counters.submittedCount += 1;
 
-  if (entry.recordType === "wfh") counters.wfhCount += 1;
-  else if (entry.recordType === "leave") counters.leaveCount += 1;
-  else if (entry.recordType === "comp_off") counters.compOffCount += 1;
-  else if (entry.recordType === "office") counters.officeCount += 1;
+  if (entry.recordType === "wfh") {
+    counters.wfhCount += 1;
+    if (isApprovedState(entry.wfhApprovalState)) counters.wfhApprovedCount += 1;
+    else counters.wfhUnapprovedCount += 1;
+  } else if (entry.recordType === "leave") {
+    counters.leaveCount += 1;
+    if (isApprovedState(entry.leaveApprovalState)) counters.leaveApprovedCount += 1;
+    else counters.leaveUnapprovedCount += 1;
+  } else if (entry.recordType === "comp_off") {
+    counters.compOffCount += 1;
+  } else if (entry.recordType === "office") {
+    counters.officeCount += 1;
+  }
 
   if (entry.submittedOnTime === true) counters.onTimeCount += 1;
   if (entry.submittedOnTime === false) counters.lateSubmissionCount += 1;
@@ -525,16 +682,39 @@ async function resolveUserIdByEmail(email: string | null): Promise<string | null
   return user?.id ?? null;
 }
 
-/** Recompute one person's rolling stats from all eta_entries. */
+/** Recompute one person's rolling stats from eta_entries (honors countsResetAt). */
 export async function recomputePersonStats(slackUserId: string) {
-  const entries = await prisma.etaEntry.findMany({
+  const existing = await prisma.attendancePersonStats.findUnique({
     where: { slackUserId },
+    select: { countsResetAt: true }
+  });
+
+  const entries = await prisma.etaEntry.findMany({
+    where: {
+      slackUserId,
+      ...(existing?.countsResetAt
+        ? { entryDate: { gte: existing.countsResetAt } }
+        : {})
+    },
     orderBy: { entryDate: "asc" }
   });
 
   const counters = emptyCounters();
   for (const entry of entries) {
     accumulateEntry(counters, entry);
+  }
+
+  // Keep identity from latest entry even when the window is empty after a reset.
+  if (!counters.userEmail || !counters.userName) {
+    const latest = await prisma.etaEntry.findFirst({
+      where: { slackUserId },
+      orderBy: { entryDate: "desc" },
+      select: { userEmail: true, userName: true }
+    });
+    if (latest) {
+      counters.userEmail = counters.userEmail ?? latest.userEmail;
+      counters.userName = counters.userName ?? latest.userName;
+    }
   }
 
   const userId = await resolveUserIdByEmail(counters.userEmail);
@@ -564,6 +744,71 @@ export async function recomputePersonStats(slackUserId: string) {
     },
     update: counts
   });
+}
+
+/**
+ * Zero rolling counters by advancing countsResetAt past today (IST) and recomputing.
+ * Historical eta_entries are kept for the user modal.
+ */
+export async function resetPersonStatsCounts(slackUserId: string) {
+  const todayNoon = new Date(`${todayInIST()}T12:00:00+05:30`);
+  // Start counting from tomorrow so current totals drop to zero immediately.
+  const tomorrow = dateInIST(new Date(todayNoon.getTime() + 24 * 60 * 60 * 1000));
+  const resetDate = entryDateFromString(tomorrow);
+
+  await prisma.attendancePersonStats.upsert({
+    where: { slackUserId },
+    create: {
+      slackUserId,
+      countsResetAt: resetDate
+    },
+    update: {
+      countsResetAt: resetDate
+    }
+  });
+
+  return recomputePersonStats(slackUserId);
+}
+
+/** In-memory breakdown for modal (does not require new DB columns). */
+export function summarizeApprovalBreakdown(
+  entries: Array<{
+    status: string;
+    recordType: string | null;
+    submittedOnTime: boolean | null;
+    isLateArrival: boolean | null;
+    wfhApprovalState: string | null;
+    leaveApprovalState: string | null;
+  }>
+) {
+  const counters = emptyCounters();
+  for (const entry of entries) {
+    accumulateEntry(counters, {
+      ...entry,
+      entryDate: new Date(),
+      userEmail: null,
+      userName: null
+    });
+  }
+  return {
+    wfh: {
+      total: counters.wfhCount,
+      approved: counters.wfhApprovedCount,
+      unapproved: counters.wfhUnapprovedCount
+    },
+    leave: {
+      total: counters.leaveCount,
+      approved: counters.leaveApprovedCount,
+      unapproved: counters.leaveUnapprovedCount
+    },
+    office: counters.officeCount,
+    onTime: counters.onTimeCount,
+    lateSubmission: counters.lateSubmissionCount,
+    lateArrival: counters.lateArrivalCount,
+    missing: counters.missingCount,
+    submitted: counters.submittedCount,
+    compOff: counters.compOffCount
+  };
 }
 
 export async function recomputePersonStatsMany(slackUserIds: string[]): Promise<number> {
@@ -672,6 +917,7 @@ export function serializePersonStats(row: {
   actionNote: string | null;
   actionTakenById: string | null;
   actionTakenAt: Date | null;
+  countsResetAt?: Date | null;
   lastEntryDate: Date | null;
   lastComputedAt: Date;
   createdAt: Date;
@@ -717,6 +963,7 @@ export function serializePersonStats(row: {
           managerUserId: row.user.managerUserId
         }
       : null,
+    countsResetAt: row.countsResetAt ? formatEntryDate(row.countsResetAt) : null,
     lastEntryDate: row.lastEntryDate ? formatEntryDate(row.lastEntryDate) : null,
     lastComputedAt: row.lastComputedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),

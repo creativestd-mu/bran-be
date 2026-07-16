@@ -114,10 +114,11 @@ export function classifyClearWfhApproval(text: string): WfhApprovalDecision | nu
 }
 
 /**
- * Use the AI layer only to decide whether a Slack reply is a WFH approval,
+ * Use the AI layer only to decide whether a Slack reply is an approval,
  * a denial, or unclear. Attendance parsing itself stays regex-based.
  */
-export async function classifyWfhApprovalReply(input: {
+export async function classifyApprovalReply(input: {
+  requestType: "wfh" | "leave";
   replyText: string;
   employeeName?: string | null;
   entryDate?: string | null;
@@ -128,12 +129,14 @@ export async function classifyWfhApprovalReply(input: {
     return { decision: clear, reason: "clear_phrase" };
   }
 
+  const requestLabel = input.requestType === "leave" ? "leave" : "work-from-home (WFH)";
+
   const systemPrompt =
-    "You classify whether a Slack reply is a manager approving an employee's work-from-home (WFH) request. " +
+    `You classify whether a Slack reply is a manager approving an employee's ${requestLabel} request. ` +
     "Return STRICT JSON only (no markdown) with shape: " +
     '{ "decision": "approved"|"denied"|"unclear", "reason": string|null }. ' +
     "Rules: " +
-    "approved = clear yes / ok / approved / fine / go ahead / all good / sure for WFH or being out; " +
+    `approved = clear yes / ok / approved / fine / go ahead / all good / sure for ${requestLabel}; ` +
     "denied = clear no / not approved / come to office / rejected; " +
     "unclear = anything else, questions, unrelated chat, or ambiguous. " +
     "Do not invent intent. Prefer unclear when unsure.";
@@ -167,4 +170,14 @@ export async function classifyWfhApprovalReply(input: {
   }
 
   return result.data;
+}
+
+/** @deprecated Use classifyApprovalReply */
+export async function classifyWfhApprovalReply(input: {
+  replyText: string;
+  employeeName?: string | null;
+  entryDate?: string | null;
+  originalMessage?: string | null;
+}): Promise<WfhApprovalClassification> {
+  return classifyApprovalReply({ requestType: "wfh", ...input });
 }

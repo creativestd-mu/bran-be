@@ -93,7 +93,17 @@ describe("attendance dates / flags", () => {
     expect(flags.isLateArrival).toBe(false);
   });
 
-  it("classifies late submission and late arrival", () => {
+  it("treats submissions before 11:30 IST as on time", () => {
+    const submittedAt = new Date("2026-07-09T05:45:00.000Z"); // 11:15 IST
+    const flags = classifyFlags({
+      submittedAt,
+      etaMinutes: 12 * 60 + 30,
+      recordType: "office"
+    });
+    expect(flags.submittedOnTime).toBe(true);
+  });
+
+  it("classifies late submission from 11:30 IST and late arrival", () => {
     const submittedAt = new Date("2026-07-09T06:00:00.000Z"); // 11:30 IST
     const flags = classifyFlags({
       submittedAt,

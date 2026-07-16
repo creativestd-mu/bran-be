@@ -2,7 +2,7 @@ import { env } from "../../config/env";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../utils/httpError";
 import { notifyWfhToManager } from "../notifications/notifications.service";
-import { classifyWfhApprovalReply } from "./attendance.approval";
+import { classifyApprovalReply } from "./attendance.approval";
 import { ATTENDANCE_ADMIN_ROLES } from "./attendance.constants";
 import {
   classifyFlags,
@@ -15,6 +15,7 @@ import {
 import { parseAttendanceMessage } from "./attendance.parser";
 import type { AttendanceListFilter } from "./attendance.schemas";
 import {
+  applyLeaveApproval,
   applyWfhApproval,
   bulkUpsertSubmittedEntries,
   cleanupStaleMissingEntries,
@@ -23,6 +24,11 @@ import {
   findEntryByReminderChannel,
   findEntryBySlackMessageTs,
   findMissingEntries,
+  findEntriesForUser,
+  findRemindableEntries,
+  resetPersonStatsCounts,
+  summarizeApprovalBreakdown,
+  findRemindableEntryForUser,
   findPersonStatsBySlackUserId,
   findSlackMember,
   findSubmittedUserIdsForDate,
@@ -209,7 +215,15 @@ function firstName(fullName: string | null | undefined): string {
   return trimmed.split(/\s+/)[0] ?? "there";
 }
 
-export async function sendReminder(slackUserId: string): Promise<{ channel: string; ts: string }> {
+export async function sendReminder(
+  slackUserId: string,
+  entry: {
+    status: string;
+    recordType: string | null;
+    wfhApprovalState?: string | null;
+    leaveApprovalState?: string | null;
+  }
+): Promise<{ channel: string; ts: string }> {
   const channelLabel = env.slackChannelName.replace(/^#/, "");
   const member = await findSlackMember(slackUserId);
   const slackUser = member ? null : await getSlackUserInfo(slackUserId);
@@ -223,22 +237,52 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
       ? manager.managerName
       : "your manager";
 
-  const text = [
-    `Hey ${firstName(employeeName)} — quick nudge from Bran.`,
-    "",
-    `I haven't seen your attendance update in #${channelLabel} yet today.`,
-    `If you're working from home, was that approved by ${managerTag}?`,
-    "",
-    `${managerTag} — could you confirm here if you approved their WFH? A simple "yes, approved" / "no" is enough.`,
-    "",
-    `Otherwise please post one of these in #${channelLabel}:`,
-    "• eta 12:30  (or in office 12:30)",
-    "• wfh",
-    "• leave",
-    "• comp off",
-    "",
-    "Thanks!"
-  ].join("\n");
+  const reminderKind =
+    entry.status === "missing"
+      ? "missing"
+      : entry.recordType === "wfh" && entry.wfhApprovalState === "pending"
+        ? "wfh_pending"
+        : entry.recordType === "leave" && entry.leaveApprovalState === "pending"
+          ? "leave_pending"
+          : "missing";
+
+  const text =
+    reminderKind === "wfh_pending"
+      ? [
+          `Hey ${firstName(employeeName)} — quick follow-up from Bran.`,
+          "",
+          `You posted WFH for today, but ${managerTag} hasn't confirmed approval yet.`,
+          "",
+          `${managerTag} — could you confirm here if you approved their WFH? A simple "yes, approved" / "no" is enough.`,
+          "",
+          "Thanks!"
+        ].join("\n")
+      : reminderKind === "leave_pending"
+        ? [
+            `Hey ${firstName(employeeName)} — quick follow-up from Bran.`,
+            "",
+            `You posted leave for today, but ${managerTag} hasn't confirmed approval yet.`,
+            "",
+            `${managerTag} — could you confirm here if you approved their leave? A simple "yes, approved" / "no" is enough.`,
+            "",
+            "Thanks!"
+          ].join("\n")
+        : [
+            `Hey ${firstName(employeeName)} — quick nudge from Bran.`,
+            "",
+            `I haven't seen your attendance update in #${channelLabel} yet today.`,
+            `If you're working from home, was that approved by ${managerTag}?`,
+            "",
+            `${managerTag} — could you confirm here if you approved their WFH? A simple "yes, approved" / "no" is enough.`,
+            "",
+            `Please post in #${channelLabel} before 11:30am IST:`,
+            "• eta 12:30  (or in office 12:30)",
+            "• wfh",
+            "• leave",
+            "• comp off",
+            "",
+            "Thanks!"
+          ].join("\n");
 
   if (manager?.managerSlackUserId && manager.managerSlackUserId !== slackUserId) {
     try {
@@ -260,17 +304,22 @@ export async function sendReminder(slackUserId: string): Promise<{ channel: stri
   return sendDm(slackUserId, text);
 }
 
-export async function sendRemindersForDate(dateStr: string): Promise<{
+export async function sendRemindersForDate(
+  dateStr: string,
+  options: { missingOnly?: boolean } = {}
+): Promise<{
   sent: number;
   skipped: number;
   errors: string[];
 }> {
-  const missing = await findMissingEntries(dateStr);
+  const remindable = await findRemindableEntries(dateStr, {
+    missingOnly: options.missingOnly
+  });
   let sent = 0;
   let skipped = 0;
   const errors: string[] = [];
 
-  for (const entry of missing) {
+  for (const entry of remindable) {
     if (!entry.slackUserId) {
       skipped += 1;
       continue;
@@ -287,7 +336,7 @@ export async function sendRemindersForDate(dateStr: string): Promise<{
     }
 
     try {
-      const posted = await sendReminder(entry.slackUserId);
+      const posted = await sendReminder(entry.slackUserId, entry);
       await markReminderSent(entry.id, { channelId: posted.channel, slackTs: posted.ts });
       sent += 1;
     } catch (error) {
@@ -303,10 +352,12 @@ export async function sendReminderForUser(
   dateStr: string,
   slackUserId: string
 ): Promise<{ sent: number; skipped: number; errors: string[] }> {
-  const missing = await findMissingEntries(dateStr);
-  const entry = missing.find((e) => e.slackUserId === slackUserId);
+  const entry = await findRemindableEntryForUser(dateStr, slackUserId);
   if (!entry) {
-    throw new HttpError(404, "No missing attendance entry for this user on that date");
+    throw new HttpError(
+      404,
+      "No remindable attendance entry for this user on that date (missing ETA, pending WFH, or pending leave)"
+    );
   }
 
   if (entry.reminderSentAt) {
@@ -319,7 +370,7 @@ export async function sendReminderForUser(
   }
 
   try {
-    const posted = await sendReminder(slackUserId);
+    const posted = await sendReminder(slackUserId, entry);
     await markReminderSent(entry.id, { channelId: posted.channel, slackTs: posted.ts });
     return { sent: 1, skipped: 0, errors: [] };
   } catch (error) {
@@ -360,8 +411,22 @@ export async function processWfhApprovalReply(input: {
     return { handled: false, reason: "no_matching_entry" };
   }
 
+  const approvalKind =
+    entry.recordType === "leave"
+      ? "leave"
+      : entry.recordType === "wfh" || entry.wfhApprovalState
+        ? "wfh"
+        : null;
+
+  if (!approvalKind) {
+    return { handled: false, reason: "not_approval_entry" };
+  }
+
+  const currentApprovalState =
+    approvalKind === "leave" ? entry.leaveApprovalState : entry.wfhApprovalState;
+
   // Don't re-process already decided approvals
-  if (entry.wfhApprovalState === "approved" || entry.wfhApprovalState === "denied") {
+  if (currentApprovalState === "approved" || currentApprovalState === "denied") {
     return { handled: false, reason: "already_decided" };
   }
 
@@ -378,22 +443,24 @@ export async function processWfhApprovalReply(input: {
     return { handled: false, reason: "not_manager_or_employee" };
   }
 
-  let classification: Awaited<ReturnType<typeof classifyWfhApprovalReply>>;
+  let classification: Awaited<ReturnType<typeof classifyApprovalReply>>;
   try {
-    classification = await classifyWfhApprovalReply({
+    classification = await classifyApprovalReply({
+      requestType: approvalKind,
       replyText: input.text,
       employeeName: entry.userName,
       entryDate: formatEntryDate(entry.entryDate),
       originalMessage: entry.rawMessage
     });
   } catch (error) {
-    console.error("[attendance] WFH approval AI failed:", error);
+    console.error("[attendance] approval AI failed:", error);
     return { handled: false, reason: "ai_failed" };
   }
 
   if (classification.decision === "unclear") {
-    console.log("[attendance] WFH approval unclear", {
+    console.log("[attendance] approval unclear", {
       entryId: entry.id,
+      approvalKind,
       userId: input.userId,
       text: input.text.slice(0, 120)
     });
@@ -401,20 +468,37 @@ export async function processWfhApprovalReply(input: {
   }
 
   const markSubmittedAsWfh =
+    approvalKind === "wfh" &&
     classification.decision === "approved" &&
     (entry.status === "missing" || entry.recordType !== "wfh");
 
-  const updated = await applyWfhApproval({
-    entryId: entry.id,
-    state: classification.decision,
-    approvedBySlackUserId: isManager ? input.userId : manager?.managerSlackUserId ?? input.userId,
-    note: classification.reason ?? input.text,
-    markSubmittedAsWfh,
-    userEmail: entry.userEmail,
-    userName: entry.userName
-  });
+  const markSubmittedAsLeave =
+    approvalKind === "leave" &&
+    classification.decision === "approved" &&
+    (entry.status === "missing" || entry.recordType !== "leave");
 
-  if (markSubmittedAsWfh) {
+  const updated =
+    approvalKind === "leave"
+      ? await applyLeaveApproval({
+          entryId: entry.id,
+          state: classification.decision,
+          approvedBySlackUserId: isManager ? input.userId : manager?.managerSlackUserId ?? input.userId,
+          note: classification.reason ?? input.text,
+          markSubmittedAsLeave,
+          userEmail: entry.userEmail,
+          userName: entry.userName
+        })
+      : await applyWfhApproval({
+          entryId: entry.id,
+          state: classification.decision,
+          approvedBySlackUserId: isManager ? input.userId : manager?.managerSlackUserId ?? input.userId,
+          note: classification.reason ?? input.text,
+          markSubmittedAsWfh,
+          userEmail: entry.userEmail,
+          userName: entry.userName
+        });
+
+  if (markSubmittedAsWfh || markSubmittedAsLeave) {
     await cleanupStaleMissingEntries(formatEntryDate(entry.entryDate));
   }
   if (entry.slackUserId) {
@@ -433,11 +517,12 @@ export async function processWfhApprovalReply(input: {
 
   try {
     const isThreadReply = Boolean(input.threadTs && input.threadTs !== input.ts);
+    const label = approvalKind === "leave" ? "leave" : "WFH";
     await postSlackMessage(
       input.channelId,
       classification.decision === "approved"
-        ? `Got it — marked <@${entry.slackUserId}> as approved WFH for ${formatEntryDate(entry.entryDate)}.`
-        : `Noted — WFH was not approved for <@${entry.slackUserId}> on ${formatEntryDate(entry.entryDate)}.`,
+        ? `Got it — marked <@${entry.slackUserId}> as approved ${label} for ${formatEntryDate(entry.entryDate)}.`
+        : `Noted — ${label} was not approved for <@${entry.slackUserId}> on ${formatEntryDate(entry.entryDate)}.`,
       isThreadReply ? { threadTs: input.threadTs } : undefined
     );
   } catch (error) {
@@ -651,7 +736,7 @@ export async function syncAttendanceFromSlackHistory(dateStr: string): Promise<{
 
 export async function runEtaCheck(
   dateStr: string = todayInIST(),
-  options: { sendReminders?: boolean } = {}
+  options: { sendReminders?: boolean; missingOnlyReminders?: boolean } = {}
 ): Promise<{
   date: string;
   weekend: boolean;
@@ -704,7 +789,9 @@ export async function runEtaCheck(
 
   let reminders: { sent: number; skipped: number; errors: string[] } | undefined;
   if (options.sendReminders) {
-    reminders = await sendRemindersForDate(dateStr);
+    reminders = await sendRemindersForDate(dateStr, {
+      missingOnly: options.missingOnlyReminders
+    });
   }
 
   return {
@@ -719,12 +806,30 @@ export async function runEtaCheck(
 
 export type AttendanceMonthCounts = {
   leave: number;
+  leaveApproved: number;
+  leaveUnapproved: number;
   wfh: number;
+  wfhApproved: number;
+  wfhUnapproved: number;
+  office: number;
+  onTime: number;
+  lateSubmission: number;
   missing: number;
 };
 
 function emptyMonthCounts(): AttendanceMonthCounts {
-  return { leave: 0, wfh: 0, missing: 0 };
+  return {
+    leave: 0,
+    leaveApproved: 0,
+    leaveUnapproved: 0,
+    wfh: 0,
+    wfhApproved: 0,
+    wfhUnapproved: 0,
+    office: 0,
+    onTime: 0,
+    lateSubmission: 0,
+    missing: 0
+  };
 }
 
 /** Inclusive calendar-month bounds (IST YYYY-MM-DD) for the month containing dateStr. */
@@ -754,9 +859,21 @@ async function buildMonthCountsBySlackUserId(
   for (const row of history) {
     if (!row.slackUserId) continue;
     const current = counts.get(row.slackUserId) ?? emptyMonthCounts();
-    if (row.status === "missing") current.missing += 1;
-    else if (row.recordType === "leave") current.leave += 1;
-    else if (row.recordType === "wfh") current.wfh += 1;
+    if (row.status === "missing") {
+      current.missing += 1;
+    } else if (row.recordType === "leave") {
+      current.leave += 1;
+      if (row.leaveApprovalState === "approved") current.leaveApproved += 1;
+      else current.leaveUnapproved += 1;
+    } else if (row.recordType === "wfh") {
+      current.wfh += 1;
+      if (row.wfhApprovalState === "approved") current.wfhApproved += 1;
+      else current.wfhUnapproved += 1;
+    } else if (row.recordType === "office") {
+      current.office += 1;
+      if (row.submittedOnTime === true) current.onTime += 1;
+      if (row.submittedOnTime === false) current.lateSubmission += 1;
+    }
     counts.set(row.slackUserId, current);
   }
 
@@ -848,6 +965,67 @@ export async function getAttendancePersonStats(slackUserId: string) {
     throw new HttpError(404, "Attendance stats not found for this Slack user");
   }
   return serializePersonStats(row);
+}
+
+/**
+ * Detail payload for the admin user modal: stats + full history of
+ * WFH / leave / ETA with approved vs unapproved states.
+ */
+export async function getAttendanceUserDetail(
+  slackUserId: string,
+  options: { from?: string; to?: string; limit?: number } = {}
+) {
+  const stats = await getAttendancePersonStats(slackUserId);
+  const entries = await findEntriesForUser(slackUserId, options);
+  const serialized = entries.map(serializeEntry);
+  const breakdown = summarizeApprovalBreakdown(entries);
+
+  return {
+    stats,
+    breakdown,
+    entries: serialized,
+    groups: {
+      wfh: {
+        approved: serialized.filter(
+          (e) => e.recordType === "wfh" && e.wfhApprovalState === "approved"
+        ),
+        unapproved: serialized.filter(
+          (e) => e.recordType === "wfh" && e.wfhApprovalState !== "approved"
+        )
+      },
+      leave: {
+        approved: serialized.filter(
+          (e) => e.recordType === "leave" && e.leaveApprovalState === "approved"
+        ),
+        unapproved: serialized.filter(
+          (e) => e.recordType === "leave" && e.leaveApprovalState !== "approved"
+        )
+      },
+      eta: serialized.filter((e) => e.recordType === "office"),
+      missing: serialized.filter((e) => e.status === "missing"),
+      other: serialized.filter(
+        (e) =>
+          e.status !== "missing" &&
+          e.recordType !== "wfh" &&
+          e.recordType !== "leave" &&
+          e.recordType !== "office"
+      )
+    }
+  };
+}
+
+export async function resetAttendancePersonCounts(slackUserId: string) {
+  const existing = await findPersonStatsBySlackUserId(slackUserId);
+  if (!existing) {
+    const hasEntries = await prisma.etaEntry.count({ where: { slackUserId } });
+    if (hasEntries === 0) {
+      throw new HttpError(404, "Attendance stats not found for this Slack user");
+    }
+  }
+
+  const row = await resetPersonStatsCounts(slackUserId);
+  const withRelations = await findPersonStatsBySlackUserId(slackUserId);
+  return serializePersonStats(withRelations ?? row);
 }
 
 export async function setAttendancePersonAction(input: {

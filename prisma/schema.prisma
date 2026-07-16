@@ -871,6 +871,11 @@ model EtaEntry {
   wfhApprovedAt            DateTime? @map("wfh_approved_at")
   wfhApprovedBySlackUserId String?   @map("wfh_approved_by_slack_user_id")
   wfhApprovalNote          String?   @map("wfh_approval_note") @db.Text
+  /// null | pending | approved | denied — leave manager approval
+  leaveApprovalState         String?   @map("leave_approval_state")
+  leaveApprovedAt            DateTime? @map("leave_approved_at")
+  leaveApprovedBySlackUserId String?   @map("leave_approved_by_slack_user_id")
+  leaveApprovalNote          String?   @map("leave_approval_note") @db.Text
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
@@ -904,6 +909,8 @@ model AttendancePersonStats {
   actionNote           String?   @map("action_note") @db.Text
   actionTakenById      String?   @map("action_taken_by_id")
   actionTakenAt        DateTime? @map("action_taken_at")
+  /// When set, rolling counts only include eta_entries on/after this IST date.
+  countsResetAt        DateTime? @map("counts_reset_at")
   lastEntryDate        DateTime? @map("last_entry_date") @db.Date
   lastComputedAt       DateTime  @default(now()) @map("last_computed_at")
   createdAt            DateTime  @default(now()) @map("created_at")
@@ -919,6 +926,56 @@ model AttendancePersonStats {
   @@index([lateSubmissionCount])
   @@index([missingCount])
   @@map("attendance_person_stats")
+}
+
+// ── Escalation tracker (Slack escalation group/channel) ─────
+
+model Escalation {
+  id                 String    @id @default(uuid())
+  title              String    @db.VarChar(500)
+  problemContext     String    @db.Text
+  latestContext      String    @db.Text
+  status             String    @default("open") // open | in_progress | waiting | resolved | closed
+  priority           String    @default("medium") // low | medium | high | urgent
+  slackChannelId     String    @map("slack_channel_id")
+  slackMessageTs     String    @unique @map("slack_message_ts")
+  reporterSlackId    String?   @map("reporter_slack_id")
+  reporterName       String?   @map("reporter_name")
+  reporterEmail      String?   @map("reporter_email")
+  latestUpdateAt     DateTime? @map("latest_update_at")
+  resolvedAt         DateTime? @map("resolved_at")
+  aiSummary          String?   @map("ai_summary") @db.Text
+  suggestedNextSteps String?   @map("suggested_next_steps") @db.Text
+  aiBlockers         String?   @map("ai_blockers") @db.Text
+  aiAnalyzedAt       DateTime? @map("ai_analyzed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  updates EscalationUpdate[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([latestUpdateAt])
+  @@index([createdAt])
+  @@map("escalations")
+}
+
+model EscalationUpdate {
+  id              String   @id @default(uuid())
+  escalationId    String   @map("escalation_id")
+  slackUserId     String?  @map("slack_user_id")
+  authorName      String?  @map("author_name")
+  authorEmail     String?  @map("author_email")
+  body            String   @db.Text
+  slackMessageTs  String   @unique @map("slack_message_ts")
+  inferredStatus  String?  @map("inferred_status")
+  isManual        Boolean  @default(false) @map("is_manual")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  escalation Escalation @relation(fields: [escalationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([escalationId, createdAt])
+  @@map("escalation_updates")
 }
 
 // ── Notifications ───────────────────────────────────────────

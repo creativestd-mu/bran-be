@@ -255,7 +255,22 @@ export async function analyzeEscalationWithAi(input: {
     .filter(Boolean)
     .join("\n\n");
 
-  const raw = await callLlm(systemPrompt, userPrompt, images);
+  let raw: string;
+  try {
+    raw = await callLlm(systemPrompt, userPrompt, images);
+  } catch (error) {
+    // Slack images sometimes fail Anthropic/Gemini media validation — still title from text.
+    if (images.length === 0) throw error;
+    console.warn("[escalation.ai] multimodal failed; retrying text-only", {
+      imageCount: images.length,
+      error
+    });
+    raw = await callLlm(
+      systemPrompt,
+      `${userPrompt}\n\n(Images were unavailable to the model; use text timeline only.)`,
+      []
+    );
+  }
 
   let parsed: unknown;
   try {

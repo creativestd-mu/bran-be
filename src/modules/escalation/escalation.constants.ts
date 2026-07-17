@@ -12,9 +12,11 @@ export const ESCALATION_PRIORITIES = ["low", "medium", "high", "urgent"] as cons
 
 export type EscalationPriority = (typeof ESCALATION_PRIORITIES)[number];
 
-/** Active = still needs attention in the tracker UI. */
 export const ACTIVE_ESCALATION_STATUSES: EscalationStatus[] = [
   "open",
   "in_progress",
   "waiting"
 ];
+
+/** Daily cron runs at this hour in IST. */
+export const ESCALATION_CRON_HOUR_IST = 10;

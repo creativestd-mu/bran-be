@@ -13,6 +13,7 @@ import {
   slackCommandsHandler,
   slackEventsHandler
 } from "./modules/attendance/attendance.webhook";
+import { escalationCronHandler } from "./modules/escalation/escalation.cron";
 import { handleCalendarOAuthCallback } from "./modules/meetings/meetings.service";
 import { recallWebhookHandler } from "./modules/meetings/meetings.webhook";
 import { apiRouter } from "./routes";
@@ -51,6 +52,7 @@ app.get("/api/slack/events", (_req, res) => {
   });
 });
 app.get("/api/cron/eta-check", etaCronHandler);
+app.get("/api/cron/escalation-check", escalationCronHandler);
 
 app.get("/oauth/google/calendar/callback", (req, res) => {
   void handleCalendarOAuthCallback(req, res);
@@ -75,7 +77,8 @@ app.get("/", (_req, res) => {
       attendance: true,
       slackEvents: "/api/slack/events",
       slackCommands: "/api/slack/commands",
-      etaCron: "/api/cron/eta-check"
+      etaCron: "/api/cron/eta-check",
+      escalationCron: "/api/cron/escalation-check"
     }
   });
 });

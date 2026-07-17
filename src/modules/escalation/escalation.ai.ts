@@ -211,7 +211,8 @@ export async function analyzeEscalationWithAi(input: {
     "If images are attached, explicitly include what they show. " +
     "summary = 2-4 sentences on current state and where it stands now; " +
     "blockers = current blockers or waiting-on items (empty array if none); " +
-    "status = open by default; use resolved only if clearly fixed, closed only if abandoned. " +
+    "status = open by default. Set closed when the timeline clearly confirms the issue is solved " +
+    "(fixed, approved, done, completed, acknowledged, thanks/closed loop). Use closed — not resolved or waiting. " +
     "Do not use waiting or in_progress — map those to open. " +
     "priority = severity/urgency based on customer impact and SLA risk; " +
     "reasoning = brief note on status choice (1 sentence max); " +

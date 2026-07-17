@@ -138,5 +138,7 @@ export const env = {
   slackEscalationChannelId: process.env.SLACK_ESCALATION_CHANNEL_ID ?? "",
   meetingsSyncCronEnabled:
     (process.env.MEETINGS_SYNC_CRON_ENABLED ?? "true").toLowerCase() !== "false",
-  meetingsSyncIntervalMs: Number(process.env.MEETINGS_SYNC_INTERVAL_MS ?? 5 * 60 * 1000)
+  meetingsSyncIntervalMs: Number(process.env.MEETINGS_SYNC_INTERVAL_MS ?? 5 * 60 * 1000),
+  escalationCronEnabled:
+    (process.env.ESCALATION_CRON_ENABLED ?? "true").toLowerCase() !== "false"
 };

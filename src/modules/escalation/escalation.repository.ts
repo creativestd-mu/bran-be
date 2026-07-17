@@ -123,6 +123,15 @@ export async function findEscalationBySlackMessageTs(slackMessageTs: string) {
   });
 }
 
+export async function findActiveEscalationIds(): Promise<string[]> {
+  const rows = await prisma.escalation.findMany({
+    where: { status: { in: ["open", "in_progress", "waiting"] } },
+    select: { id: true },
+    orderBy: [{ latestUpdateAt: "desc" }, { createdAt: "desc" }]
+  });
+  return rows.map((row) => row.id);
+}
+
 export async function listEscalations(filters: {
   status?: EscalationStatus;
   priority?: EscalationPriority;

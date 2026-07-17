@@ -14,6 +14,7 @@ import {
   normalizeEscalationTitle
 } from "./escalation.parser";
 import {
+  findActiveEscalationIds,
   findEscalationById,
   findEscalationBySlackMessageTs,
   listEscalations,
@@ -501,13 +502,16 @@ export async function setEscalationStatus(input: {
 
   const updated = await updateEscalationStatus({
     id: existing.id,
-    status: input.status,
+    status: normalizeEscalationStatus(input.status),
     latestContext: noteBody,
     latestUpdateAt: now,
-    resolvedAt: resolvedAtForStatus(input.status)
+    resolvedAt: resolvedAtForStatus(normalizeEscalationStatus(input.status))
   });
 
-  scheduleEscalationAiAnalysis(existing.id);
+  // Don't re-run AI after a manual close — it could reopen the issue.
+  if (input.status !== "closed" && input.status !== "resolved") {
+    scheduleEscalationAiAnalysis(existing.id);
+  }
 
   return serializeEscalation(updated);
 }
@@ -552,6 +556,67 @@ export async function addEscalationNote(input: {
 
 export async function analyzeEscalationById(id: string) {
   return refreshEscalationAiAnalysis(id);
+}
+
+/** Sync Slack + re-analyze open issues (daily cron + manual trigger). */
+export async function runEscalationDailyCheck(days = 30): Promise<{
+  sync: Awaited<ReturnType<typeof syncEscalationsFromSlack>>;
+  analyzed: number;
+  autoClosed: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  let analyzed = 0;
+  let autoClosed = 0;
+
+  let sync: Awaited<ReturnType<typeof syncEscalationsFromSlack>>;
+  try {
+    sync = await syncEscalationsFromSlack(days);
+    errors.push(...sync.errors);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    errors.push(`sync: ${msg}`);
+    sync = { processed: 0, escalations: 0, updates: 0, errors: [msg] };
+  }
+
+  if (!isEscalationAiConfigured()) {
+    return { sync, analyzed, autoClosed, errors };
+  }
+
+  const activeIds = await findActiveEscalationIds();
+  const concurrency = 2;
+  let cursor = 0;
+
+  async function analyzeNext(): Promise<void> {
+    while (cursor < activeIds.length) {
+      const id = activeIds[cursor];
+      cursor += 1;
+      try {
+        const before = await findEscalationById(id);
+        await refreshEscalationAiAnalysis(id);
+        const after = await findEscalationById(id);
+        analyzed += 1;
+        if (
+          before &&
+          after &&
+          before.status !== "closed" &&
+          after.status === "closed"
+        ) {
+          autoClosed += 1;
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        errors.push(`ai=${id}: ${msg}`);
+        console.error("[escalation.daily] analysis failed", { id, error });
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, activeIds.length) }, () => analyzeNext())
+  );
+
+  return { sync, analyzed, autoClosed, errors };
 }
 
 export function getEscalationActiveStatuses() {

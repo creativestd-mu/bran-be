@@ -205,15 +205,16 @@ export async function analyzeEscalationWithAi(input: {
     '"priority": "low"|"medium"|"high"|"urgent", "blockers": string[], "reasoning": string|null }. ' +
     "Rules: " +
     "title = HARD MAX 50 characters. Exact structure only: " +
-    "'{need} needed by {requester} from {owner}' " +
-    "where need = short ask (coverage approval, Daisy SOS, PC issue, etc.), " +
-    "requester = who raised/needs it, owner = who must act/approve/respond. " +
-    "Infer requester and owner from mentions, thread replies, AND images (e.g. Slack/email screenshots). " +
-    "If owner is unclear use 'unassigned'; if requester unclear use reporter name. " +
-    "Good: 'Coverage approval needed by Daisy from Vinayak'. " +
-    "Good: 'Chaar Diwari SOS needed by Ananya from Divyam'. " +
-    "Bad: dumping many names, greetings, questions, deadlines, or raw Slack first lines. " +
-    "No 'Hey/Hi'. No lists of 3+ people. Count characters; never exceed 50 — shorten names to first name if needed. " +
+    "'{need} needed by {requester} for {why} from {owner}' " +
+    "where need = short ask (coverage, Daisy fix, PC repair, etc.), " +
+    "requester = who raised/needs it, why = brief reason/context (9-day event, client delivery, outage), " +
+    "owner = who must act/approve/respond. " +
+    "Infer requester, why, and owner from mentions, thread replies, AND images. " +
+    "If owner unclear use 'unassigned'; if requester unclear use reporter; if why unclear omit the 'for {why}' clause. " +
+    "Good: 'Coverage needed by Daisy for 9-day event from Vinayak'. " +
+    "Good: 'Daisy SOS needed by Ananya for Chaar Diwari from Divyam'. " +
+    "Bad: dumping many names, greetings, questions, or raw Slack first lines. " +
+    "No 'Hey/Hi'. No lists of 3+ people. Count characters; never exceed 50 — shorten names/why as needed. " +
     "issueDescription = a rich problem write-up (3-6 sentences) that combines the Slack text with visual evidence from screenshots " +
     "(error messages, UI state, emails, WhatsApp/chat snippets, product names, dates, customer impact). " +
     "If images are attached, explicitly include what they show. " +
@@ -248,7 +249,7 @@ export async function analyzeEscalationWithAi(input: {
     images.length > 0
       ? "Attached images follow in order. Use them for both the title and issueDescription (errors, UI copy, product names, dates)."
       : null,
-    "Title must follow: '{need} needed by {requester} from {owner}' and be ≤50 characters."
+    "Title must follow: '{need} needed by {requester} for {why} from {owner}' and be ≤50 characters."
   ]
     .filter(Boolean)
     .join("\n\n");

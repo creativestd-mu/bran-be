@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import type { EscalationPriority, EscalationStatus } from "./escalation.constants";
+import { normalizeEscalationTitle } from "./escalation.parser";
 import type { SlackAttachmentMeta } from "./escalation.slack";
 
 export type UpsertEscalationInput = {
@@ -295,7 +296,7 @@ export function serializeEscalation(row: {
 
   return {
     id: row.id,
-    title: row.title,
+    title: normalizeEscalationTitle(row.title, "Escalation"),
     problemContext: row.problemContext,
     latestContext: row.latestContext,
     status: row.status,

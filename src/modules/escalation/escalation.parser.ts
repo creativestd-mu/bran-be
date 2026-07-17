@@ -5,15 +5,37 @@ import {
   type EscalationStatus
 } from "./escalation.constants";
 
+export const ESCALATION_TITLE_MAX_CHARS = 50;
+
+/** Keep list titles ≤50 chars and readable (word-boundary trim). */
+export function normalizeEscalationTitle(title: string, fallback = "Escalation"): string {
+  const cleaned = title
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+  const value = cleaned.length >= 3 ? cleaned : fallback.trim();
+  if (value.length <= ESCALATION_TITLE_MAX_CHARS) return value;
+
+  const words = value.split(" ");
+  let result = "";
+  for (const word of words) {
+    const next = result ? `${result} ${word}` : word;
+    if (next.length > ESCALATION_TITLE_MAX_CHARS) break;
+    result = next;
+  }
+  if (result.length < 3) {
+    result = value.slice(0, ESCALATION_TITLE_MAX_CHARS);
+  }
+  return result.replace(/[\s,:;.\-–—/]+$/u, "");
+}
+
 export function extractEscalationTitle(text: string): string {
   const firstLine = text
     .split("\n")
     .map((line) => line.trim())
     .find(Boolean);
   if (!firstLine) return "Escalation";
-  // Provisional until AI rewrites; keep list cells short.
-  if (firstLine.length <= 50) return firstLine;
-  return `${firstLine.slice(0, 49).trimEnd()}…`;
+  return normalizeEscalationTitle(firstLine, "Escalation");
 }
 
 export function inferPriority(text: string): EscalationPriority {

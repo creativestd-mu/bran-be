@@ -10,7 +10,8 @@ import {
   extractEscalationTitle,
   inferPriority,
   inferStatusFromText,
-  normalizeEscalationStatus
+  normalizeEscalationStatus,
+  normalizeEscalationTitle
 } from "./escalation.parser";
 import {
   findEscalationById,
@@ -120,7 +121,7 @@ export async function refreshEscalationAiAnalysis(escalationId: string) {
   const status = normalizeEscalationStatus(analysis.status);
   const updated = await updateEscalationAiAnalysis({
     id: escalation.id,
-    title: analysis.title,
+    title: normalizeEscalationTitle(analysis.title, escalation.title),
     latestContext: analysis.summary,
     status,
     priority: analysis.priority,

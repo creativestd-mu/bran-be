@@ -9,6 +9,7 @@ import {
   type EscalationPriority,
   type EscalationStatus
 } from "./escalation.constants";
+import { normalizeEscalationTitle } from "./escalation.parser";
 import {
   downloadSlackImages,
   resolveSlackMentionsInText,
@@ -64,10 +65,8 @@ function stripCodeFences(text: string): string {
   return fenced ? fenced[1].trim() : trimmed;
 }
 
-const TITLE_MAX_CHARS = 50;
-
 const analysisSchema = z.object({
-  title: z.string().trim().min(3).max(80),
+  title: z.string().trim().min(3).max(50),
   summary: z.string().trim().min(1),
   issueDescription: z.string().trim().min(1),
   status: z.enum(ESCALATION_STATUSES),
@@ -83,30 +82,6 @@ const analysisSchema = z.object({
     .nullish()
     .transform((value) => (value && value.length > 0 ? value : null))
 });
-
-/** Keep list titles ≤50 chars and readable (word-boundary trim, no mid-word cut). */
-export function normalizeEscalationTitle(title: string, fallback: string): string {
-  const cleaned = title
-    .replace(/\s+/g, " ")
-    .replace(/^["'`]+|["'`]+$/g, "")
-    .trim();
-  const value = cleaned.length >= 3 ? cleaned : fallback.trim();
-  if (value.length <= TITLE_MAX_CHARS) return value;
-
-  // Trim to whole words within the limit so titles stay readable.
-  const words = value.split(" ");
-  let result = "";
-  for (const word of words) {
-    const next = result ? `${result} ${word}` : word;
-    if (next.length > TITLE_MAX_CHARS) break;
-    result = next;
-  }
-  if (result.length < 3) {
-    // Single very long word — hard cut.
-    result = value.slice(0, TITLE_MAX_CHARS);
-  }
-  return result.replace(/[\s,:;.\-–—/]+$/u, "");
-}
 
 async function callLlm(
   systemPrompt: string,

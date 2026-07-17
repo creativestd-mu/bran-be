@@ -370,9 +370,27 @@ export async function syncEscalationsFromSlack(days = 30): Promise<{
     }
   }
 
-  for (const escalationId of [...new Set(analyzedIds)]) {
-    scheduleEscalationAiAnalysis(escalationId);
+  // Await AI (small pool) so Sync returns after titles are rewritten.
+  // Previously fire-and-forget + re-ingest overwriting title left raw Slack first lines.
+  const uniqueIds = [...new Set(analyzedIds)];
+  const concurrency = 2;
+  let cursor = 0;
+  async function analyzeNext(): Promise<void> {
+    while (cursor < uniqueIds.length) {
+      const escalationId = uniqueIds[cursor];
+      cursor += 1;
+      try {
+        await refreshEscalationAiAnalysis(escalationId);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        errors.push(`ai=${escalationId}: ${msg}`);
+        console.error("[escalation.ai] sync analysis failed", { escalationId, error });
+      }
+    }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, uniqueIds.length) }, () => analyzeNext())
+  );
 
   return {
     processed: messages.length,

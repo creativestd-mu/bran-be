@@ -215,8 +215,9 @@ export async function analyzeEscalationWithAi(input: {
     "Good: 'Daisy SOS needed by Ananya for Chaar Diwari from Divyam'. " +
     "Bad: dumping many names, greetings, questions, or raw Slack first lines. " +
     "No 'Hey/Hi'. No lists of 3+ people. Count characters; never exceed 50 — shorten names/why as needed. " +
-    "issueDescription = a rich problem write-up (3-6 sentences) that combines the Slack text with visual evidence from screenshots " +
-    "(error messages, UI state, emails, WhatsApp/chat snippets, product names, dates, customer impact). " +
+    "issueDescription = start with one line matching the title format, then 2-4 sentences of detail. " +
+    "Combine Slack text with visual evidence from screenshots (errors, UI, emails, chat snippets, product names, dates, impact). " +
+    "Do NOT open with a dump of @mentioned names. Name requester and owner once in the title line. " +
     "If images are attached, explicitly include what they show. " +
     "summary = 2-4 sentences on current state and where it stands now; " +
     "blockers = current blockers or waiting-on items (empty array if none); " +

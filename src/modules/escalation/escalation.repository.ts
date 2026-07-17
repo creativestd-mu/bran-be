@@ -55,17 +55,13 @@ export async function upsertEscalation(input: UpsertEscalationInput) {
   return prisma.escalation.upsert({
     where: { slackMessageTs: input.slackMessageTs },
     create: input,
+    // Re-ingest must NOT wipe AI/manual title, status, priority, or latest context.
     update: {
-      title: input.title,
       problemContext: input.problemContext,
-      latestContext: input.latestContext,
-      status: input.status,
-      priority: input.priority,
       reporterSlackId: input.reporterSlackId,
       reporterName: input.reporterName,
       reporterEmail: input.reporterEmail,
       latestUpdateAt: input.latestUpdateAt,
-      resolvedAt: input.resolvedAt,
       ...(input.aiSummary !== undefined ? { aiSummary: input.aiSummary } : {}),
       ...(input.aiIssueDescription !== undefined
         ? { aiIssueDescription: input.aiIssueDescription }

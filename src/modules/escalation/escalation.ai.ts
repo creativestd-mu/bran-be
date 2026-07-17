@@ -84,7 +84,7 @@ const analysisSchema = z.object({
     .transform((value) => (value && value.length > 0 ? value : null))
 });
 
-/** Keep list titles ≤50 chars and readable. */
+/** Keep list titles ≤50 chars and readable (word-boundary trim, no mid-word cut). */
 export function normalizeEscalationTitle(title: string, fallback: string): string {
   const cleaned = title
     .replace(/\s+/g, " ")
@@ -92,9 +92,20 @@ export function normalizeEscalationTitle(title: string, fallback: string): strin
     .trim();
   const value = cleaned.length >= 3 ? cleaned : fallback.trim();
   if (value.length <= TITLE_MAX_CHARS) return value;
-  const sliced = value.slice(0, TITLE_MAX_CHARS - 1).trimEnd();
-  const cut = sliced.replace(/[,:;.\-–—/]+$/u, "").trimEnd();
-  return `${cut || sliced}…`;
+
+  // Trim to whole words within the limit so titles stay readable.
+  const words = value.split(" ");
+  let result = "";
+  for (const word of words) {
+    const next = result ? `${result} ${word}` : word;
+    if (next.length > TITLE_MAX_CHARS) break;
+    result = next;
+  }
+  if (result.length < 3) {
+    // Single very long word — hard cut.
+    result = value.slice(0, TITLE_MAX_CHARS);
+  }
+  return result.replace(/[\s,:;.\-–—/]+$/u, "");
 }
 
 async function callLlm(
@@ -204,17 +215,17 @@ export async function analyzeEscalationWithAi(input: {
     '"status": "open"|"in_progress"|"waiting"|"resolved"|"closed", ' +
     '"priority": "low"|"medium"|"high"|"urgent", "blockers": string[], "reasoning": string|null }. ' +
     "Rules: " +
-    "title = HARD MAX 50 characters. Exact structure only: " +
-    "'{need} needed by {requester} for {why} from {owner}' " +
-    "where need = short ask (coverage, Daisy fix, PC repair, etc.), " +
-    "requester = who raised/needs it, why = brief reason/context (9-day event, client delivery, outage), " +
-    "owner = who must act/approve/respond. " +
-    "Infer requester, why, and owner from mentions, thread replies, AND images. " +
-    "If owner unclear use 'unassigned'; if requester unclear use reporter; if why unclear omit the 'for {why}' clause. " +
-    "Good: 'Coverage needed by Daisy for 9-day event from Vinayak'. " +
-    "Good: 'Daisy SOS needed by Ananya for Chaar Diwari from Divyam'. " +
-    "Bad: dumping many names, greetings, questions, or raw Slack first lines. " +
-    "No 'Hey/Hi'. No lists of 3+ people. Count characters; never exceed 50 — shorten names/why as needed. " +
+    "title = ABSOLUTE HARD LIMIT of 50 characters INCLUDING SPACES. This is the most important rule. " +
+    "Count the characters and if it is over 50, rewrite shorter before responding. " +
+    "Base structure: '{need} needed by {requester} for {why} from {owner}'. " +
+    "But 50 chars is tight, so COMPRESS aggressively: use FIRST NAMES only, short need (Coverage, Daisy fix, PC repair), short why (2-3 words). " +
+    "If it still exceeds 50, DROP clauses in this priority order until it fits: first drop 'for {why}', then 'from {owner}', then 'by {requester}'. " +
+    "Never truncate a word or leave a dangling '…' — produce a complete, readable ≤50-char phrase. " +
+    "Good (≤50): 'Coverage approval needed by Daisy from Vinayak'. " +
+    "Good (≤50): 'Daisy SOS needed by Ananya from Divyam'. " +
+    "Good (≤50): 'PC repair needed for 9-day event'. " +
+    "Bad: dumping many names, greetings, questions, raw Slack first lines, or anything over 50 chars. " +
+    "No 'Hey/Hi'. No lists of 3+ people. " +
     "issueDescription = start with one line matching the title format, then 2-4 sentences of detail. " +
     "Combine Slack text with visual evidence from screenshots (errors, UI, emails, chat snippets, product names, dates, impact). " +
     "Do NOT open with a dump of @mentioned names. Name requester and owner once in the title line. " +
@@ -251,7 +262,7 @@ export async function analyzeEscalationWithAi(input: {
     images.length > 0
       ? "Attached images follow in order. Use them for both the title and issueDescription (errors, UI copy, product names, dates)."
       : null,
-    "Title must follow: '{need} needed by {requester} for {why} from {owner}' and be ≤50 characters."
+    "Title: rewrite as a complete phrase of AT MOST 50 characters (drop the 'for {why}' / 'from {owner}' clauses if needed to fit). Count characters before answering."
   ]
     .filter(Boolean)
     .join("\n\n");

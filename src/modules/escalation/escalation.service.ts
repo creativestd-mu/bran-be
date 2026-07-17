@@ -9,7 +9,8 @@ import {
 import {
   extractEscalationTitle,
   inferPriority,
-  inferStatusFromText
+  inferStatusFromText,
+  normalizeEscalationStatus
 } from "./escalation.parser";
 import {
   findEscalationById,
@@ -116,17 +117,18 @@ export async function refreshEscalationAiAnalysis(escalationId: string) {
   }
 
   const now = new Date();
+  const status = normalizeEscalationStatus(analysis.status);
   const updated = await updateEscalationAiAnalysis({
     id: escalation.id,
     title: analysis.title,
     latestContext: analysis.summary,
-    status: analysis.status,
+    status,
     priority: analysis.priority,
     aiSummary: analysis.summary,
     aiIssueDescription: analysis.issueDescription,
     aiBlockers: analysis.blockers,
     aiAnalyzedAt: now,
-    resolvedAt: resolvedAtForStatus(analysis.status)
+    resolvedAt: resolvedAtForStatus(status)
   });
 
   return serializeEscalation(updated);
@@ -139,10 +141,11 @@ async function applyStatus(
   latestContext: string,
   latestUpdateAt: Date
 ) {
-  if (!nextStatus || nextStatus === currentStatus) {
+  const normalizedNext = nextStatus ? normalizeEscalationStatus(nextStatus) : null;
+  if (!normalizedNext || normalizedNext === currentStatus) {
     return updateEscalationStatus({
       id: escalationId,
-      status: currentStatus,
+      status: normalizeEscalationStatus(currentStatus),
       latestContext,
       latestUpdateAt
     });
@@ -150,10 +153,10 @@ async function applyStatus(
 
   return updateEscalationStatus({
     id: escalationId,
-    status: nextStatus,
+    status: normalizedNext,
     latestContext,
     latestUpdateAt,
-    resolvedAt: resolvedAtForStatus(nextStatus)
+    resolvedAt: resolvedAtForStatus(normalizedNext)
   });
 }
 
@@ -217,7 +220,10 @@ async function ingestTopLevelEscalation(
     ? extractEscalationTitle(text)
     : attachments[0]?.name ?? "Escalation";
   const priority = inferPriority(text);
-  const status: EscalationStatus = inferStatusFromText(text) ?? "open";
+  // New escalations default to open; only resolved/closed keywords flip status.
+  const status: EscalationStatus = normalizeEscalationStatus(
+    inferStatusFromText(text) ?? "open"
+  );
   const createdAt = slackMessageInstant(input.message.ts);
 
   const escalation = await upsertEscalation({

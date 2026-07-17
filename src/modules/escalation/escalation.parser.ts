@@ -24,6 +24,12 @@ export function inferPriority(text: string): EscalationPriority {
   return "medium";
 }
 
+/** Normalize legacy waiting/in_progress → open (product default is open). */
+export function normalizeEscalationStatus(status: EscalationStatus): EscalationStatus {
+  if (status === "waiting" || status === "in_progress") return "open";
+  return status;
+}
+
 export function inferStatusFromText(text: string): EscalationStatus | null {
   const lower = text.toLowerCase();
   if (/\b(resolved|fixed|done|completed|shipped|mitigated)\b/.test(lower)) {
@@ -32,14 +38,7 @@ export function inferStatusFromText(text: string): EscalationStatus | null {
   if (/\b(closed|archived|cancelled|canceled|no action)\b/.test(lower)) {
     return "closed";
   }
-  if (/\b(waiting|blocked|pending|on hold|awaiting)\b/.test(lower)) {
-    return "waiting";
-  }
-  if (/\b(in progress|working on|investigating|looking into|assigned|picked up)\b/.test(
-    lower
-  )) {
-    return "in_progress";
-  }
+  // waiting / in_progress keywords no longer change status — stay open by default.
   return null;
 }
 

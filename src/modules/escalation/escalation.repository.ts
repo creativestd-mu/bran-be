@@ -130,12 +130,19 @@ export async function listEscalations(filters: {
   take?: number;
   skip?: number;
 }) {
+  const statusFilter =
+    filters.status === "open"
+      ? // Open bucket includes legacy waiting / in_progress rows.
+        { status: { in: ["open", "in_progress", "waiting"] as EscalationStatus[] } }
+      : filters.status
+        ? { status: filters.status }
+        : filters.activeOnly
+          ? { status: { in: ["open", "in_progress", "waiting"] as EscalationStatus[] } }
+          : {};
+
   const where = {
-    ...(filters.status ? { status: filters.status } : {}),
+    ...statusFilter,
     ...(filters.priority ? { priority: filters.priority } : {}),
-    ...(filters.activeOnly
-      ? { status: { in: ["open", "in_progress", "waiting"] } }
-      : {}),
     ...(filters.search
       ? {
           OR: [

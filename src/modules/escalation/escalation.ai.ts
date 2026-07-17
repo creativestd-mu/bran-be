@@ -221,11 +221,12 @@ export async function analyzeEscalationWithAi(input: {
     "If images are attached, explicitly include what they show. " +
     "summary = 2-4 sentences on current state and where it stands now; " +
     "blockers = current blockers or waiting-on items (empty array if none); " +
-    "status = best fit from timeline (open=new/unassigned, in_progress=actively worked, waiting=blocked/pending external, resolved=fixed, closed=no further action); " +
+    "status = open by default; use resolved only if clearly fixed, closed only if abandoned. " +
+    "Do not use waiting or in_progress — map those to open. " +
     "priority = severity/urgency based on customer impact and SLA risk; " +
-    "reasoning = brief note on status/priority choice (1 sentence max); " +
+    "reasoning = brief note on status choice (1 sentence max); " +
     "Always use human display names for people — never Slack user IDs like U0B8MRPU2AG or <@U…> mentions. " +
-    "Do not invent facts not present in the messages or images. Prefer waiting when blocked on someone else.";
+    "Do not invent facts not present in the messages or images.";
 
   const [provisionalTitle, problemContext, ...resolvedBodies] = await Promise.all([
     resolveSlackMentionsInText(input.title),

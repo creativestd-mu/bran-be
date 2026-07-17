@@ -11,7 +11,9 @@ export function extractEscalationTitle(text: string): string {
     .map((line) => line.trim())
     .find(Boolean);
   if (!firstLine) return "Escalation";
-  return firstLine.length > 500 ? `${firstLine.slice(0, 497)}...` : firstLine;
+  // Provisional until AI rewrites; keep list cells short.
+  if (firstLine.length <= 50) return firstLine;
+  return `${firstLine.slice(0, 49).trimEnd()}…`;
 }
 
 export function inferPriority(text: string): EscalationPriority {

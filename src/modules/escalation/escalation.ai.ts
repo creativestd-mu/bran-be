@@ -64,8 +64,10 @@ function stripCodeFences(text: string): string {
   return fenced ? fenced[1].trim() : trimmed;
 }
 
+const TITLE_MAX_CHARS = 50;
+
 const analysisSchema = z.object({
-  title: z.string().trim().min(3).max(120),
+  title: z.string().trim().min(3).max(80),
   summary: z.string().trim().min(1),
   issueDescription: z.string().trim().min(1),
   status: z.enum(ESCALATION_STATUSES),
@@ -82,15 +84,17 @@ const analysisSchema = z.object({
     .transform((value) => (value && value.length > 0 ? value : null))
 });
 
-/** Keep list titles short and readable. */
+/** Keep list titles ≤50 chars and readable. */
 export function normalizeEscalationTitle(title: string, fallback: string): string {
   const cleaned = title
     .replace(/\s+/g, " ")
     .replace(/^["'`]+|["'`]+$/g, "")
     .trim();
-  const value = cleaned.length >= 3 ? cleaned : fallback;
-  if (value.length <= 100) return value;
-  return `${value.slice(0, 97).trimEnd()}...`;
+  const value = cleaned.length >= 3 ? cleaned : fallback.trim();
+  if (value.length <= TITLE_MAX_CHARS) return value;
+  const sliced = value.slice(0, TITLE_MAX_CHARS - 1).trimEnd();
+  const cut = sliced.replace(/[,:;.\-–—/]+$/u, "").trimEnd();
+  return `${cut || sliced}…`;
 }
 
 async function callLlm(
@@ -200,11 +204,13 @@ export async function analyzeEscalationWithAi(input: {
     '"status": "open"|"in_progress"|"waiting"|"resolved"|"closed", ' +
     '"priority": "low"|"medium"|"high"|"urgent", "blockers": string[], "reasoning": string|null }. ' +
     "Rules: " +
-    "title = a concise, self-explanatory list headline (5-12 words, max ~80 chars) that states the real issue " +
-    "(product/project + what is broken or needed). Synthesize from the original message, thread replies, AND images. " +
-    "Good: 'Chaar Diwari: urgent Daisy SOS blocking client delivery'. " +
-    "Bad: greetings, @mentions, questions like 'Who should respond?', or raw Slack first lines. " +
-    "Do not start with Hey/Hi/Hello. Prefer noun phrases over chatty prose. " +
+    "title = HARD MAX 50 characters (including spaces). One short, self-explanatory headline of the core ask/issue. " +
+    "Lead with the subject (coverage, outage, Daisy, project name, etc.) + what is needed or broken. " +
+    "Synthesize from original message, thread replies, AND images — do not paste names or greetings. " +
+    "Good: '9-day coverage needed — reply by midday' (39 chars). " +
+    "Good: 'Chaar Diwari Daisy SOS blocks delivery' (37 chars). " +
+    "Bad: listing people ('Pratham Nagpal Shashank…'), 'Hey…', questions, or raw Slack first lines. " +
+    "Prefer noun phrases. Count characters carefully; never exceed 50. " +
     "issueDescription = a rich problem write-up (3-6 sentences) that combines the Slack text with visual evidence from screenshots " +
     "(error messages, UI state, emails, WhatsApp/chat snippets, product names, dates, customer impact). " +
     "If images are attached, explicitly include what they show. " +
@@ -239,7 +245,7 @@ export async function analyzeEscalationWithAi(input: {
     images.length > 0
       ? "Attached images follow in order. Use them for both the title and issueDescription (errors, UI copy, product names, dates)."
       : null,
-    "Return a rewritten title that a busy ops lead can understand without opening the thread."
+    "Return a rewritten title ≤50 characters that a busy ops lead understands without opening the thread."
   ]
     .filter(Boolean)
     .join("\n\n");

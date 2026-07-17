@@ -204,13 +204,16 @@ export async function analyzeEscalationWithAi(input: {
     '"status": "open"|"in_progress"|"waiting"|"resolved"|"closed", ' +
     '"priority": "low"|"medium"|"high"|"urgent", "blockers": string[], "reasoning": string|null }. ' +
     "Rules: " +
-    "title = HARD MAX 50 characters (including spaces). One short, self-explanatory headline of the core ask/issue. " +
-    "Lead with the subject (coverage, outage, Daisy, project name, etc.) + what is needed or broken. " +
-    "Synthesize from original message, thread replies, AND images — do not paste names or greetings. " +
-    "Good: '9-day coverage needed — reply by midday' (39 chars). " +
-    "Good: 'Chaar Diwari Daisy SOS blocks delivery' (37 chars). " +
-    "Bad: listing people ('Pratham Nagpal Shashank…'), 'Hey…', questions, or raw Slack first lines. " +
-    "Prefer noun phrases. Count characters carefully; never exceed 50. " +
+    "title = HARD MAX 50 characters. Exact structure only: " +
+    "'{need} needed by {requester} from {owner}' " +
+    "where need = short ask (coverage approval, Daisy SOS, PC issue, etc.), " +
+    "requester = who raised/needs it, owner = who must act/approve/respond. " +
+    "Infer requester and owner from mentions, thread replies, AND images (e.g. Slack/email screenshots). " +
+    "If owner is unclear use 'unassigned'; if requester unclear use reporter name. " +
+    "Good: 'Coverage approval needed by Daisy from Vinayak'. " +
+    "Good: 'Chaar Diwari SOS needed by Ananya from Divyam'. " +
+    "Bad: dumping many names, greetings, questions, deadlines, or raw Slack first lines. " +
+    "No 'Hey/Hi'. No lists of 3+ people. Count characters; never exceed 50 — shorten names to first name if needed. " +
     "issueDescription = a rich problem write-up (3-6 sentences) that combines the Slack text with visual evidence from screenshots " +
     "(error messages, UI state, emails, WhatsApp/chat snippets, product names, dates, customer impact). " +
     "If images are attached, explicitly include what they show. " +
@@ -245,7 +248,7 @@ export async function analyzeEscalationWithAi(input: {
     images.length > 0
       ? "Attached images follow in order. Use them for both the title and issueDescription (errors, UI copy, product names, dates)."
       : null,
-    "Return a rewritten title ≤50 characters that a busy ops lead understands without opening the thread."
+    "Title must follow: '{need} needed by {requester} from {owner}' and be ≤50 characters."
   ]
     .filter(Boolean)
     .join("\n\n");

@@ -19,6 +19,7 @@ import {
 
 export type EscalationAiAnalysis = {
   title: string;
+  subject?: string | null;
   summary: string;
   issueDescription: string;
   status: EscalationStatus;
@@ -65,8 +66,36 @@ function stripCodeFences(text: string): string {
   return fenced ? fenced[1].trim() : trimmed;
 }
 
+/**
+ * Guarantee the concrete subject (the "what") leads the title. If the model
+ * still returned a generic title (e.g. "PM approval needed by Abhishek") and a
+ * distinct subject is available, prepend the subject so the title has a "why".
+ */
+function ensureSubjectInTitle(title: string, subject: string | null): string {
+  if (!subject) return title;
+  const normalizedSubject = subject.replace(/\s+/g, " ").trim();
+  if (normalizedSubject.length < 2) return title;
+
+  const lowerTitle = title.toLowerCase();
+  const subjectWords = normalizedSubject
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length > 3);
+  const subjectAlreadyPresent =
+    subjectWords.length > 0 && subjectWords.some((word) => lowerTitle.includes(word));
+  if (subjectAlreadyPresent) return title;
+
+  return `${normalizedSubject} — ${title}`;
+}
+
 const analysisSchema = z.object({
   title: z.string().trim().min(3).max(50),
+  subject: z
+    .string()
+    .trim()
+    .max(40)
+    .nullish()
+    .transform((value) => (value && value.length > 0 ? value : null)),
   summary: z.string().trim().min(1),
   issueDescription: z.string().trim().min(1),
   status: z.enum(ESCALATION_STATUSES),
@@ -186,21 +215,23 @@ export async function analyzeEscalationWithAi(input: {
   const systemPrompt =
     "You are an operations escalation analyst for a customer-success team. " +
     "Read the original problem, the full update timeline, and any attached screenshot/images, then return STRICT JSON only (no markdown) with shape: " +
-    '{ "title": string, "summary": string, "issueDescription": string, ' +
+    '{ "title": string, "subject": string, "summary": string, "issueDescription": string, ' +
     '"status": "open"|"in_progress"|"waiting"|"resolved"|"closed", ' +
     '"priority": "low"|"medium"|"high"|"urgent", "blockers": string[], "reasoning": string|null }. ' +
     "Rules: " +
+    "subject = 2-4 words naming the CONCRETE thing this escalation is about — the 'what'. " +
+    "It is the topic/deliverable/product/SOP/client/feature at stake (e.g. 'Travel plan SOP', 'Coverage roster', 'Chaar Diwari bug', 'Refund policy', 'Onboarding deck'). " +
+    "Extract it from the message, thread, and images. NEVER leave it generic like 'approval', 'request', 'help', or 'response'. " +
+    "If the thread truly names no concrete topic, use the closest specific noun phrase you can infer from context — never a bare action word. " +
     "title = ABSOLUTE HARD LIMIT of 50 characters INCLUDING SPACES. This is the most important rule. " +
     "Count the characters and if it is over 50, rewrite shorter before responding. " +
-    "Base structure: '{need} needed by {requester} from {owner}' (add 'for {why}' only if it fits in 50 chars). " +
-    "CRITICAL: {need} MUST name the concrete subject — what is being approved, fixed, or requested. " +
-    "Extract this from the message, thread, and images (product name, SOP, travel plan, coverage, client, feature, etc.). " +
-    "NEVER use vague {need} like 'PM approval', 'approval', 'response', 'help', or 'request' without the subject. " +
-    "Compress aggressively: FIRST NAMES only. If over 50 chars, drop 'for {why}' then 'from {owner}' then shorten {need}. " +
+    "title MUST start with the subject, then the action. Structure: '{subject} — {need} by {requester}' (drop 'by {requester}' if over 50). " +
+    "The subject (the 'what') must always be visible in the title; never a bare 'PM approval needed by X'. " +
+    "Compress aggressively: FIRST NAMES only. If over 50 chars, drop 'by {requester}' then shorten {need}, but KEEP the subject. " +
     "Never truncate mid-word — produce a complete ≤50-char phrase. " +
-    "Good (≤50): 'Travel plan SOP needed by Abhishek from Divyam'. " +
-    "Good (≤50): 'Coverage roster needed by Daisy from Vinayak'. " +
-    "Good (≤50): 'Chaar Diwari Daisy fix by Ananya from Divyam'. " +
+    "Good (≤50): 'Travel plan SOP — PM approval, Abhishek'. " +
+    "Good (≤50): 'Coverage roster sign-off — Daisy'. " +
+    "Good (≤50): 'Chaar Diwari bug fix — Ananya'. " +
     "Bad: 'PM approval needed by Abhishek from Divyam' (what approval?). " +
     "Bad: 'Approval needed by Abhishek' (no subject). " +
     "Bad: dumping many names, greetings, questions, raw Slack first lines. " +
@@ -242,7 +273,7 @@ export async function analyzeEscalationWithAi(input: {
     images.length > 0
       ? "Attached images follow in order. Use them for both the title and issueDescription (errors, UI copy, product names, dates)."
       : null,
-    "Title: {need} must state WHAT is being approved/requested (not generic 'PM approval'). Max 50 characters."
+    "First decide the subject (2-4 words naming WHAT this is about), then build the title starting with that subject. Never a bare 'PM approval'. Max 50 characters."
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -281,8 +312,9 @@ export async function analyzeEscalationWithAi(input: {
     return null;
   }
 
-  const [title, summary, issueDescription, ...blockers] = await Promise.all([
+  const [title, subject, summary, issueDescription, ...blockers] = await Promise.all([
     resolveSlackMentionsInText(result.data.title),
+    result.data.subject ? resolveSlackMentionsInText(result.data.subject) : Promise.resolve(null),
     resolveSlackMentionsInText(result.data.summary),
     resolveSlackMentionsInText(result.data.issueDescription),
     ...result.data.blockers.map((blocker) => resolveSlackMentionsInText(blocker))
@@ -290,7 +322,7 @@ export async function analyzeEscalationWithAi(input: {
 
   return {
     ...result.data,
-    title: normalizeEscalationTitle(title, provisionalTitle),
+    title: normalizeEscalationTitle(ensureSubjectInTitle(title, subject), provisionalTitle),
     summary,
     issueDescription,
     blockers

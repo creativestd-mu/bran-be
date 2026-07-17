@@ -192,14 +192,18 @@ export async function analyzeEscalationWithAi(input: {
     "Rules: " +
     "title = ABSOLUTE HARD LIMIT of 50 characters INCLUDING SPACES. This is the most important rule. " +
     "Count the characters and if it is over 50, rewrite shorter before responding. " +
-    "Base structure: '{need} needed by {requester} for {why} from {owner}'. " +
-    "But 50 chars is tight, so COMPRESS aggressively: use FIRST NAMES only, short need (Coverage, Daisy fix, PC repair), short why (2-3 words). " +
-    "If it still exceeds 50, DROP clauses in this priority order until it fits: first drop 'for {why}', then 'from {owner}', then 'by {requester}'. " +
-    "Never truncate a word or leave a dangling '…' — produce a complete, readable ≤50-char phrase. " +
-    "Good (≤50): 'Coverage approval needed by Daisy from Vinayak'. " +
-    "Good (≤50): 'Daisy SOS needed by Ananya from Divyam'. " +
-    "Good (≤50): 'PC repair needed for 9-day event'. " +
-    "Bad: dumping many names, greetings, questions, raw Slack first lines, or anything over 50 chars. " +
+    "Base structure: '{need} needed by {requester} from {owner}' (add 'for {why}' only if it fits in 50 chars). " +
+    "CRITICAL: {need} MUST name the concrete subject — what is being approved, fixed, or requested. " +
+    "Extract this from the message, thread, and images (product name, SOP, travel plan, coverage, client, feature, etc.). " +
+    "NEVER use vague {need} like 'PM approval', 'approval', 'response', 'help', or 'request' without the subject. " +
+    "Compress aggressively: FIRST NAMES only. If over 50 chars, drop 'for {why}' then 'from {owner}' then shorten {need}. " +
+    "Never truncate mid-word — produce a complete ≤50-char phrase. " +
+    "Good (≤50): 'Travel plan SOP needed by Abhishek from Divyam'. " +
+    "Good (≤50): 'Coverage roster needed by Daisy from Vinayak'. " +
+    "Good (≤50): 'Chaar Diwari Daisy fix by Ananya from Divyam'. " +
+    "Bad: 'PM approval needed by Abhishek from Divyam' (what approval?). " +
+    "Bad: 'Approval needed by Abhishek' (no subject). " +
+    "Bad: dumping many names, greetings, questions, raw Slack first lines. " +
     "No 'Hey/Hi'. No lists of 3+ people. " +
     "issueDescription = start with one line matching the title format, then 2-4 sentences of detail. " +
     "Combine Slack text with visual evidence from screenshots (errors, UI, emails, chat snippets, product names, dates, impact). " +
@@ -237,7 +241,7 @@ export async function analyzeEscalationWithAi(input: {
     images.length > 0
       ? "Attached images follow in order. Use them for both the title and issueDescription (errors, UI copy, product names, dates)."
       : null,
-    "Title: rewrite as a complete phrase of AT MOST 50 characters (drop the 'for {why}' / 'from {owner}' clauses if needed to fit). Count characters before answering."
+    "Title: {need} must state WHAT is being approved/requested (not generic 'PM approval'). Max 50 characters."
   ]
     .filter(Boolean)
     .join("\n\n");

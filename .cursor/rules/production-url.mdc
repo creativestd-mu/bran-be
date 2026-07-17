@@ -27,7 +27,9 @@ JWT attendance APIs (`/api/eta/*`, `/:lang/v1/attendance/*`) are restricted to r
 - Reminders: auto 11:00 AM IST DMs are **disabled** (`AUTO_REMINDERS_ENABLED=false`) until explicitly re-enabled.
 - Late submission: posts at/after **11:30 AM IST**.
 - User modal: `GET /api/eta/stats/:slackUserId/detail` (approved + unapproved WFH/leave + ETA).
-- Reset counters: `POST /api/eta/stats/:slackUserId/reset-counts` (history kept).
+- Set counters: `POST /api/eta/stats/:slackUserId/set-counts` (exact WFH/leave approved/denied/etc; history kept).
+- Zero counters: `POST /api/eta/stats/:slackUserId/reset-counts` (history kept).
+- Policies (admin/CoS, editable in-app): `GET|PUT /api/eta/policies` — markdown leave/WFH/ETA SOP doc. FE: `/attendance/policies`.
 
 ## Escalation tracker
 

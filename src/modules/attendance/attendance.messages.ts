@@ -29,17 +29,16 @@ export function missingAttendanceReminder(input: {
 
 export function pendingWfhApprovalReminder(input: {
   employeeName: string | null;
-  managerTag: string;
 }): string {
   const name = firstName(input.employeeName);
   return [
-    `Hey ${name} — and ${input.managerTag} 👋`,
+    `Hey ${name} 👋`,
     "",
-    `${name} marked WFH for today. Could you take a quick look when you have a moment, ${input.managerTag}?`,
+    "You marked WFH for today. Quick check — have you already got approval from your manager?",
     "",
-    "A short reply here works:",
-    '• "yes, approved" — all good for WFH',
-    '• "no" — please come to office / not approved',
+    "Reply here with:",
+    '• "yes" / "approved" — manager already approved',
+    '• "no" — not approved yet / please treat as not approved',
     "",
     "Thanks."
   ].join("\n");
@@ -47,17 +46,16 @@ export function pendingWfhApprovalReminder(input: {
 
 export function pendingLeaveApprovalReminder(input: {
   employeeName: string | null;
-  managerTag: string;
 }): string {
   const name = firstName(input.employeeName);
   return [
-    `Hey ${name} — and ${input.managerTag} 👋`,
+    `Hey ${name} 👋`,
     "",
-    `${name} posted leave for today. ${input.managerTag}, would you mind confirming when you get a chance?`,
+    "You posted leave / comp off for today. Quick check — have you already got approval from your manager?",
     "",
-    "A short reply here is enough:",
-    '• "yes, approved"',
-    '• "no" / not approved',
+    "Reply here with:",
+    '• "yes" / "approved" — manager already approved',
+    '• "no" — not approved yet / please treat as not approved',
     "",
     "Thanks."
   ].join("\n");

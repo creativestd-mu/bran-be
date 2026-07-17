@@ -98,6 +98,7 @@ model User {
   organizedMeetings         Meeting[]               @relation("MeetingOrganizer")
   attendanceStats           AttendancePersonStats[] @relation("AttendanceStatsUser")
   attendanceActionsTaken    AttendancePersonStats[] @relation("AttendanceStatsActionBy")
+  attendancePolicyUpdates   AttendancePolicyDoc[]   @relation("AttendancePolicyUpdatedBy")
 
   @@index([roleId])
   @@index([managerUserId])
@@ -929,6 +930,19 @@ model AttendancePersonStats {
   @@index([lateSubmissionCount])
   @@index([missingCount])
   @@map("attendance_person_stats")
+}
+
+/// Singleton markdown doc for leave / WFH / ETA policies + approval SOPs.
+model AttendancePolicyDoc {
+  id          String   @id @default("default")
+  bodyMd      String   @default("") @map("body_md") @db.Text
+  updatedById String?  @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation("AttendancePolicyUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@map("attendance_policy_docs")
 }
 
 // ── Escalation tracker (Slack escalation group/channel) ─────

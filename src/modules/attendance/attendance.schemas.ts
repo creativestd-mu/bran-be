@@ -93,3 +93,8 @@ export const userDetailQuerySchema = z.object({
     .optional(),
   limit: z.coerce.number().int().min(1).max(1000).optional()
 });
+
+/** Markdown body for leave / WFH / ETA policies + approval SOPs. */
+export const updateAttendancePolicySchema = z.object({
+  bodyMd: z.string().max(100_000)
+});

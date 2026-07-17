@@ -8,6 +8,7 @@ import {
   attendanceRemindBodySchema,
   listPersonStatsQuerySchema,
   setPersonStatsCountsSchema,
+  updateAttendancePolicySchema,
   updateMemberPodSchema,
   updatePersonStatsActionSchema,
   userDetailQuerySchema
@@ -27,6 +28,7 @@ import {
   setAttendancePersonCounts,
   updateMemberPod
 } from "./attendance.service";
+import { getAttendancePolicy, updateAttendancePolicy } from "./attendance.policy";
 import { todayInIST } from "./attendance.dates";
 import { listActiveSlackMembers } from "./attendance.repository";
 import { escalationRouter } from "../escalation/escalation.routes";
@@ -156,6 +158,30 @@ attendanceRouter.patch("/stats/:slackUserId/action", async (req, res, next) => {
       actionStatus: body.actionStatus,
       actionNote: body.actionNote,
       actionTakenById: req.user!.userId
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** GET /attendance/policies — leave / WFH / ETA policy markdown */
+attendanceRouter.get("/policies", async (_req, res, next) => {
+  try {
+    const data = await getAttendancePolicy();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** PUT /attendance/policies — admin/CoS edit policy markdown in-app */
+attendanceRouter.put("/policies", async (req, res, next) => {
+  try {
+    const body = updateAttendancePolicySchema.parse(req.body ?? {});
+    const data = await updateAttendancePolicy({
+      bodyMd: body.bodyMd,
+      updatedById: req.user!.userId
     });
     res.status(200).json({ success: true, data });
   } catch (error) {

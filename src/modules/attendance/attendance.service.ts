@@ -60,7 +60,6 @@ import {
   getSlackUserInfo,
   listChannelMemberIds,
   lookupSlackUserByEmail,
-  openConversation,
   postSlackMessage,
   resolveChannelId,
   sendDm,
@@ -230,14 +229,6 @@ export async function sendReminder(
   const member = await findSlackMember(slackUserId);
   const slackUser = member ? null : await getSlackUserInfo(slackUserId);
   const employeeName = member?.realName ?? member?.name ?? slackUser?.profile?.real_name ?? null;
-  const employeeEmail = member?.email ?? slackUser?.profile?.email ?? null;
-  const manager = await resolveManagerSlackContext(employeeEmail);
-
-  const managerTag = manager?.managerSlackUserId
-    ? `<@${manager.managerSlackUserId}>`
-    : manager?.managerName
-      ? manager.managerName
-      : "your manager";
 
   const reminderKind =
     entry.status === "missing"
@@ -250,34 +241,12 @@ export async function sendReminder(
 
   const text =
     reminderKind === "wfh_pending"
-      ? pendingWfhApprovalReminder({ employeeName, managerTag })
+      ? pendingWfhApprovalReminder({ employeeName })
       : reminderKind === "leave_pending"
-        ? pendingLeaveApprovalReminder({ employeeName, managerTag })
+        ? pendingLeaveApprovalReminder({ employeeName })
         : missingAttendanceReminder({ employeeName, channelLabel });
 
-  // Missing-attendance nudges go to the person only — don't loop in manager approval copy.
-  const includeManager =
-    reminderKind !== "missing" &&
-    Boolean(manager?.managerSlackUserId) &&
-    manager!.managerSlackUserId !== slackUserId;
-
-  if (includeManager && manager?.managerSlackUserId) {
-    try {
-      const channel = await openConversation([slackUserId, manager.managerSlackUserId]);
-      return await postSlackMessage(channel, text);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // mpim:write may be missing — fall back to a normal 1:1 DM with the employee.
-      if (message.includes("missing_scope") || message.includes("cannot_dm") || message.includes("user_not_found")) {
-        console.warn(
-          `[attendance] Group DM with manager failed (${message}); falling back to 1:1 DM for ${slackUserId}`
-        );
-        return sendDm(slackUserId, text);
-      }
-      throw error;
-    }
-  }
-
+  // Always 1:1 DM the employee — no daily manager/employee group chats.
   return sendDm(slackUserId, text);
 }
 

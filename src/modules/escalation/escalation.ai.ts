@@ -17,6 +17,7 @@ import {
 } from "./escalation.slack";
 
 export type EscalationAiAnalysis = {
+  title: string;
   summary: string;
   issueDescription: string;
   status: EscalationStatus;
@@ -64,6 +65,7 @@ function stripCodeFences(text: string): string {
 }
 
 const analysisSchema = z.object({
+  title: z.string().trim().min(3).max(120),
   summary: z.string().trim().min(1),
   issueDescription: z.string().trim().min(1),
   status: z.enum(ESCALATION_STATUSES),
@@ -79,6 +81,17 @@ const analysisSchema = z.object({
     .nullish()
     .transform((value) => (value && value.length > 0 ? value : null))
 });
+
+/** Keep list titles short and readable. */
+export function normalizeEscalationTitle(title: string, fallback: string): string {
+  const cleaned = title
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+  const value = cleaned.length >= 3 ? cleaned : fallback;
+  if (value.length <= 100) return value;
+  return `${value.slice(0, 97).trimEnd()}...`;
+}
 
 async function callLlm(
   systemPrompt: string,
@@ -183,9 +196,15 @@ export async function analyzeEscalationWithAi(input: {
   const systemPrompt =
     "You are an operations escalation analyst for a customer-success team. " +
     "Read the original problem, the full update timeline, and any attached screenshot/images, then return STRICT JSON only (no markdown) with shape: " +
-    '{ "summary": string, "issueDescription": string, "status": "open"|"in_progress"|"waiting"|"resolved"|"closed", ' +
+    '{ "title": string, "summary": string, "issueDescription": string, ' +
+    '"status": "open"|"in_progress"|"waiting"|"resolved"|"closed", ' +
     '"priority": "low"|"medium"|"high"|"urgent", "blockers": string[], "reasoning": string|null }. ' +
     "Rules: " +
+    "title = a concise, self-explanatory list headline (5-12 words, max ~80 chars) that states the real issue " +
+    "(product/project + what is broken or needed). Synthesize from the original message, thread replies, AND images. " +
+    "Good: 'Chaar Diwari: urgent Daisy SOS blocking client delivery'. " +
+    "Bad: greetings, @mentions, questions like 'Who should respond?', or raw Slack first lines. " +
+    "Do not start with Hey/Hi/Hello. Prefer noun phrases over chatty prose. " +
     "issueDescription = a rich problem write-up (3-6 sentences) that combines the Slack text with visual evidence from screenshots " +
     "(error messages, UI state, emails, WhatsApp/chat snippets, product names, dates, customer impact). " +
     "If images are attached, explicitly include what they show. " +
@@ -197,7 +216,7 @@ export async function analyzeEscalationWithAi(input: {
     "Always use human display names for people — never Slack user IDs like U0B8MRPU2AG or <@U…> mentions. " +
     "Do not invent facts not present in the messages or images. Prefer waiting when blocked on someone else.";
 
-  const [title, problemContext, ...resolvedBodies] = await Promise.all([
+  const [provisionalTitle, problemContext, ...resolvedBodies] = await Promise.all([
     resolveSlackMentionsInText(input.title),
     resolveSlackMentionsInText(input.problemContext),
     ...input.updates.map((update) => resolveSlackMentionsInText(update.body))
@@ -210,7 +229,7 @@ export async function analyzeEscalationWithAi(input: {
   }));
 
   const userPrompt = [
-    `Title: ${title}`,
+    `Provisional Slack title (often a raw first line — rewrite into a proper title): ${provisionalTitle}`,
     input.reporterName ? `Reporter: ${input.reporterName}` : null,
     `Current status (system): ${input.currentStatus}`,
     `Current priority (system): ${input.currentPriority}`,
@@ -218,8 +237,9 @@ export async function analyzeEscalationWithAi(input: {
     `Original problem:\n"""${problemContext || "(see attached images)"}"""`,
     `Timeline (${updates.length} updates):\n${formatTimeline(updates)}`,
     images.length > 0
-      ? "Attached images follow in order. Use them to enrich issueDescription with concrete visual details (errors, UI copy, names, dates)."
-      : null
+      ? "Attached images follow in order. Use them for both the title and issueDescription (errors, UI copy, product names, dates)."
+      : null,
+    "Return a rewritten title that a busy ops lead can understand without opening the thread."
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -243,7 +263,8 @@ export async function analyzeEscalationWithAi(input: {
     return null;
   }
 
-  const [summary, issueDescription, ...blockers] = await Promise.all([
+  const [title, summary, issueDescription, ...blockers] = await Promise.all([
+    resolveSlackMentionsInText(result.data.title),
     resolveSlackMentionsInText(result.data.summary),
     resolveSlackMentionsInText(result.data.issueDescription),
     ...result.data.blockers.map((blocker) => resolveSlackMentionsInText(blocker))
@@ -251,6 +272,7 @@ export async function analyzeEscalationWithAi(input: {
 
   return {
     ...result.data,
+    title: normalizeEscalationTitle(title, provisionalTitle),
     summary,
     issueDescription,
     blockers

@@ -118,6 +118,7 @@ export async function refreshEscalationAiAnalysis(escalationId: string) {
   const now = new Date();
   const updated = await updateEscalationAiAnalysis({
     id: escalation.id,
+    title: analysis.title,
     latestContext: analysis.summary,
     status: analysis.status,
     priority: analysis.priority,

@@ -183,6 +183,7 @@ export async function listEscalations(filters: {
 
 export async function updateEscalationAiAnalysis(input: {
   id: string;
+  title: string;
   latestContext: string;
   status: EscalationStatus;
   priority: EscalationPriority;
@@ -195,6 +196,7 @@ export async function updateEscalationAiAnalysis(input: {
   return prisma.escalation.update({
     where: { id: input.id },
     data: {
+      title: input.title,
       latestContext: input.latestContext,
       status: input.status,
       priority: input.priority,

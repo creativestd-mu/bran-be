@@ -67,6 +67,28 @@ type IdeaMatchRow = {
   score: number;
 };
 
+type EscalationRow = {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  problemContext: string;
+  latestContext: string;
+  reporterName: string | null;
+  reporterEmail: string | null;
+  slackChannelId: string;
+  slackMessageTs: string;
+  latestUpdateAt: Date | null;
+  resolvedAt: Date | null;
+  aiSummary: string | null;
+  aiBlockers: string | null;
+  updates: Array<{
+    authorEmail: string | null;
+    authorName: string | null;
+    body: string;
+  }>;
+};
+
 function pushNode(
   map: Map<string, BrainNode>,
   type: BrainNodeType,
@@ -118,11 +140,13 @@ export function buildStructuralGraph(input: {
   workUnits: WorkUnitRow[];
   ideas: IdeaRow[];
   ideaMatches: IdeaMatchRow[];
+  escalations?: EscalationRow[];
   includeSteps: boolean;
 }): { nodes: BrainNode[]; edges: BrainEdge[] } {
   const nodeMap = new Map<string, BrainNode>();
   const edges: BrainEdge[] = [];
   const seenEdges = new Set<string>();
+  const emailToUserId = new Map<string, string>();
 
   for (const user of input.users) {
     pushNode(nodeMap, "member", user.id, user.name, {
@@ -130,6 +154,7 @@ export function buildStructuralGraph(input: {
       avatarUrl: user.avatarUrl,
       designation: user.designation
     });
+    emailToUserId.set(user.email.trim().toLowerCase(), user.id);
   }
 
   for (const user of input.users) {
@@ -310,6 +335,53 @@ export function buildStructuralGraph(input: {
           weight: match.score
         });
       }
+    }
+  }
+
+  for (const escalation of input.escalations ?? []) {
+    const escalationNode = nodeId("escalation", escalation.id);
+    pushNode(nodeMap, "escalation", escalation.id, escalation.title, {
+      status: escalation.status,
+      priority: escalation.priority,
+      aiSummary: escalation.aiSummary,
+      aiBlockers: escalation.aiBlockers,
+      latestUpdateAt: escalation.latestUpdateAt?.toISOString() ?? null,
+      resolvedAt: escalation.resolvedAt?.toISOString() ?? null,
+      reporterName: escalation.reporterName,
+      reporterEmail: escalation.reporterEmail,
+      slackChannelId: escalation.slackChannelId,
+      slackMessageTs: escalation.slackMessageTs
+    });
+
+    const reporterEmail = escalation.reporterEmail?.trim().toLowerCase();
+    const reporterUserId = reporterEmail ? emailToUserId.get(reporterEmail) : undefined;
+    if (reporterUserId) {
+      pushEdge(
+        edges,
+        seenEdges,
+        escalationNode,
+        nodeId("member", reporterUserId),
+        "reported_by"
+      );
+    }
+
+    const linkedUpdaterEmails = new Set<string>();
+    if (reporterEmail) linkedUpdaterEmails.add(reporterEmail);
+
+    for (const update of escalation.updates) {
+      const authorEmail = update.authorEmail?.trim().toLowerCase();
+      if (!authorEmail || linkedUpdaterEmails.has(authorEmail)) continue;
+      const authorUserId = emailToUserId.get(authorEmail);
+      if (!authorUserId) continue;
+      linkedUpdaterEmails.add(authorEmail);
+      pushEdge(
+        edges,
+        seenEdges,
+        escalationNode,
+        nodeId("member", authorUserId),
+        "updated_by",
+        { label: update.authorName ?? undefined }
+      );
     }
   }
 

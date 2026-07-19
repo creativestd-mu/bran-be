@@ -1,3 +1,4 @@
+import { ATTENDANCE_ADMIN_ROLES } from "../attendance/attendance.constants";
 import type { BrainGraphQuery, BrainGraphPayload, BrainEdge, BrainNode } from "./graph.schemas";
 import {
   buildBrainGraphCacheKey,
@@ -8,6 +9,7 @@ import {
 import { enrichGraphWithAi, mergeAiEnrichment, packAiContext } from "./graph.ai";
 import {
   loadActiveUsers,
+  loadGraphEscalations,
   loadGraphMeetings,
   loadGraphWorkUnits,
   loadProjects,
@@ -42,8 +44,9 @@ async function buildBrainGraph(
 ): Promise<Omit<BrainGraphPayload, "cached">> {
   const from = parseOptionalDate(query.from);
   const to = parseOptionalDate(query.to);
+  const includeEscalations = ATTENDANCE_ADMIN_ROLES.has(roleName);
 
-  const [users, projects, workUnits, { ideas, matches }] = await Promise.all([
+  const [users, projects, workUnits, { ideas, matches }, escalations] = await Promise.all([
     loadActiveUsers(),
     loadProjects(),
     loadGraphWorkUnits({
@@ -52,7 +55,8 @@ async function buildBrainGraph(
       from,
       to
     }),
-    loadViewerIdeas(viewerUserId)
+    loadViewerIdeas(viewerUserId),
+    includeEscalations ? loadGraphEscalations({ from, to }) : Promise.resolve([])
   ]);
 
   const visibleRecordingIds = [
@@ -78,6 +82,7 @@ async function buildBrainGraph(
     workUnits,
     ideas,
     ideaMatches: matches,
+    escalations,
     includeSteps: query.includeSteps
   });
 
@@ -90,7 +95,8 @@ async function buildBrainGraph(
       meetings,
       workUnits,
       projects: projects.map((p) => ({ id: p.id, name: p.name })),
-      ideas
+      ideas,
+      escalations
     });
 
     const enrichment = await enrichGraphWithAi(context);
@@ -120,12 +126,14 @@ export async function getBrainGraph(
   query: BrainGraphQuery,
   options?: { forceRebuild?: boolean }
 ): Promise<BrainGraphPayload> {
+  const includeEscalations = ATTENDANCE_ADMIN_ROLES.has(roleName);
   const cacheKey = buildBrainGraphCacheKey({
     userId: viewerUserId,
     from: query.from,
     to: query.to,
     limitMeetings: query.limitMeetings,
-    includeSteps: query.includeSteps
+    includeSteps: query.includeSteps,
+    includeEscalations
   });
 
   if (!options?.forceRebuild) {

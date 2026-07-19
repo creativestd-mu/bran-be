@@ -89,6 +89,16 @@ export type GraphAiContext = {
   }>;
   projects: Array<{ id: string; name: string }>;
   ideas: Array<{ id: string; title: string }>;
+  escalations: Array<{
+    id: string;
+    title: string;
+    status: string;
+    priority: string;
+    summary: string | null;
+    blockers: string | null;
+    reporterName: string | null;
+    context: string | null;
+  }>;
 };
 
 function truncate(text: string | null | undefined, max = TRANSCRIPT_EXCERPT_CHARS): string | null {
@@ -118,6 +128,17 @@ export function packAiContext(input: {
   }>;
   projects: Array<{ id: string; name: string }>;
   ideas: Array<{ id: string; title: string }>;
+  escalations?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    priority: string;
+    aiSummary: string | null;
+    aiBlockers: string | null;
+    reporterName: string | null;
+    latestContext: string;
+    problemContext: string;
+  }>;
 }): GraphAiContext {
   return {
     users: input.users.map((u) => ({ id: u.id, name: u.name })),
@@ -141,7 +162,17 @@ export function packAiContext(input: {
         .filter((name): name is string => Boolean(name))
     })),
     projects: input.projects,
-    ideas: input.ideas
+    ideas: input.ideas,
+    escalations: (input.escalations ?? []).map((e) => ({
+      id: e.id,
+      title: e.title,
+      status: e.status,
+      priority: e.priority,
+      summary: truncate(e.aiSummary, 500),
+      blockers: truncate(e.aiBlockers, 500),
+      reporterName: e.reporterName,
+      context: truncate(e.latestContext || e.problemContext, 500)
+    }))
   };
 }
 
@@ -178,8 +209,18 @@ function normalizeEndpoint(
 ): string | null {
   if (knownNodeIds.has(ref)) return ref;
 
-  if (ref.startsWith("meeting:") || ref.startsWith("work_unit:") || ref.startsWith("project:") || ref.startsWith("idea:") || ref.startsWith("theme:") || ref.startsWith("collaboration:")) {
-    return knownNodeIds.has(ref) ? ref : ref.startsWith("theme:") || ref.startsWith("collaboration:") ? ref : null;
+  if (
+    ref.startsWith("meeting:") ||
+    ref.startsWith("work_unit:") ||
+    ref.startsWith("project:") ||
+    ref.startsWith("idea:") ||
+    ref.startsWith("theme:") ||
+    ref.startsWith("collaboration:") ||
+    ref.startsWith("escalation:")
+  ) {
+    if (knownNodeIds.has(ref)) return ref;
+    if (ref.startsWith("theme:") || ref.startsWith("collaboration:")) return ref;
+    return null;
   }
 
   return resolveMemberRef(ref, users);
@@ -291,20 +332,25 @@ export function mergeAiEnrichment(params: {
 }
 
 export async function enrichGraphWithAi(context: GraphAiContext): Promise<AiEnrichment> {
-  if (context.meetings.length === 0 && context.workUnits.length === 0) {
+  if (
+    context.meetings.length === 0 &&
+    context.workUnits.length === 0 &&
+    context.escalations.length === 0
+  ) {
     return { nodes: [], edges: [] };
   }
 
   const systemPrompt =
-    "You enrich a team collaboration brain map from meeting transcripts and work items. " +
+    "You enrich a team collaboration brain map from meeting transcripts, work items, and escalations. " +
     "Return STRICT JSON only (no markdown) with shape: " +
     '{ "nodes": [ { "id": string, "type": "theme"|"collaboration"|"idea", "label": string, "sourceMeetingIds": string[], "memberIds": string[], "memberNames": string[] } ], ' +
-    '"edges": [ { "source": string, "target": string, "type": "discusses"|"relates_to"|"collaborates_with"|"co_attended"|"similar_to", "weight": number, "label": string|null } ] }. ' +
-    "Rules: Do NOT re-emit existing members/meetings/work_units/projects as nodes — only NEW theme, collaboration, or idea nodes. " +
+    '"edges": [ { "source": string, "target": string, "type": "discusses"|"relates_to"|"collaborates_with"|"co_attended"|"similar_to"|"blocks", "weight": number, "label": string|null } ] }. ' +
+    "Rules: Do NOT re-emit existing members/meetings/work_units/projects/escalations as nodes — only NEW theme, collaboration, or idea nodes. " +
     "Node ids: theme:<slug>, collaboration:<short-id>, idea:<slug>. " +
-    "Edge endpoints must use prefixed ids (member:<uuid>, meeting:<uuid>, work_unit:<uuid>, project:<uuid>, idea:<uuid>, theme:<slug>, collaboration:<id>) " +
+    "Edge endpoints must use prefixed ids (member:<uuid>, meeting:<uuid>, work_unit:<uuid>, project:<uuid>, idea:<uuid>, theme:<slug>, collaboration:<id>, escalation:<uuid>) " +
     "or exact member names from the users list. " +
-    "Prefer 5–25 enrichment nodes and 10–60 edges. Focus on themes discussed, collaborations between people, and latent ideas. " +
+    "When escalations are present, link them with relates_to or blocks to relevant theme/meeting/work_unit/project/member/idea nodes using escalation:<uuid>. " +
+    "Do not invent escalation nodes. Prefer 5–25 enrichment nodes and 10–60 edges. Focus on themes discussed, collaborations between people, latent ideas, and escalation impact. " +
     "weight is 0–1. Use only people from the provided users list.";
 
   const userPrompt = `Build enrichment for this Bran team graph context:\n${JSON.stringify(context)}`;

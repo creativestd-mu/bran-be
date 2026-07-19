@@ -1,5 +1,9 @@
 import { prisma } from "../../lib/prisma";
-import { DEFAULT_LIMIT_WORK_UNITS } from "./graph.constants";
+import {
+  DEFAULT_LIMIT_ESCALATIONS,
+  DEFAULT_LIMIT_WORK_UNITS,
+  ESCALATION_UPDATE_BODY_CHARS
+} from "./graph.constants";
 
 export async function loadActiveUsers() {
   return prisma.user.findMany({
@@ -158,4 +162,99 @@ export async function loadGraphWorkUnits(options: {
     orderBy: { createdAt: "desc" },
     take: options.limit ?? DEFAULT_LIMIT_WORK_UNITS
   });
+}
+
+function truncateUpdateBody(body: string, max = ESCALATION_UPDATE_BODY_CHARS): string {
+  if (body.length <= max) return body;
+  return `${body.slice(0, max)}…`;
+}
+
+export async function loadGraphEscalations(options: {
+  from?: Date;
+  to?: Date;
+  limit?: number;
+}) {
+  const dateFilter =
+    options.from || options.to
+      ? {
+          OR: [
+            {
+              createdAt: {
+                ...(options.from ? { gte: options.from } : {}),
+                ...(options.to ? { lte: options.to } : {})
+              }
+            },
+            {
+              latestUpdateAt: {
+                ...(options.from ? { gte: options.from } : {}),
+                ...(options.to ? { lte: options.to } : {})
+              }
+            }
+          ]
+        }
+      : undefined;
+
+  const rows = await prisma.escalation.findMany({
+    where: dateFilter,
+    select: {
+      id: true,
+      title: true,
+      problemContext: true,
+      latestContext: true,
+      status: true,
+      priority: true,
+      slackChannelId: true,
+      slackMessageTs: true,
+      reporterSlackId: true,
+      reporterName: true,
+      reporterEmail: true,
+      latestUpdateAt: true,
+      resolvedAt: true,
+      aiSummary: true,
+      aiIssueDescription: true,
+      aiBlockers: true,
+      aiAnalyzedAt: true,
+      createdAt: true,
+      updates: {
+        select: {
+          authorEmail: true,
+          authorName: true,
+          body: true,
+          createdAt: true
+        },
+        orderBy: { createdAt: "asc" },
+        take: 20
+      }
+    },
+    orderBy: [
+      { status: "asc" },
+      { latestUpdateAt: "desc" },
+      { createdAt: "desc" }
+    ],
+    take: options.limit ?? DEFAULT_LIMIT_ESCALATIONS
+  });
+
+  // Prefer active statuses while still keeping resolved/closed in the window.
+  const activeRank = (status: string) => {
+    if (status === "open" || status === "in_progress" || status === "waiting") return 0;
+    if (status === "resolved") return 1;
+    return 2;
+  };
+
+  return rows
+    .slice()
+    .sort((a, b) => {
+      const rankDiff = activeRank(a.status) - activeRank(b.status);
+      if (rankDiff !== 0) return rankDiff;
+      const aTime = (a.latestUpdateAt ?? a.createdAt).getTime();
+      const bTime = (b.latestUpdateAt ?? b.createdAt).getTime();
+      return bTime - aTime;
+    })
+    .map((row) => ({
+      ...row,
+      updates: row.updates.map((update) => ({
+        ...update,
+        body: truncateUpdateBody(update.body)
+      }))
+    }));
 }

@@ -1,5 +1,6 @@
 import { HttpError } from "../../utils/httpError";
 import { getSlackUserInfo } from "../attendance/attendance.slack";
+import { invalidateBrainGraphCache } from "../graph/graph.cache";
 import { analyzeEscalationWithAi, isEscalationAiConfigured } from "./escalation.ai";
 import {
   ACTIVE_ESCALATION_STATUSES,
@@ -133,6 +134,7 @@ export async function refreshEscalationAiAnalysis(escalationId: string) {
     resolvedAt: resolvedAtForStatus(status)
   });
 
+  invalidateBrainGraphCache();
   return serializeEscalation(updated);
 }
 
@@ -204,6 +206,7 @@ async function ingestThreadReply(
     scheduleEscalationAiAnalysis(parent.id);
   }
 
+  invalidateBrainGraphCache();
   return { handled: true as const, escalationId: parent.id };
 }
 
@@ -259,6 +262,7 @@ async function ingestTopLevelEscalation(
     scheduleEscalationAiAnalysis(escalation.id);
   }
 
+  invalidateBrainGraphCache();
   return { handled: true as const, escalationId: escalation.id };
 }
 
@@ -400,6 +404,7 @@ export async function syncEscalationsFromSlack(days = 30): Promise<{
     Array.from({ length: Math.min(concurrency, uniqueIds.length) }, () => analyzeNext())
   );
 
+  invalidateBrainGraphCache();
   return {
     processed: messages.length,
     escalations,
@@ -513,6 +518,7 @@ export async function setEscalationStatus(input: {
     scheduleEscalationAiAnalysis(existing.id);
   }
 
+  invalidateBrainGraphCache();
   return serializeEscalation(updated);
 }
 
@@ -551,6 +557,7 @@ export async function addEscalationNote(input: {
 
   scheduleEscalationAiAnalysis(existing.id);
 
+  invalidateBrainGraphCache();
   return serializeEscalation(updated);
 }
 

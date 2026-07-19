@@ -14,13 +14,15 @@ export function buildBrainGraphCacheKey(parts: {
   to?: string;
   limitMeetings: number;
   includeSteps: boolean;
+  includeEscalations: boolean;
 }): string {
   return [
     parts.userId,
     parts.from ?? "",
     parts.to ?? "",
     String(parts.limitMeetings),
-    parts.includeSteps ? "1" : "0"
+    parts.includeSteps ? "1" : "0",
+    parts.includeEscalations ? "1" : "0"
   ].join("|");
 }
 

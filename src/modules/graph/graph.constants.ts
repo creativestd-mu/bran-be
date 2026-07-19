@@ -6,7 +6,8 @@ export const BRAIN_NODE_TYPES = [
   "project",
   "idea",
   "theme",
-  "collaboration"
+  "collaboration",
+  "escalation"
 ] as const;
 export type BrainNodeType = (typeof BRAIN_NODE_TYPES)[number];
 
@@ -25,7 +26,10 @@ export const BRAIN_EDGE_TYPES = [
   "relates_to",
   "collaborates_with",
   "similar_to",
-  "suggested_collaborator"
+  "suggested_collaborator",
+  "reported_by",
+  "updated_by",
+  "blocks"
 ] as const;
 export type BrainEdgeType = (typeof BRAIN_EDGE_TYPES)[number];
 
@@ -38,13 +42,16 @@ export const BRAIN_NODE_COLORS: Record<BrainNodeType, string> = {
   project: "#3DDC97",
   idea: "#FF6BCB",
   theme: "#A0AEC0",
-  collaboration: "#E2E8F0"
+  collaboration: "#E2E8F0",
+  escalation: "#E53E3E"
 };
 
 export const GRAPH_CACHE_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_LIMIT_MEETINGS = 40;
 export const DEFAULT_LIMIT_WORK_UNITS = 100;
+export const DEFAULT_LIMIT_ESCALATIONS = 40;
 export const TRANSCRIPT_EXCERPT_CHARS = 3000;
+export const ESCALATION_UPDATE_BODY_CHARS = 300;
 
 export function nodeId(type: BrainNodeType, entityId: string): string {
   return `${type}:${entityId}`;

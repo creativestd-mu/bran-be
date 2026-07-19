@@ -20,7 +20,7 @@ import {
   todayInIST
 } from "./attendance.dates";
 import { parseAttendanceMessage } from "./attendance.parser";
-import type { AttendanceListFilter, AttendanceTestRemindKind } from "./attendance.schemas";
+import type { AttendanceListFilter } from "./attendance.schemas";
 import {
   applyLeaveApproval,
   applyWfhApproval,
@@ -328,94 +328,6 @@ export async function sendRemindersForDate(
   }
 
   return { sent, skipped, errors };
-}
-
-/**
- * TEMPORARY test helper — force-send a reminder DM by kind, ignoring real entry state.
- * Does NOT mark reminderSentAt. Recipient is ONLY ATTENDANCE_TEST_EMAIL.
- */
-export async function sendTestReminder(input: {
-  kind: AttendanceTestRemindKind;
-}): Promise<{
-  kind: AttendanceTestRemindKind;
-  email: string;
-  slackUserId: string;
-  channel: string;
-  ts: string;
-}> {
-  const email = env.attendanceTestEmail;
-  if (!email) {
-    throw new HttpError(
-      503,
-      "ATTENDANCE_TEST_EMAIL is not set — configure it on Railway before using test reminders"
-    );
-  }
-
-  const slackUser = await lookupSlackUserByEmail(email);
-  if (!slackUser?.id) {
-    throw new HttpError(404, `No Slack user found for ${email}`);
-  }
-
-  const member = await findSlackMember(slackUser.id);
-  const employeeName =
-    member?.realName ?? member?.name ?? slackUser.profile?.real_name ?? slackUser.real_name ?? null;
-  const channelLabel = env.slackChannelName.replace(/^#/, "");
-  const date = todayInIST();
-
-  let text: string;
-  switch (input.kind) {
-    case "missing":
-      text = missingAttendanceReminder({ employeeName, channelLabel });
-      break;
-    case "wfh_pending":
-      text = pendingWfhApprovalReminder({ employeeName });
-      break;
-    case "leave_pending":
-      text = pendingLeaveApprovalReminder({ employeeName });
-      break;
-    case "wfh_approved":
-      text = approvalConfirmedReply({
-        slackUserId: slackUser.id,
-        label: "WFH",
-        date
-      });
-      break;
-    case "wfh_denied":
-      text = approvalDeniedReply({
-        slackUserId: slackUser.id,
-        label: "WFH",
-        date
-      });
-      break;
-    case "leave_approved":
-      text = approvalConfirmedReply({
-        slackUserId: slackUser.id,
-        label: "leave",
-        date
-      });
-      break;
-    case "leave_denied":
-      text = approvalDeniedReply({
-        slackUserId: slackUser.id,
-        label: "leave",
-        date
-      });
-      break;
-    default: {
-      const _exhaustive: never = input.kind;
-      throw new HttpError(400, `Unknown test remind kind: ${_exhaustive}`);
-    }
-  }
-
-  const posted = await sendDm(slackUser.id, `[TEST] ${text}`);
-  console.log(`[attendance] TEST remind ${input.kind} → ${email} (${slackUser.id})`);
-  return {
-    kind: input.kind,
-    email,
-    slackUserId: slackUser.id,
-    channel: posted.channel,
-    ts: posted.ts
-  };
 }
 
 export async function sendReminderForUser(

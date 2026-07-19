@@ -138,11 +138,6 @@ export const env = {
    * Empty = everyone (normal production). Set during testing so only listed people get nudged.
    */
   attendanceDmAllowlist: process.env.ATTENDANCE_DM_ALLOWLIST ?? "",
-  /**
-   * Sole recipient for POST /attendance/test-remind (temporary FE test buttons).
-   * Required when using test-remind; never sends to any other email.
-   */
-  attendanceTestEmail: (process.env.ATTENDANCE_TEST_EMAIL ?? "").trim().toLowerCase(),
   attendanceCronEnabled: (process.env.ATTENDANCE_CRON_ENABLED ?? "true").toLowerCase() !== "false",
   slackEscalationChannelName: process.env.SLACK_ESCALATION_CHANNEL_NAME ?? "escalations",
   slackEscalationChannelId: process.env.SLACK_ESCALATION_CHANNEL_ID ?? "",

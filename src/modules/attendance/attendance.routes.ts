@@ -6,7 +6,6 @@ import {
   attendanceCheckBodySchema,
   attendanceDateQuerySchema,
   attendanceRemindBodySchema,
-  attendanceTestRemindBodySchema,
   listPersonStatsQuerySchema,
   setPersonStatsCountsSchema,
   updateAttendancePolicySchema,
@@ -25,7 +24,6 @@ import {
   runEtaCheck,
   sendReminderForUser,
   sendRemindersForDate,
-  sendTestReminder,
   setAttendancePersonAction,
   setAttendancePersonCounts,
   updateMemberPod
@@ -80,21 +78,6 @@ attendanceRouter.post("/remind", async (req, res, next) => {
       ? await sendReminderForUser(date, body.slackUserId)
       : await sendRemindersForDate(date);
     res.status(200).json({ success: true, data: result });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * POST /attendance/test-remind — TEMPORARY force-send reminder DM by kind.
- * Ignores real entry state; does not mark reminderSentAt.
- * Always DMs ATTENDANCE_TEST_EMAIL only (admin/CoS).
- */
-attendanceRouter.post("/test-remind", async (req, res, next) => {
-  try {
-    const body = attendanceTestRemindBodySchema.parse(req.body ?? {});
-    const data = await sendTestReminder(body);
-    res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
   }

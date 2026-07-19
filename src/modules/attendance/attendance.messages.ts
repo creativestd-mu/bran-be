@@ -16,14 +16,7 @@ export function missingAttendanceReminder(input: {
   return [
     `Hey ${name} 👋`,
     "",
-    `Hope your morning's going okay — just a gentle reminder that we don't have your attendance note in #${input.channelLabel} yet.`,
-    "",
-    "Whenever you can, drop a quick update there:",
-    "• `eta 12:30` — if you're coming to the office",
-    "• `wfh` — if you're working from home",
-    "• `leave` / `comp off` — if you're out today",
-    "",
-    "Ideally before 11:30am IST. Thanks."
+    `Hope your morning's going okay — just a gentle reminder that we don't have your attendance note in #${input.channelLabel} yet.`
   ].join("\n");
 }
 

@@ -88,7 +88,7 @@ attendanceRouter.post("/remind", async (req, res, next) => {
 /**
  * POST /attendance/test-remind — TEMPORARY force-send reminder DM by kind.
  * Ignores real entry state; does not mark reminderSentAt.
- * Still gated by ATTENDANCE_DM_ALLOWLIST + admin/CoS.
+ * Always DMs ATTENDANCE_TEST_EMAIL only (admin/CoS).
  */
 attendanceRouter.post("/test-remind", async (req, res, next) => {
   try {

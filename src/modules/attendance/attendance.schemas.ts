@@ -50,9 +50,8 @@ export const attendanceTestRemindKinds = [
 export type AttendanceTestRemindKind = (typeof attendanceTestRemindKinds)[number];
 
 export const attendanceTestRemindBodySchema = z.object({
-  kind: z.enum(attendanceTestRemindKinds),
-  /** Defaults to first ATTENDANCE_DM_ALLOWLIST email when omitted. */
-  email: z.string().email().optional()
+  kind: z.enum(attendanceTestRemindKinds)
+  // Recipient is always ATTENDANCE_TEST_EMAIL from env — FE must not pass email.
 });
 
 export const updateMemberPodSchema = z.object({

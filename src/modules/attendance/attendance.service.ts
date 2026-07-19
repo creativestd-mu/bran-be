@@ -332,11 +332,10 @@ export async function sendRemindersForDate(
 
 /**
  * TEMPORARY test helper — force-send a reminder DM by kind, ignoring real entry state.
- * Does NOT mark reminderSentAt. Still respects ATTENDANCE_DM_ALLOWLIST.
+ * Does NOT mark reminderSentAt. Recipient is ONLY ATTENDANCE_TEST_EMAIL.
  */
 export async function sendTestReminder(input: {
   kind: AttendanceTestRemindKind;
-  email?: string;
 }): Promise<{
   kind: AttendanceTestRemindKind;
   email: string;
@@ -344,18 +343,11 @@ export async function sendTestReminder(input: {
   channel: string;
   ts: string;
 }> {
-  const allowlist = attendanceDmAllowlist();
-  const email = (input.email?.trim() || allowlist[0] || "").toLowerCase();
+  const email = env.attendanceTestEmail;
   if (!email) {
     throw new HttpError(
-      400,
-      "email is required when ATTENDANCE_DM_ALLOWLIST is empty"
-    );
-  }
-  if (!attendanceDmAllowed(email)) {
-    throw new HttpError(
-      403,
-      `Attendance DMs are restricted to ATTENDANCE_DM_ALLOWLIST (blocked ${email})`
+      503,
+      "ATTENDANCE_TEST_EMAIL is not set — configure it on Railway before using test reminders"
     );
   }
 

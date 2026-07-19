@@ -36,6 +36,25 @@ export const attendanceRemindBodySchema = z.object({
   slackUserId: z.string().min(1).optional()
 });
 
+/** Temporary force-send reminder kinds for FE test buttons (ignore real entry state). */
+export const attendanceTestRemindKinds = [
+  "missing",
+  "wfh_pending",
+  "leave_pending",
+  "wfh_approved",
+  "wfh_denied",
+  "leave_approved",
+  "leave_denied"
+] as const;
+
+export type AttendanceTestRemindKind = (typeof attendanceTestRemindKinds)[number];
+
+export const attendanceTestRemindBodySchema = z.object({
+  kind: z.enum(attendanceTestRemindKinds),
+  /** Defaults to first ATTENDANCE_DM_ALLOWLIST email when omitted. */
+  email: z.string().email().optional()
+});
+
 export const updateMemberPodSchema = z.object({
   pod: z.enum(["default", "production"])
 });

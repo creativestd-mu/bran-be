@@ -25,6 +25,7 @@ JWT attendance APIs (`/api/eta/*`, `/:lang/v1/attendance/*`) are restricted to r
 ## Attendance rules
 
 - Reminders: auto 11:00 AM IST DMs are **disabled** (`AUTO_REMINDERS_ENABLED=false`) until explicitly re-enabled.
+- Test DM allowlist: set `ATTENDANCE_DM_ALLOWLIST=abhishek.ghosh1@mastersunion.org` so Slack attendance DMs / WFH manager emails only go to that person; clear the var to restore normal behavior.
 - Late submission: posts at/after **11:30 AM IST**.
 - User modal: `GET /api/eta/stats/:slackUserId/detail` (approved + unapproved WFH/leave + ETA).
 - Set counters: `POST /api/eta/stats/:slackUserId/set-counts` (exact WFH/leave approved/denied/etc; history kept).

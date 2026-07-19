@@ -133,6 +133,11 @@ export const env = {
   slackChannelId: process.env.SLACK_CHANNEL_ID ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",
   attendanceEmailDomain: process.env.ATTENDANCE_EMAIL_DOMAIN ?? "mastersunion.org",
+  /**
+   * Comma-separated emails allowed to receive attendance Slack DMs.
+   * Empty = everyone (normal production). Set during testing so only listed people get nudged.
+   */
+  attendanceDmAllowlist: process.env.ATTENDANCE_DM_ALLOWLIST ?? "",
   attendanceCronEnabled: (process.env.ATTENDANCE_CRON_ENABLED ?? "true").toLowerCase() !== "false",
   slackEscalationChannelName: process.env.SLACK_ESCALATION_CHANNEL_NAME ?? "escalations",
   slackEscalationChannelId: process.env.SLACK_ESCALATION_CHANNEL_ID ?? "",

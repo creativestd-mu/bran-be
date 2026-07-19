@@ -74,6 +74,12 @@ async function maybeNotifyWfhManager(input: {
   rawMessage?: string | null;
 }): Promise<void> {
   if (input.recordType !== "wfh" || !input.userEmail) return;
+  if (!attendanceDmAllowed(input.userEmail)) {
+    console.log(
+      `[attendance] WFH manager notify skipped — ${input.userEmail} not in ATTENDANCE_DM_ALLOWLIST`
+    );
+    return;
+  }
 
   try {
     const result = await notifyWfhToManager({
@@ -99,6 +105,21 @@ function emailAllowed(email: string | null | undefined): boolean {
   if (!email) return false;
   const domain = env.attendanceEmailDomain.toLowerCase().replace(/^@/, "");
   return email.toLowerCase().endsWith(`@${domain}`);
+}
+
+/** When ATTENDANCE_DM_ALLOWLIST is set, only those emails get Slack DMs / WFH manager emails. */
+function attendanceDmAllowlist(): string[] {
+  return env.attendanceDmAllowlist
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function attendanceDmAllowed(email: string | null | undefined): boolean {
+  const allowlist = attendanceDmAllowlist();
+  if (allowlist.length === 0) return true;
+  if (!email) return false;
+  return allowlist.includes(email.trim().toLowerCase());
 }
 
 function displayName(user: {
@@ -223,12 +244,21 @@ export async function sendReminder(
     recordType: string | null;
     wfhApprovalState?: string | null;
     leaveApprovalState?: string | null;
+    userEmail?: string | null;
   }
 ): Promise<{ channel: string; ts: string }> {
   const channelLabel = env.slackChannelName.replace(/^#/, "");
   const member = await findSlackMember(slackUserId);
   const slackUser = member ? null : await getSlackUserInfo(slackUserId);
   const employeeName = member?.realName ?? member?.name ?? slackUser?.profile?.real_name ?? null;
+  const email = member?.email ?? slackUser?.profile?.email ?? entry.userEmail ?? null;
+
+  if (!attendanceDmAllowed(email)) {
+    throw new HttpError(
+      403,
+      `Attendance DMs are restricted to ATTENDANCE_DM_ALLOWLIST (blocked ${email ?? slackUserId})`
+    );
+  }
 
   const reminderKind =
     entry.status === "missing"
@@ -281,6 +311,12 @@ export async function sendRemindersForDate(
       continue;
     }
 
+    const email = member?.email ?? entry.userEmail ?? null;
+    if (!attendanceDmAllowed(email)) {
+      skipped += 1;
+      continue;
+    }
+
     try {
       const posted = await sendReminder(entry.slackUserId, entry);
       await markReminderSent(entry.id, { channelId: posted.channel, slackTs: posted.ts });
@@ -312,6 +348,14 @@ export async function sendReminderForUser(
 
   const member = await findSlackMember(slackUserId);
   if (member?.pod === "production") {
+    return { sent: 0, skipped: 1, errors: [] };
+  }
+
+  const email = member?.email ?? entry.userEmail ?? null;
+  if (!attendanceDmAllowed(email)) {
+    console.log(
+      `[attendance] DM skipped — ${email ?? slackUserId} not in ATTENDANCE_DM_ALLOWLIST`
+    );
     return { sent: 0, skipped: 1, errors: [] };
   }
 

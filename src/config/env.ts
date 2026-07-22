@@ -74,6 +74,15 @@ export const env = {
     process.env.GOOGLE_CALENDAR_SCOPES ??
       "https://www.googleapis.com/auth/calendar.events.readonly,openid,email,profile"
   ),
+  googleGmailOAuthRedirectUri:
+    process.env.GOOGLE_GMAIL_OAUTH_REDIRECT_URI ??
+    "http://localhost:3000/oauth/google/gmail/callback",
+  googleGmailScopes: parseCsv(
+    process.env.GOOGLE_GMAIL_SCOPES ??
+      "https://www.googleapis.com/auth/gmail.readonly,openid,email,profile"
+  ),
+  /** 64-char hex (32 bytes) preferred; any string is SHA-256 hashed to a key. */
+  tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY ?? "",
   recallApiKey: process.env.RECALL_API_KEY ?? "",
   recallApiRegion: process.env.RECALL_API_REGION ?? "us-east-1",
   recallWebhookSecret: process.env.RECALL_WEBHOOK_SECRET ?? "",
@@ -144,6 +153,10 @@ export const env = {
   meetingsSyncCronEnabled:
     (process.env.MEETINGS_SYNC_CRON_ENABLED ?? "true").toLowerCase() !== "false",
   meetingsSyncIntervalMs: Number(process.env.MEETINGS_SYNC_INTERVAL_MS ?? 5 * 60 * 1000),
+  gmailSyncCronEnabled: (process.env.GMAIL_SYNC_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  gmailSyncIntervalMs: Number(process.env.GMAIL_SYNC_INTERVAL_MS ?? 5 * 60 * 1000),
+  gmailSyncDays: Number(process.env.GMAIL_SYNC_DAYS ?? 7),
+  gmailSyncMaxMessages: Number(process.env.GMAIL_SYNC_MAX_MESSAGES ?? 50),
   escalationCronEnabled:
     (process.env.ESCALATION_CRON_ENABLED ?? "true").toLowerCase() !== "false"
 };

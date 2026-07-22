@@ -95,6 +95,7 @@ model User {
   nameAssignmentPreferences NameAssignmentPreference[] @relation("NamePrefOwner")
   preferredNameAssignments  NameAssignmentPreference[] @relation("NamePrefTarget")
   calendarConnection        CalendarConnection?
+  gmailConnection           GmailConnection?
   organizedMeetings         Meeting[]               @relation("MeetingOrganizer")
   attendanceStats           AttendancePersonStats[] @relation("AttendanceStatsUser")
   attendanceActionsTaken    AttendancePersonStats[] @relation("AttendanceStatsActionBy")
@@ -418,6 +419,53 @@ model Meeting {
   @@index([status])
   @@index([calendarEventId])
   @@index([voiceRecordingId])
+}
+
+// ── Gmail Integration ───────────────────────────────────────
+
+model GmailConnection {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  provider      String    @default("google")
+  oauthEmail    String?   @db.VarChar(320)
+  refreshToken  String    @db.Text
+  historyId     String?   @db.VarChar(100)
+  lastSyncedAt  DateTime?
+  status        String    @default("CONNECTED") // CONNECTED | DISCONNECTED | ERROR
+  errorMessage  String?   @db.Text
+  connectedAt   DateTime  @default(now())
+  disconnectedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  messages GmailMessage[]
+
+  @@index([status])
+  @@index([oauthEmail])
+}
+
+model GmailMessage {
+  id               String   @id @default(uuid())
+  connectionId     String
+  gmailMessageId   String   @db.VarChar(200)
+  threadId         String?  @db.VarChar(200)
+  subject          String?  @db.VarChar(1000)
+  fromAddress      String?  @db.VarChar(500)
+  toAddresses      String?  @db.Text
+  snippet          String?  @db.Text
+  bodyText         String?  @db.Text
+  labelIds         String?  @db.Text
+  receivedAt       DateTime?
+  isRead           Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  connection GmailConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([connectionId, gmailMessageId])
+  @@index([connectionId, receivedAt])
+  @@index([connectionId, createdAt])
 }
 
 // ── Work Units ──────────────────────────────────────────────

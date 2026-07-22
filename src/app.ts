@@ -16,6 +16,7 @@ import {
 import { escalationCronHandler } from "./modules/escalation/escalation.cron";
 import { handleCalendarOAuthCallback } from "./modules/meetings/meetings.service";
 import { recallWebhookHandler } from "./modules/meetings/meetings.webhook";
+import { handleGmailOAuthCallback } from "./modules/gmail/gmail.service";
 import { apiRouter } from "./routes";
 
 /** Bump when shipping route-surface changes so deploys are easy to verify. */
@@ -56,6 +57,10 @@ app.get("/api/cron/escalation-check", escalationCronHandler);
 
 app.get("/oauth/google/calendar/callback", (req, res) => {
   void handleCalendarOAuthCallback(req, res);
+});
+
+app.get("/oauth/google/gmail/callback", (req, res) => {
+  void handleGmailOAuthCallback(req, res);
 });
 
 app.use(helmet());

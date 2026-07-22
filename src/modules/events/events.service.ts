@@ -9,6 +9,12 @@ import {
 } from "./events.constants";
 import { clusterSourcesIntoEvents, isEventsAiConfigured } from "./events.ai";
 import {
+  buildDatedEventSummary,
+  eventDateRangeFromCandidates,
+  summaryHasDatedTimeline,
+  updatesToSummaryCandidates
+} from "./events.summary";
+import {
   createOrgEvent,
   createOrgEventUpdate,
   createUpdateFromCandidate,
@@ -35,6 +41,22 @@ function parseOptionalDate(value?: string | null): Date | null | undefined {
   return date;
 }
 
+async function refreshAutoEventSummary(eventId: string): Promise<void> {
+  const event = await findOrgEventById(eventId);
+  if (!event || event.kind !== "AUTO" || !event.updates?.length) return;
+
+  const candidates = updatesToSummaryCandidates(event.updates);
+  if (candidates.length === 0) return;
+
+  const { startsAt, endsAt } = eventDateRangeFromCandidates(candidates);
+  await updateOrgEvent(eventId, {
+    aiSummary: buildDatedEventSummary(candidates),
+    startsAt,
+    endsAt,
+    aiAnalyzedAt: new Date()
+  });
+}
+
 export async function listEvents(query: {
   status?: OrgEventStatus;
   kind?: "MANUAL" | "AUTO";
@@ -53,10 +75,25 @@ export async function listEvents(query: {
 }
 
 export async function getEventDetail(id: string) {
-  const event = await findOrgEventById(id);
+  let event = await findOrgEventById(id);
   if (!event) {
     throw new HttpError(404, "Event not found");
   }
+
+  // Backfill older AUTO events whose summary predates dated timelines.
+  if (
+    event.kind === "AUTO" &&
+    event.updates?.length &&
+    !summaryHasDatedTimeline(event.aiSummary)
+  ) {
+    await refreshAutoEventSummary(id);
+    event = await findOrgEventById(id);
+  }
+
+  if (!event) {
+    throw new HttpError(404, "Event not found");
+  }
+
   return serializeOrgEvent(event);
 }
 
@@ -139,6 +176,9 @@ export async function attachSourceToEvent(
   }
 
   await createUpdateFromCandidate(eventId, candidate);
+  if (event.kind === "AUTO") {
+    await refreshAutoEventSummary(eventId);
+  }
   return getEventDetail(eventId);
 }
 
@@ -262,13 +302,16 @@ export async function detectEventsFromSources(options?: {
     const latest = clusterCandidates.reduce((max, item) =>
       item.occurredAt > max ? item.occurredAt : max
     , clusterCandidates[0].occurredAt);
+    const { startsAt, endsAt } = eventDateRangeFromCandidates(clusterCandidates);
 
     const event = await createOrgEvent({
       title: cluster.title,
       description: cluster.description,
       kind: "AUTO",
       status: cluster.status,
-      aiSummary: cluster.summary,
+      startsAt,
+      endsAt,
+      aiSummary: buildDatedEventSummary(clusterCandidates, cluster.summary),
       aiAnalyzedAt: new Date(),
       confidence: cluster.confidence,
       latestUpdateAt: latest

@@ -5,9 +5,10 @@ import {
   ORG_EVENT_STATUSES
 } from "./events.constants";
 
+// NOTE: MEETING is intentionally excluded — Google Meet calls must not be
+// turned into org events (neither auto-detected nor manually attached).
 const ATTACHABLE_SOURCE_TYPES = [
   "GMAIL",
-  "MEETING",
   "ESCALATION",
   "ATTENDANCE",
   "WORK_UNIT"

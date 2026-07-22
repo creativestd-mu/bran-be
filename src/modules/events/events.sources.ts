@@ -70,30 +70,8 @@ export async function loadUnattachedSourceCandidates(options?: {
     }
   }
 
-  if (!filter || filter === "MEETING") {
-    const meetings = await prisma.meeting.findMany({
-      where: { createdAt: { gte: since } },
-      orderBy: { createdAt: "desc" },
-      take: maxCandidates,
-      include: {
-        organizer: { select: { id: true, name: true, email: true } },
-        voiceRecording: { select: { transcript: true } }
-      }
-    });
-    for (const meeting of meetings) {
-      const transcript = meeting.voiceRecording?.transcript?.slice(0, 500) ?? "";
-      push({
-        sourceType: "MEETING",
-        sourceId: meeting.id,
-        title: meeting.title ?? meeting.meetingUrl,
-        body: transcript || `Meet status: ${meeting.status}`,
-        actorUserId: meeting.organizerUserId,
-        actorName: meeting.organizer.name ?? meeting.organizer.email,
-        occurredAt: meeting.startTime ?? meeting.createdAt,
-        metadata: { status: meeting.status, meetingUrl: meeting.meetingUrl }
-      });
-    }
-  }
+  // MEETING sources are intentionally NOT loaded — Google Meet calls must never
+  // be clustered into or attached as org events.
 
   if (!filter || filter === "ESCALATION") {
     const escalations = await prisma.escalation.findMany({
@@ -198,22 +176,7 @@ export async function resolveSourceCandidate(
         occurredAt: message.receivedAt ?? message.createdAt
       };
     }
-    case "MEETING": {
-      const meeting = await prisma.meeting.findUnique({
-        where: { id: sourceId },
-        include: { organizer: { select: { id: true, name: true, email: true } } }
-      });
-      if (!meeting) return null;
-      return {
-        sourceType,
-        sourceId: meeting.id,
-        title: meeting.title ?? meeting.meetingUrl,
-        body: `Meet status: ${meeting.status}`,
-        actorUserId: meeting.organizerUserId,
-        actorName: meeting.organizer.name ?? meeting.organizer.email,
-        occurredAt: meeting.startTime ?? meeting.createdAt
-      };
-    }
+    // MEETING intentionally unsupported — meetings can't be attached as events.
     case "ESCALATION": {
       const escalation = await prisma.escalation.findUnique({ where: { id: sourceId } });
       if (!escalation) return null;

@@ -122,7 +122,9 @@ export async function clusterSourcesIntoEvents(
     "2) sourceKeys MUST be copied exactly from the provided keys (SOURCE_TYPE:id). " +
     "3) Do not invent keys. Leave noisy/unrelated singles unclustered. " +
     "4) Prefer precise titles (what/when) over vague ones. " +
-    "5) confidence is 0-1.";
+    "5) confidence is 0-1. " +
+    "6) summary is optional — a short overview only (1–3 sentences). " +
+    "Do NOT repeat a dated timeline in summary; dates are added separately from source timestamps.";
 
   const userPrompt = [
     "Unattached activity candidates:",

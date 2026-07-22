@@ -12,6 +12,7 @@ import {
   buildDatedEventSummary,
   eventDateRangeFromCandidates,
   summaryHasDatedTimeline,
+  summaryLooksTruncated,
   updatesToSummaryCandidates
 } from "./events.summary";
 import {
@@ -80,11 +81,11 @@ export async function getEventDetail(id: string) {
     throw new HttpError(404, "Event not found");
   }
 
-  // Backfill older AUTO events whose summary predates dated timelines.
+  // Backfill older AUTO events whose summary predates dated timelines or was truncated.
   if (
     event.kind === "AUTO" &&
     event.updates?.length &&
-    !summaryHasDatedTimeline(event.aiSummary)
+    (!summaryHasDatedTimeline(event.aiSummary) || summaryLooksTruncated(event.aiSummary))
   ) {
     await refreshAutoEventSummary(id);
     event = await findOrgEventById(id);

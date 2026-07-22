@@ -20,10 +20,14 @@ function formatSummaryDate(instant: Date): string {
   });
 }
 
-function oneLine(text: string, maxLen = 140): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLen) return normalized;
-  return `${normalized.slice(0, maxLen - 1)}…`;
+function normalizeSummaryText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+export function summaryLooksTruncated(summary: string | null | undefined): boolean {
+  if (!summary?.trim()) return false;
+  // Legacy summaries cut off by oneLine() ended with … or ...
+  return /…|\.\.\.(?:\s|$)/.test(summary);
 }
 
 /**
@@ -42,9 +46,9 @@ export function buildDatedEventSummary(
     .map((candidate) => {
       const when = formatSummaryDate(candidate.occurredAt);
       const source = SOURCE_LABELS[candidate.sourceType] ?? candidate.sourceType;
-      const title = oneLine(candidate.title, 120);
+      const title = normalizeSummaryText(candidate.title);
       const actor = candidate.actorName ? ` · ${candidate.actorName}` : "";
-      const detail = candidate.body ? ` — ${oneLine(candidate.body)}` : "";
+      const detail = candidate.body ? ` — ${normalizeSummaryText(candidate.body)}` : "";
       return `• ${when} · ${source} · ${title}${actor}${detail}`;
     })
     .join("\n");

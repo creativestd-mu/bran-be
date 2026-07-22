@@ -28,6 +28,7 @@ import { utilitiesRouter } from "../../../modules/utilities/utilities.routes";
 import { inventoryRouter } from "../../../modules/inventory/inventory.routes";
 import { meetingsRouter } from "../../../modules/meetings/meetings.routes";
 import { gmailRouter } from "../../../modules/gmail/gmail.routes";
+import { eventsRouter } from "../../../modules/events/events.routes";
 import { attendanceRouter } from "../../../modules/attendance/attendance.routes";
 import { graphRouter } from "../../../modules/graph/graph.routes";
 
@@ -61,6 +62,7 @@ v1Router.use("/utilities", utilitiesRouter);
 v1Router.use("/inventory", inventoryRouter);
 v1Router.use("/meetings", meetingsRouter);
 v1Router.use("/gmail", gmailRouter);
+v1Router.use("/events", eventsRouter);
 v1Router.use("/attendance", attendanceRouter);
 v1Router.use("/graph", graphRouter);
 

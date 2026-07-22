@@ -157,6 +157,13 @@ export const env = {
   gmailSyncIntervalMs: Number(process.env.GMAIL_SYNC_INTERVAL_MS ?? 5 * 60 * 1000),
   gmailSyncDays: Number(process.env.GMAIL_SYNC_DAYS ?? 7),
   gmailSyncMaxMessages: Number(process.env.GMAIL_SYNC_MAX_MESSAGES ?? 50),
+  eventsDetectCronEnabled:
+    (process.env.EVENTS_DETECT_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  // Poll frequently for near-real-time detection; the LLM only runs when the
+  // unattached-source set actually changes, so a short interval stays cheap.
+  eventsDetectIntervalMs: Number(process.env.EVENTS_DETECT_INTERVAL_MS ?? 5 * 60 * 1000),
+  eventsDetectDays: Number(process.env.EVENTS_DETECT_DAYS ?? 14),
+  eventsDetectMaxCandidates: Number(process.env.EVENTS_DETECT_MAX_CANDIDATES ?? 80),
   escalationCronEnabled:
     (process.env.ESCALATION_CRON_ENABLED ?? "true").toLowerCase() !== "false"
 };

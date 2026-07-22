@@ -20,6 +20,44 @@ function lookbackDate(days: number): Date {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
+const MEETING_TRANSCRIPT_BODY_MAX = 2000;
+
+function hasUsableTranscript(transcript: string | null | undefined): boolean {
+  return Boolean(transcript?.trim());
+}
+
+type MeetingWithTranscript = {
+  id: string;
+  title: string | null;
+  meetingUrl: string;
+  status: string;
+  startTime: Date | null;
+  createdAt: Date;
+  organizerUserId: string;
+  organizer: { name: string; email: string };
+  voiceRecording: { transcript: string | null } | null;
+};
+
+function meetingTranscriptCandidate(meeting: MeetingWithTranscript): SourceCandidate | null {
+  const transcript = meeting.voiceRecording?.transcript?.trim();
+  if (!hasUsableTranscript(transcript)) return null;
+
+  return {
+    sourceType: "MEETING",
+    sourceId: meeting.id,
+    title: meeting.title ?? "Meeting transcript",
+    body: transcript!.slice(0, MEETING_TRANSCRIPT_BODY_MAX),
+    actorUserId: meeting.organizerUserId,
+    actorName: meeting.organizer.name ?? meeting.organizer.email,
+    occurredAt: meeting.startTime ?? meeting.createdAt,
+    metadata: {
+      status: meeting.status,
+      meetingUrl: meeting.meetingUrl,
+      hasTranscript: true
+    }
+  };
+}
+
 async function attachedSourceKeys(): Promise<Set<string>> {
   const rows = await prisma.orgEventUpdate.findMany({
     where: { sourceType: { not: "MANUAL" } },
@@ -70,8 +108,30 @@ export async function loadUnattachedSourceCandidates(options?: {
     }
   }
 
-  // MEETING sources are intentionally NOT loaded — Google Meet calls must never
-  // be clustered into or attached as org events.
+  // Only meetings with a processed transcript — bare Meet calls are not events.
+  if (!filter || filter === "MEETING") {
+    const meetings = await prisma.meeting.findMany({
+      where: {
+        createdAt: { gte: since },
+        voiceRecordingId: { not: null },
+        voiceRecording: {
+          is: {
+            transcript: { not: null }
+          }
+        }
+      },
+      orderBy: { createdAt: "desc" },
+      take: maxCandidates,
+      include: {
+        organizer: { select: { id: true, name: true, email: true } },
+        voiceRecording: { select: { transcript: true } }
+      }
+    });
+    for (const meeting of meetings) {
+      const candidate = meetingTranscriptCandidate(meeting);
+      if (candidate) push(candidate);
+    }
+  }
 
   if (!filter || filter === "ESCALATION") {
     const escalations = await prisma.escalation.findMany({
@@ -176,7 +236,17 @@ export async function resolveSourceCandidate(
         occurredAt: message.receivedAt ?? message.createdAt
       };
     }
-    // MEETING intentionally unsupported — meetings can't be attached as events.
+    case "MEETING": {
+      const meeting = await prisma.meeting.findUnique({
+        where: { id: sourceId },
+        include: {
+          organizer: { select: { id: true, name: true, email: true } },
+          voiceRecording: { select: { transcript: true } }
+        }
+      });
+      if (!meeting) return null;
+      return meetingTranscriptCandidate(meeting);
+    }
     case "ESCALATION": {
       const escalation = await prisma.escalation.findUnique({ where: { id: sourceId } });
       if (!escalation) return null;

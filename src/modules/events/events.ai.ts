@@ -121,9 +121,10 @@ export async function clusterSourcesIntoEvents(
     "1) Only create a cluster when 2+ items clearly refer to the same real-world event/topic. " +
     "2) sourceKeys MUST be copied exactly from the provided keys (SOURCE_TYPE:id). " +
     "3) Do not invent keys. Leave noisy/unrelated singles unclustered. " +
-    "4) Prefer precise titles (what/when) over vague ones. " +
-    "5) confidence is 0-1. " +
-    "6) summary is optional — a short overview only (1–3 sentences). " +
+    "4) MEETING keys are transcript excerpts only — never treat a bare call as an event. " +
+    "5) Prefer precise titles (what/when) over vague ones. " +
+    "6) confidence is 0-1. " +
+    "7) summary is optional — a short overview only (1–3 sentences). " +
     "Do NOT repeat a dated timeline in summary; dates are added separately from source timestamps.";
 
   const userPrompt = [

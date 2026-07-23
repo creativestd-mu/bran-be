@@ -30,7 +30,7 @@ const MEETING_NOISE_PHRASE_RE =
 const MEETING_NOISE_SENDER_RE =
   /(calendar-notification@google\.com|@resource\.calendar\.google\.com|read\.ai|otter\.ai|fireflies|fathom\.video|fathom\.ai|tldv|meetgeek|@akiflow)/i;
 
-function isMeetingNoiseEmail(input: {
+export function isMeetingNoiseEmail(input: {
   subject?: string | null;
   fromAddress?: string | null;
   snippet?: string | null;

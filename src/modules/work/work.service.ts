@@ -1,4 +1,5 @@
 import { HttpError } from "../../utils/httpError";
+import { env } from "../../config/env";
 import { parseApiDateBoundary } from "../../utils/timezone";
 import { indexWorkUnitForSearch } from "../ai/ai.service";
 import {
@@ -12,7 +13,7 @@ import {
   formatWorkUnitForResponse,
   resolveStatusAndClosedAt
 } from "./work.due-fields";
-import { extractWorkUnitsFromTranscript } from "./work.extraction";
+import { extractWorkUnitsFromText, extractWorkUnitsFromTranscript, isWorkExtractionAiConfigured, type WorkExtractionTextKind } from "./work.extraction";
 import { resolveProjectIdFromExtraction } from "./work.project-matching";
 import {
   learnAssignmentPreference,
@@ -38,6 +39,12 @@ import { prisma } from "../../lib/prisma";
 import {
   findVoiceRecordingById
 } from "../voice-recording/voice-recording.repository";
+import type { WorkIngestSourceType } from "./work.constants";
+import { hasSimilarOpenWorkUnit } from "./work.dedup";
+import { loadGmailWorkIngestCandidates } from "./work.sources";
+import { loadSlackWorkIngestCandidates } from "./work.slack";
+import { findWorkUnitSource, recordWorkUnitSource } from "./work.source-ledger";
+import type { WorkIngestCandidate } from "./work.sources";
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -247,16 +254,36 @@ async function buildAssignmentContext(userId: string) {
 export async function createWorkUnitsFromRecording(
   userId: string,
   recording: { id: string },
-  transcript: string
+  transcript: string,
+  options?: {
+    sourceType?: WorkIngestSourceType;
+    sourceId?: string;
+  }
 ) {
-  const { availableProjects, availableUsers, resolutionContext } =
-    await buildAssignmentContext(userId);
-
-  const extracted = await extractWorkUnitsFromTranscript(transcript, {
-    availableProjects,
-    availableUsers
+  return ingestWorkFromText({
+    defaultOwnerUserId: userId,
+    text: transcript,
+    extractionKind: "transcript",
+    audioRecordingId: recording.id,
+    sourceType: options?.sourceType,
+    sourceId: options?.sourceId,
+    useLedger: Boolean(options?.sourceType && options?.sourceId),
+    throwOnExtractError: true
   });
+}
 
+async function persistExtractedUnits(
+  defaultOwnerUserId: string,
+  extracted: Awaited<ReturnType<typeof extractWorkUnitsFromTranscript>>,
+  context: Awaited<ReturnType<typeof buildAssignmentContext>>,
+  meta: {
+    transcriptOrText: string;
+    audioRecordingId?: string | null;
+    sourceType?: WorkIngestSourceType;
+    sourceId?: string;
+  }
+) {
+  const { availableProjects, availableUsers, resolutionContext } = context;
   const workUnits = [];
 
   for (const unit of extracted) {
@@ -264,14 +291,19 @@ export async function createWorkUnitsFromRecording(
       projectName: unit.projectName,
       title: unit.title,
       context: unit.context,
-      transcript,
+      transcript: meta.transcriptOrText,
       projects: availableProjects
     });
 
     const assignedToUserId =
       resolveUserIdFromName(unit.assigneeName, availableUsers, resolutionContext) ?? null;
+    const ownerUserId = assignedToUserId ?? defaultOwnerUserId;
 
-    const created = await createWorkUnit(userId, {
+    if (await hasSimilarOpenWorkUnit(ownerUserId, unit.title)) {
+      continue;
+    }
+
+    const created = await createWorkUnit(defaultOwnerUserId, {
       title: unit.title,
       context: unit.context,
       status: unit.status,
@@ -280,7 +312,9 @@ export async function createWorkUnitsFromRecording(
       assignedToUserId,
       assigneeSpokenName: unit.assigneeName ?? null,
       sourceExcerpt: unit.sourceExcerpt ?? null,
-      audioRecordingId: recording.id,
+      audioRecordingId: meta.audioRecordingId ?? null,
+      sourceType: meta.sourceType,
+      sourceId: meta.sourceId,
       steps: unit.steps.map((step) => ({
         description: step.description,
         deadline: step.deadline,
@@ -292,11 +326,148 @@ export async function createWorkUnitsFromRecording(
     workUnits.push(created);
   }
 
+  return workUnits;
+}
+
+async function ingestWorkFromText(input: {
+  defaultOwnerUserId: string;
+  text: string;
+  extractionKind: WorkExtractionTextKind;
+  audioRecordingId?: string | null;
+  sourceType?: WorkIngestSourceType;
+  sourceId?: string;
+  useLedger: boolean;
+  throwOnExtractError: boolean;
+}) {
+  if (input.useLedger && input.sourceType && input.sourceId) {
+    const existing = await findWorkUnitSource(input.sourceType, input.sourceId);
+    if (existing) {
+      return {
+        transcript: input.text,
+        workUnits: [],
+        taggingMappings: [],
+        skippedLedger: true as const
+      };
+    }
+  }
+
+  const assignmentContext = await buildAssignmentContext(input.defaultOwnerUserId);
+
+  let extracted: Awaited<ReturnType<typeof extractWorkUnitsFromTranscript>>;
+  try {
+    extracted = await extractWorkUnitsFromText(input.text, {
+      kind: input.extractionKind,
+      availableProjects: assignmentContext.availableProjects,
+      availableUsers: assignmentContext.availableUsers
+    });
+  } catch (error) {
+    if (input.useLedger && input.sourceType && input.sourceId) {
+      await recordWorkUnitSource({
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        status: "ERROR",
+        workUnitCount: 0,
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+    }
+    if (input.throwOnExtractError) throw error;
+    return { transcript: input.text, workUnits: [], taggingMappings: [] };
+  }
+
+  const workUnits = await persistExtractedUnits(
+    input.defaultOwnerUserId,
+    extracted,
+    assignmentContext,
+    {
+      transcriptOrText: input.text,
+      audioRecordingId: input.audioRecordingId,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId
+    }
+  );
+
+  if (input.useLedger && input.sourceType && input.sourceId) {
+    await recordWorkUnitSource({
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      status: workUnits.length > 0 ? "PROCESSED" : "SKIPPED",
+      workUnitCount: workUnits.length
+    });
+  }
+
   return {
-    transcript,
+    transcript: input.text,
     workUnits,
-    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings)
+    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings ?? [])
   };
+}
+
+async function ingestWorkFromCandidate(candidate: WorkIngestCandidate) {
+  const kind: WorkExtractionTextKind =
+    candidate.sourceType === "GMAIL" ? "email" : candidate.sourceType === "SLACK" ? "slack" : "transcript";
+
+  return ingestWorkFromText({
+    defaultOwnerUserId: candidate.ownerUserId,
+    text: candidate.text,
+    extractionKind: kind,
+    sourceType: candidate.sourceType,
+    sourceId: candidate.sourceId,
+    useLedger: true,
+    throwOnExtractError: false
+  });
+}
+
+export async function ingestWorkUnitsFromGmail() {
+  const candidates = await loadGmailWorkIngestCandidates();
+  let created = 0;
+  await mapWithConcurrency(candidates, env.workIngestConcurrency, async (candidate) => {
+    const result = await ingestWorkFromCandidate(candidate);
+    created += result.workUnits.length;
+  });
+  return { scanned: candidates.length, created };
+}
+
+export async function ingestWorkUnitsFromSlack() {
+  const candidates = await loadSlackWorkIngestCandidates();
+  let created = 0;
+  await mapWithConcurrency(candidates, env.workIngestConcurrency, async (candidate) => {
+    const result = await ingestWorkFromCandidate(candidate);
+    created += result.workUnits.length;
+  });
+  return { scanned: candidates.length, created };
+}
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  const concurrency = Math.max(1, Math.min(limit, items.length || 1));
+  let index = 0;
+
+  async function run(): Promise<void> {
+    while (index < items.length) {
+      const current = items[index];
+      index += 1;
+      await worker(current);
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => run()));
+}
+
+export async function runWorkUnitIngestion() {
+  if (!isWorkExtractionAiConfigured()) {
+    console.log("[work-ingest] AI not configured — skipping");
+    return { gmail: { scanned: 0, created: 0 }, slack: { scanned: 0, created: 0 } };
+  }
+
+  const gmail = await ingestWorkUnitsFromGmail();
+  const slack = await ingestWorkUnitsFromSlack();
+  console.log(
+    `[work-ingest] Gmail scanned ${gmail.scanned}, created ${gmail.created}; Slack scanned ${slack.scanned}, created ${slack.created}`
+  );
+  return { gmail, slack };
 }
 
 export async function createWorkUnit(
@@ -311,6 +482,8 @@ export async function createWorkUnit(
     assigneeSpokenName?: string | null;
     sourceExcerpt?: string | null;
     audioRecordingId?: string | null;
+    sourceType?: WorkIngestSourceType | null;
+    sourceId?: string | null;
     steps?: Array<{
       description: string;
       deadline?: string | null;
@@ -338,6 +511,8 @@ export async function createWorkUnit(
     isPrivate: data.isPrivate ?? false,
     assigneeSpokenName: data.assigneeSpokenName ?? null,
     sourceExcerpt: data.sourceExcerpt ?? null,
+    sourceType: data.sourceType ?? null,
+    sourceId: data.sourceId ?? null,
     ...lifecycle,
     steps
   });
@@ -722,7 +897,16 @@ export async function regenerateWorkUnitsFromRecording(recordingId: string, user
     throw new HttpError(422, "Voice recording has no transcript to regenerate from");
   }
 
-  const result = await createWorkUnitsFromRecording(userId, recording, recording.transcript);
+  const result = await createWorkUnitsFromRecording(userId, recording, recording.transcript, {
+    ...(await prisma.meeting
+      .findFirst({
+        where: { voiceRecordingId: recordingId },
+        select: { id: true }
+      })
+      .then((meeting) =>
+        meeting ? { sourceType: "MEETING" as const, sourceId: meeting.id } : {}
+      ))
+  });
 
   return {
     transcript: recording.transcript,

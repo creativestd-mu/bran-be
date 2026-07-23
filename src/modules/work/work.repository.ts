@@ -41,6 +41,8 @@ export async function createWorkUnit(data: {
   createdById?: string | null;
   projectId?: string | null;
   audioRecordingId?: string | null;
+  sourceType?: string | null;
+  sourceId?: string | null;
   title: string;
   context: string;
   status: string;
@@ -65,6 +67,8 @@ export async function createWorkUnit(data: {
       createdById: data.createdById ?? null,
       projectId: data.projectId ?? null,
       audioRecordingId: data.audioRecordingId ?? null,
+      sourceType: data.sourceType ?? null,
+      sourceId: data.sourceId ?? null,
       title: data.title,
       context: data.context,
       status: data.status,

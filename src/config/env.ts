@@ -165,5 +165,13 @@ export const env = {
   eventsDetectDays: Number(process.env.EVENTS_DETECT_DAYS ?? 14),
   eventsDetectMaxCandidates: Number(process.env.EVENTS_DETECT_MAX_CANDIDATES ?? 80),
   escalationCronEnabled:
-    (process.env.ESCALATION_CRON_ENABLED ?? "true").toLowerCase() !== "false"
+    (process.env.ESCALATION_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  workIngestCronEnabled:
+    (process.env.WORK_INGEST_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  workIngestIntervalMs: Number(process.env.WORK_INGEST_INTERVAL_MS ?? 15 * 60 * 1000),
+  workIngestLookbackDays: Number(process.env.WORK_INGEST_LOOKBACK_DAYS ?? 7),
+  workIngestMaxPerSource: Number(process.env.WORK_INGEST_MAX_PER_SOURCE ?? 40),
+  workIngestConcurrency: Number(process.env.WORK_INGEST_CONCURRENCY ?? 3),
+  /** Comma-separated Slack channel IDs or names to exclude from work ingest (plus attendance/escalation). */
+  slackWorkExcludeChannels: process.env.SLACK_WORK_EXCLUDE_CHANNELS ?? ""
 };

@@ -130,49 +130,44 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
   return textBlock?.text ?? "";
 }
 
-export async function extractWorkUnitsFromTranscript(
-  transcript: string,
-  options?: {
-    now?: Date;
-    availableProjects?: Array<{ id: string; name: string }>;
-    availableUsers?: Array<{ id: string; name: string }>;
-  }
-): Promise<ExtractedWorkUnit[]> {
-  const now = options?.now ?? new Date();
-  const availableProjects = options?.availableProjects ?? [];
-  const availableUsers = options?.availableUsers ?? [];
+export function isWorkExtractionAiConfigured(): boolean {
+  const provider = env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
+  return provider === "gemini" ? Boolean(env.geminiApiKey) : Boolean(env.anthropicApiKey);
+}
 
-  const projectHint =
-    availableProjects.length > 0
-      ? `Available projects for this user (use projectName only when the transcript clearly refers to one): ${availableProjects
-          .map((project) => project.name)
-          .join(", ")}. `
-      : "";
+export type WorkExtractionTextKind = "transcript" | "email" | "slack";
 
-  const teamHint =
-    availableUsers.length > 0
-      ? `Team members (use assigneeName only when the transcript clearly mentions a person by name for a task or step): ${availableUsers
-          .map((u) => u.name)
-          .join(", ")}. `
-      : "";
+function buildExtractionSystemPrompt(options: {
+  kind: WorkExtractionTextKind;
+  projectHint: string;
+  teamHint: string;
+}): string {
+  const kindLabel =
+    options.kind === "email"
+      ? "email messages"
+      : options.kind === "slack"
+        ? "Slack channel/thread messages"
+        : "spoken meeting notes or voice memos";
 
-  const systemPrompt =
-    "You extract structured work units from spoken meeting notes or voice memos. " +
-    "Return STRICT JSON only (no markdown, no prose) with shape: " +
+  return (
+    "You extract structured work units from " +
+    kindLabel +
+    ". Return STRICT JSON only (no markdown, no prose) with shape: " +
     '{ "workUnits": [ { "title": string, "context": string, "status": "OPEN"|"CLOSED", "projectName": string|null, "assigneeName": string|null, "sourceExcerpt": string|null, "steps": [ { "description": string, "deadline": string|null, "assigneeName": string|null, "sourceExcerpt": string|null } ] } ] }. ' +
-    "Rules: one transcript may contain MULTIPLE work units; status must be OPEN unless clearly finished; " +
-    projectHint +
-    "projectName must be null unless the transcript clearly mentions one of the available projects; never invent a project name; " +
-    teamHint +
+    "SCOPE: Extract ONLY genuine org/business/student work — concrete tasks, commitments, deliverables, follow-ups, approvals needed for projects, launches, campaigns, student programs, vendor/client work. " +
+    "Return an EMPTY workUnits array for: newsletters, marketing, receipts, OTPs, login alerts, social notifications, greetings, OOO/auto-replies, calendar invites, meeting scheduling, chit-chat, attendance/ETA/WFH/leave, pure status pings with no action item. " +
+    "Rules: one input may contain MULTIPLE work units; status must be OPEN unless clearly finished; " +
+    options.projectHint +
+    "projectName must be null unless clearly mentioned; never invent a project name; " +
+    options.teamHint +
     "assigneeName at the work unit level means the whole task is for that person; assigneeName on a step means only that step is for them; set to null if unclear; only use exact names from the team members list; " +
-    "sourceExcerpt must be a verbatim quote (one sentence or phrase) from the transcript that this work unit or step was derived from; use null only if no specific phrase can be identified; " +
-    "deadline must be ISO-8601 resolved relative to the provided current date-time: use full datetime (YYYY-MM-DDTHH:mm:ss.sssZ) when a time is mentioned, otherwise date-only (YYYY-MM-DD), or null if none mentioned; " +
-    "the first step should capture the action already taken or meeting held when relevant, and follow-up actions become subsequent steps.";
+    "sourceExcerpt must be a verbatim quote from the source that this work unit or step was derived from; use null only if no specific phrase can be identified; " +
+    "deadline must be ISO-8601 resolved relative to the provided current date-time: use full datetime when a time is mentioned, otherwise date-only, or null if none mentioned; " +
+    "the first step should capture the action already taken when relevant, and follow-up actions become subsequent steps."
+  );
+}
 
-  const userPrompt = `Current date-time: ${now.toISOString()}\n\nTranscript:\n"""${transcript}"""`;
-
-  const raw = await callLlm(systemPrompt, userPrompt);
-
+async function parseExtractedWorkUnits(raw: string): Promise<ExtractedWorkUnit[]> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripCodeFences(raw));
@@ -182,7 +177,7 @@ export async function extractWorkUnitsFromTranscript(
       rawPreview: raw.slice(0, 500),
       error: err instanceof Error ? err.message : String(err)
     });
-    throw new HttpError(502, "Could not extract work units from audio");
+    throw new HttpError(502, "Could not extract work units from source text");
   }
 
   const validated = extractedResponseSchema.safeParse(parsed);
@@ -191,7 +186,7 @@ export async function extractWorkUnitsFromTranscript(
       issues: validated.error.flatten(),
       rawPreview: raw.slice(0, 500)
     });
-    throw new HttpError(502, "Could not extract work units from audio");
+    throw new HttpError(502, "Could not extract work units from source text");
   }
 
   return validated.data.workUnits.map((unit) => ({
@@ -210,4 +205,62 @@ export async function extractWorkUnitsFromTranscript(
         sourceExcerpt: step.sourceExcerpt ?? null
       }))
   }));
+}
+
+export async function extractWorkUnitsFromText(
+  text: string,
+  options: {
+    kind: WorkExtractionTextKind;
+    now?: Date;
+    availableProjects?: Array<{ id: string; name: string }>;
+    availableUsers?: Array<{ id: string; name: string }>;
+  }
+): Promise<ExtractedWorkUnit[]> {
+  const now = options.now ?? new Date();
+  const availableProjects = options.availableProjects ?? [];
+  const availableUsers = options.availableUsers ?? [];
+
+  const projectHint =
+    availableProjects.length > 0
+      ? `Available projects (use projectName only when clearly referred to): ${availableProjects
+          .map((project) => project.name)
+          .join(", ")}. `
+      : "";
+
+  const teamHint =
+    availableUsers.length > 0
+      ? `Team members (use assigneeName only when clearly mentioned): ${availableUsers
+          .map((u) => u.name)
+          .join(", ")}. `
+      : "";
+
+  const systemPrompt = buildExtractionSystemPrompt({
+    kind: options.kind,
+    projectHint,
+    teamHint
+  });
+
+  const label =
+    options.kind === "email" ? "Email" : options.kind === "slack" ? "Slack thread" : "Transcript";
+
+  const userPrompt = `Current date-time: ${now.toISOString()}\n\n${label}:\n"""${text}"""`;
+
+  const raw = await callLlm(systemPrompt, userPrompt);
+  return parseExtractedWorkUnits(raw);
+}
+
+export async function extractWorkUnitsFromTranscript(
+  transcript: string,
+  options?: {
+    now?: Date;
+    availableProjects?: Array<{ id: string; name: string }>;
+    availableUsers?: Array<{ id: string; name: string }>;
+  }
+): Promise<ExtractedWorkUnit[]> {
+  return extractWorkUnitsFromText(transcript, {
+    kind: "transcript",
+    now: options?.now,
+    availableProjects: options?.availableProjects,
+    availableUsers: options?.availableUsers
+  });
 }

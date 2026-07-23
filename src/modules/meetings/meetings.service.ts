@@ -558,7 +558,10 @@ export async function processMeetingRecording(recallBotId: string) {
       errorMessage: null
     });
 
-    await createWorkUnitsFromRecording(meeting.organizerUserId, updatedRecording, sarvam.transcript);
+    await createWorkUnitsFromRecording(meeting.organizerUserId, updatedRecording, sarvam.transcript, {
+      sourceType: "MEETING",
+      sourceId: meeting.id
+    });
 
     await updateMeeting(meeting.id, {
       voiceRecordingId: updatedRecording.id,

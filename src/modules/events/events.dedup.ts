@@ -1,15 +1,10 @@
 import { prisma } from "../../lib/prisma";
 import type { OrgEventSourceType } from "./events.constants";
-import {
-  buildDatedEventSummary,
-  eventDateRangeFromCandidates,
-  updatesToSummaryCandidates
-} from "./events.summary";
+import { refreshAutoEventSummary } from "./events.refresh";
 import {
   deleteOrgEvent,
   findOrgEventById,
-  findUpdateBySource,
-  updateOrgEvent
+  findUpdateBySource
 } from "./events.repository";
 
 const STOP_WORDS = new Set([
@@ -122,22 +117,6 @@ export function mergeOverlappingClusters<T extends ClusterLike>(clusters: T[]): 
   }
 
   return merged;
-}
-
-async function refreshAutoEventSummary(eventId: string): Promise<void> {
-  const event = await findOrgEventById(eventId);
-  if (!event || event.kind !== "AUTO" || !event.updates?.length) return;
-
-  const candidates = updatesToSummaryCandidates(event.updates);
-  if (candidates.length === 0) return;
-
-  const { startsAt, endsAt } = eventDateRangeFromCandidates(candidates);
-  await updateOrgEvent(eventId, {
-    aiSummary: buildDatedEventSummary(candidates),
-    startsAt,
-    endsAt,
-    aiAnalyzedAt: new Date()
-  });
 }
 
 /** Collapse existing duplicate AUTO events (keep oldest canonical per similar title). */

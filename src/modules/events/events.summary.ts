@@ -1,22 +1,25 @@
 import { env } from "../../config/env";
 import type { SourceCandidate } from "./events.sources";
 
-const SOURCE_LABELS: Record<string, string> = {
-  GMAIL: "Gmail",
-  MEETING: "Meeting transcript",
-  ESCALATION: "Escalation",
-  WORK_UNIT: "Work unit"
-};
-
-function formatSummaryDate(instant: Date): string {
+function formatCasualDate(instant: Date): string {
   return instant.toLocaleString("en-IN", {
     day: "numeric",
     month: "short",
     year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
     timeZone: env.appTimezone
   });
+}
+
+function formatCasualDateRange(start: Date, end: Date): string {
+  const startLabel = formatCasualDate(start);
+  const endLabel = formatCasualDate(end);
+  if (startLabel === endLabel) return startLabel;
+
+  const startDay = start.toLocaleDateString("en-CA", { timeZone: env.appTimezone });
+  const endDay = end.toLocaleDateString("en-CA", { timeZone: env.appTimezone });
+  if (startDay === endDay) return startLabel;
+
+  return `${startLabel} to ${endLabel}`;
 }
 
 function normalizeSummaryText(text: string): string {
@@ -25,45 +28,79 @@ function normalizeSummaryText(text: string): string {
 
 export function summaryLooksTruncated(summary: string | null | undefined): boolean {
   if (!summary?.trim()) return false;
-  // Legacy summaries cut off by oneLine() ended with … or ...
   return /…|\.\.\.(?:\s|$)/.test(summary);
 }
 
+/** Legacy bullet timelines from older builds. */
+export function summaryUsesBulletTimeline(summary: string | null | undefined): boolean {
+  if (!summary?.trim()) return false;
+  return /^•\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4},/m.test(summary);
+}
+
+/** @deprecated use summaryUsesBulletTimeline */
+export function summaryHasDatedTimeline(summary: string | null | undefined): boolean {
+  return summaryUsesBulletTimeline(summary);
+}
+
+export function summaryShouldRefresh(summary: string | null | undefined): boolean {
+  if (!summary?.trim()) return true;
+  if (summaryLooksTruncated(summary)) return true;
+  if (summaryUsesBulletTimeline(summary)) return true;
+  return false;
+}
+
+function buildHeuristicProseSummary(
+  candidates: SourceCandidate[],
+  range: { startsAt: Date; endsAt: Date }
+): string {
+  const when = formatCasualDateRange(range.startsAt, range.endsAt);
+  const seen = new Set<string>();
+  const titles: string[] = [];
+
+  for (const candidate of [...candidates].sort(
+    (a, b) => b.occurredAt.getTime() - a.occurredAt.getTime()
+  )) {
+    const title = normalizeSummaryText(candidate.title);
+    if (!title || seen.has(title.toLowerCase())) continue;
+    seen.add(title.toLowerCase());
+    titles.push(title);
+    if (titles.length >= 5) break;
+  }
+
+  if (titles.length === 0) {
+    return `Activity picked up around ${when}.`;
+  }
+
+  if (titles.length === 1) {
+    return `Around ${when}, work focused on ${titles[0]}.`;
+  }
+
+  const head = titles.slice(0, -1).join("; ");
+  const last = titles[titles.length - 1];
+  return `From ${when}, updates touched ${head}; and ${last}.`;
+}
+
 /**
- * Chronological, date-stamped summary built from attached source candidates.
- * Optional LLM overview is appended after the dated timeline.
+ * Short prose AI summary. Prefer LLM overview when provided; otherwise a compact fallback.
  */
+export function buildEventAiSummary(
+  candidates: SourceCandidate[],
+  overview?: string | null
+): string {
+  const range = eventDateRangeFromCandidates(candidates);
+  const overviewText = overview?.trim();
+  if (overviewText) {
+    return overviewText;
+  }
+  return buildHeuristicProseSummary(candidates, range);
+}
+
+/** @deprecated use buildEventAiSummary */
 export function buildDatedEventSummary(
   candidates: SourceCandidate[],
   overview?: string | null
 ): string {
-  const sorted = [...candidates].sort(
-    (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime()
-  );
-
-  const timeline = sorted
-    .map((candidate) => {
-      const when = formatSummaryDate(candidate.occurredAt);
-      const source = SOURCE_LABELS[candidate.sourceType] ?? candidate.sourceType;
-      const title = normalizeSummaryText(candidate.title);
-      const actor = candidate.actorName ? ` · ${candidate.actorName}` : "";
-      const detail = candidate.body ? ` — ${normalizeSummaryText(candidate.body)}` : "";
-      return `• ${when} · ${source} · ${title}${actor}${detail}`;
-    })
-    .join("\n");
-
-  const overviewText = overview?.trim();
-  if (overviewText) {
-    return `${timeline}\n\n${overviewText}`;
-  }
-
-  return timeline;
-}
-
-/** True when summary already uses our dated bullet timeline format. */
-export function summaryHasDatedTimeline(summary: string | null | undefined): boolean {
-  if (!summary?.trim()) return false;
-  return /^•\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4},/m.test(summary);
+  return buildEventAiSummary(candidates, overview);
 }
 
 export function updatesToSummaryCandidates(

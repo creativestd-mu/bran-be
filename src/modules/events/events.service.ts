@@ -14,12 +14,11 @@ import {
   mergeOverlappingClusters
 } from "./events.dedup";
 import {
-  buildDatedEventSummary,
+  buildEventAiSummary,
   eventDateRangeFromCandidates,
-  summaryHasDatedTimeline,
-  summaryLooksTruncated,
-  updatesToSummaryCandidates
+  summaryShouldRefresh
 } from "./events.summary";
+import { refreshAutoEventSummary } from "./events.refresh";
 import {
   createOrgEvent,
   createOrgEventUpdate,
@@ -47,22 +46,6 @@ function parseOptionalDate(value?: string | null): Date | null | undefined {
   return date;
 }
 
-async function refreshAutoEventSummary(eventId: string): Promise<void> {
-  const event = await findOrgEventById(eventId);
-  if (!event || event.kind !== "AUTO" || !event.updates?.length) return;
-
-  const candidates = updatesToSummaryCandidates(event.updates);
-  if (candidates.length === 0) return;
-
-  const { startsAt, endsAt } = eventDateRangeFromCandidates(candidates);
-  await updateOrgEvent(eventId, {
-    aiSummary: buildDatedEventSummary(candidates),
-    startsAt,
-    endsAt,
-    aiAnalyzedAt: new Date()
-  });
-}
-
 export async function listEvents(query: {
   status?: OrgEventStatus;
   kind?: "MANUAL" | "AUTO";
@@ -86,12 +69,8 @@ export async function getEventDetail(id: string) {
     throw new HttpError(404, "Event not found");
   }
 
-  // Backfill older AUTO events whose summary predates dated timelines or was truncated.
-  if (
-    event.kind === "AUTO" &&
-    event.updates?.length &&
-    (!summaryHasDatedTimeline(event.aiSummary) || summaryLooksTruncated(event.aiSummary))
-  ) {
+  // Backfill legacy bullet timelines and truncated summaries into short prose.
+  if (event.kind === "AUTO" && event.updates?.length && summaryShouldRefresh(event.aiSummary)) {
     await refreshAutoEventSummary(id);
     event = await findOrgEventById(id);
   }
@@ -332,7 +311,7 @@ export async function detectEventsFromSources(options?: {
         status: cluster.status,
         startsAt,
         endsAt,
-        aiSummary: buildDatedEventSummary(clusterCandidates, cluster.summary),
+        aiSummary: buildEventAiSummary(clusterCandidates, cluster.summary),
         aiAnalyzedAt: new Date(),
         confidence: cluster.confidence,
         latestUpdateAt: latest

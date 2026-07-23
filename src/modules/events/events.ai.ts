@@ -132,9 +132,9 @@ export async function clusterSourcesIntoEvents(
     "6) Do not invent keys. Leave noisy/unrelated singles (and lone meetings) unclustered. " +
     "7) Prefer precise topic titles (what it is about), not the meeting name. " +
     "8) confidence is 0-1. " +
-    "9) summary is optional — a short overview only (1–3 sentences). " +
-    "10) Never output two clusters for the same programme/topic under different titles — merge them into one cluster. " +
-    "Do NOT repeat a dated timeline in summary; dates are added separately from source timestamps.";
+    "9) summary is REQUIRED — 2–4 short sentences in plain prose (no bullets, lists, or line-by-line updates). " +
+    "Weave dates in casually (e.g. 'On 18 Jul…', 'through late July', 'earlier this week'). " +
+    "10) Never output two clusters for the same programme/topic under different titles — merge them into one cluster.";
 
   const userPrompt = [
     "Unattached activity candidates:",
@@ -179,4 +179,43 @@ export async function clusterSourcesIntoEvents(
       } satisfies DetectedCluster;
     })
     .filter((cluster): cluster is DetectedCluster => Boolean(cluster));
+}
+
+export async function summarizeEventFromSources(
+  title: string,
+  candidates: SourceCandidate[]
+): Promise<string> {
+  if (candidates.length === 0) return "";
+  if (!isEventsAiConfigured()) {
+    throw new Error("AI provider is not configured for event summarization");
+  }
+
+  const systemPrompt =
+    "You write short org-event summaries for an internal dashboard. " +
+    "Return plain text only (no JSON, markdown, or bullet lists). " +
+    "Write 2–4 concise sentences in neutral prose. " +
+    "Mention important dates casually in the narrative (IST), not as a timeline of every update. " +
+    "Capture the main topic, who was involved if relevant, and current status — do not enumerate every source.";
+
+  const sorted = [...candidates].sort(
+    (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime()
+  );
+
+  const userPrompt = [
+    `Event title: ${title}`,
+    "Attached activity (newest last):",
+    ...sorted.map((candidate) => {
+      return [
+        `- ${candidate.occurredAt.toISOString()} · ${candidate.sourceType} · ${candidate.title}`,
+        candidate.actorName ? `  Actor: ${candidate.actorName}` : null,
+        candidate.body ? `  Detail: ${candidate.body.slice(0, 280)}` : null
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+  ].join("\n\n");
+
+  const raw = await callLlm(systemPrompt, userPrompt);
+  const text = raw.replace(/^```[\s\S]*?```$/m, "").trim();
+  return text.slice(0, 4000) || title;
 }

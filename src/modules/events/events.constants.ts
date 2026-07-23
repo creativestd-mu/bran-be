@@ -8,7 +8,6 @@ export const ORG_EVENT_SOURCE_TYPES = [
   "GMAIL",
   "MEETING",
   "ESCALATION",
-  "ATTENDANCE",
   "WORK_UNIT",
   "MANUAL"
 ] as const;

@@ -152,30 +152,9 @@ export async function loadUnattachedSourceCandidates(options?: {
     }
   }
 
-  if (!filter || filter === "ATTENDANCE") {
-    const entries = await prisma.etaEntry.findMany({
-      where: { createdAt: { gte: since } },
-      orderBy: { createdAt: "desc" },
-      take: maxCandidates
-    });
-    for (const entry of entries) {
-      const label = entry.recordType ?? entry.status;
-      push({
-        sourceType: "ATTENDANCE",
-        sourceId: String(entry.id),
-        title: `Attendance: ${label}`,
-        body: entry.rawMessage ?? entry.etaText ?? `${entry.userName ?? "Someone"} — ${label}`,
-        actorName: entry.userName ?? entry.userEmail,
-        occurredAt: entry.submittedAt ?? entry.createdAt,
-        metadata: {
-          status: entry.status,
-          recordType: entry.recordType,
-          wfhApprovalState: entry.wfhApprovalState,
-          leaveApprovalState: entry.leaveApprovalState
-        }
-      });
-    }
-  }
+  // ATTENDANCE (ETA / WFH / leave) is intentionally NOT loaded — it is
+  // operational HR data, not an org/business/student topic, so it must never
+  // be clustered into or attached as an org event.
 
   if (!filter || filter === "WORK_UNIT") {
     const workUnits = await prisma.workUnit.findMany({
@@ -259,20 +238,7 @@ export async function resolveSourceCandidate(
         occurredAt: escalation.latestUpdateAt ?? escalation.createdAt
       };
     }
-    case "ATTENDANCE": {
-      const id = Number(sourceId);
-      if (!Number.isFinite(id)) return null;
-      const entry = await prisma.etaEntry.findUnique({ where: { id } });
-      if (!entry) return null;
-      return {
-        sourceType,
-        sourceId: String(entry.id),
-        title: `Attendance: ${entry.recordType ?? entry.status}`,
-        body: entry.rawMessage ?? entry.etaText ?? "",
-        actorName: entry.userName ?? entry.userEmail,
-        occurredAt: entry.submittedAt ?? entry.createdAt
-      };
-    }
+    // ATTENDANCE intentionally unsupported — not an org/business/student topic.
     case "WORK_UNIT": {
       const unit = await prisma.workUnit.findUnique({
         where: { id: sourceId },

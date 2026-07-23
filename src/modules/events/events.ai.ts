@@ -112,19 +112,22 @@ export async function clusterSourcesIntoEvents(
 
   const systemPrompt =
     "You cluster cross-channel workplace activity into real org/business events " +
-    "(launches, workshops, campaigns, campus events, major projects). " +
+    "(launches, workshops, campaigns, campus events, major projects) or topics " +
+    "directly involving students. " +
     "Return STRICT JSON only (no markdown) with shape: " +
     '{ "clusters": [ { "title": string, "description": string|null, "summary": string|null, ' +
     '"confidence": number, "status": "planned"|"active"|"completed"|"cancelled", ' +
     '"sourceKeys": string[] } ] }. ' +
     "Rules: " +
     "1) Only create a cluster when 2+ items clearly refer to the same real-world event/topic. " +
-    "2) sourceKeys MUST be copied exactly from the provided keys (SOURCE_TYPE:id). " +
-    "3) Do not invent keys. Leave noisy/unrelated singles unclustered. " +
-    "4) MEETING keys are transcript excerpts only — never treat a bare call as an event. " +
-    "5) Prefer precise titles (what/when) over vague ones. " +
-    "6) confidence is 0-1. " +
-    "7) summary is optional — a short overview only (1–3 sentences). " +
+    "2) Only cluster genuine org/business/student topics. Ignore purely operational/HR " +
+    "noise (attendance, ETA, WFH, leave) — never build an event from it. " +
+    "3) sourceKeys MUST be copied exactly from the provided keys (SOURCE_TYPE:id). " +
+    "4) Do not invent keys. Leave noisy/unrelated singles unclustered. " +
+    "5) MEETING keys are transcript excerpts only — never treat a bare call as an event. " +
+    "6) Prefer precise titles (what/when) over vague ones. " +
+    "7) confidence is 0-1. " +
+    "8) summary is optional — a short overview only (1–3 sentences). " +
     "Do NOT repeat a dated timeline in summary; dates are added separately from source timestamps.";
 
   const userPrompt = [

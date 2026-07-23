@@ -5,7 +5,6 @@ const SOURCE_LABELS: Record<string, string> = {
   GMAIL: "Gmail",
   MEETING: "Meeting transcript",
   ESCALATION: "Escalation",
-  ATTENDANCE: "Attendance",
   WORK_UNIT: "Work unit"
 };
 

@@ -5,12 +5,12 @@ import {
   ORG_EVENT_STATUSES
 } from "./events.constants";
 
-// MEETING is allowed only when the call has a processed transcript (see events.sources).
+// Only org/business/student topics. MEETING requires a processed transcript
+// (see events.sources). ATTENDANCE is excluded — it is operational HR data.
 const ATTACHABLE_SOURCE_TYPES = [
   "GMAIL",
   "MEETING",
   "ESCALATION",
-  "ATTENDANCE",
   "WORK_UNIT"
 ] as const;
 

@@ -133,6 +133,7 @@ export async function clusterSourcesIntoEvents(
     "7) Prefer precise topic titles (what it is about), not the meeting name. " +
     "8) confidence is 0-1. " +
     "9) summary is optional — a short overview only (1–3 sentences). " +
+    "10) Never output two clusters for the same programme/topic under different titles — merge them into one cluster. " +
     "Do NOT repeat a dated timeline in summary; dates are added separately from source timestamps.";
 
   const userPrompt = [

@@ -9,6 +9,11 @@ import {
 } from "./events.constants";
 import { clusterSourcesIntoEvents, isEventsAiConfigured } from "./events.ai";
 import {
+  dedupeSimilarAutoEvents,
+  findSimilarAutoOrgEvent,
+  mergeOverlappingClusters
+} from "./events.dedup";
+import {
   buildDatedEventSummary,
   eventDateRangeFromCandidates,
   summaryHasDatedTimeline,
@@ -285,7 +290,7 @@ export async function detectEventsFromSources(options?: {
     candidates.map((candidate) => [`${candidate.sourceType}:${candidate.sourceId}`, candidate])
   );
 
-  const clusters = await clusterSourcesIntoEvents(candidates);
+  const clusters = mergeOverlappingClusters(await clusterSourcesIntoEvents(candidates));
   const createdEvents = [];
   let attached = 0;
 
@@ -309,37 +314,63 @@ export async function detectEventsFromSources(options?: {
     );
     if (businessAnchors.length === 0) continue;
 
-    const latest = clusterCandidates.reduce((max, item) =>
-      item.occurredAt > max ? item.occurredAt : max
-    , clusterCandidates[0].occurredAt);
-    const { startsAt, endsAt } = eventDateRangeFromCandidates(clusterCandidates);
+    const similar = await findSimilarAutoOrgEvent(cluster.title);
+    let eventId: string;
 
-    const event = await createOrgEvent({
-      title: cluster.title,
-      description: cluster.description,
-      kind: "AUTO",
-      status: cluster.status,
-      startsAt,
-      endsAt,
-      aiSummary: buildDatedEventSummary(clusterCandidates, cluster.summary),
-      aiAnalyzedAt: new Date(),
-      confidence: cluster.confidence,
-      latestUpdateAt: latest
-    });
+    if (similar) {
+      eventId = similar.id;
+    } else {
+      const latest = clusterCandidates.reduce((max, item) =>
+        item.occurredAt > max ? item.occurredAt : max
+      , clusterCandidates[0].occurredAt);
+      const { startsAt, endsAt } = eventDateRangeFromCandidates(clusterCandidates);
+
+      const event = await createOrgEvent({
+        title: cluster.title,
+        description: cluster.description,
+        kind: "AUTO",
+        status: cluster.status,
+        startsAt,
+        endsAt,
+        aiSummary: buildDatedEventSummary(clusterCandidates, cluster.summary),
+        aiAnalyzedAt: new Date(),
+        confidence: cluster.confidence,
+        latestUpdateAt: latest
+      });
+      eventId = event.id;
+
+      for (const candidate of clusterCandidates) {
+        await createUpdateFromCandidate(eventId, candidate);
+        attached += 1;
+        byKey.delete(`${candidate.sourceType}:${candidate.sourceId}`);
+      }
+
+      const detail = await findOrgEventById(eventId);
+      if (detail) createdEvents.push(serializeOrgEvent(detail));
+      continue;
+    }
 
     for (const candidate of clusterCandidates) {
-      await createUpdateFromCandidate(event.id, candidate);
+      await createUpdateFromCandidate(eventId, candidate);
       attached += 1;
       byKey.delete(`${candidate.sourceType}:${candidate.sourceId}`);
     }
+    await refreshAutoEventSummary(eventId);
 
-    const detail = await findOrgEventById(event.id);
-    if (detail) createdEvents.push(serializeOrgEvent(detail));
+    const detail = await findOrgEventById(eventId);
+    if (detail && !createdEvents.some((item) => item.id === detail.id)) {
+      createdEvents.push(serializeOrgEvent(detail));
+    }
   }
 
-  // Signature over the candidates still unattached after this run. Items that
-  // stayed unattached (noise/singletons) won't re-trigger the LLM until genuinely
-  // new source activity changes the set.
+  const dedupe = await dedupeSimilarAutoEvents();
+  if (dedupe.removed > 0) {
+    console.log(
+      `[events-detect] Deduped ${dedupe.removed} similar AUTO event(s), moved ${dedupe.movedUpdates} update(s)`
+    );
+  }
+
+  // Signature over the candidates still unattached after this run.
   lastDetectionSignature = computeCandidateSignature(Array.from(byKey.values()));
 
   return {

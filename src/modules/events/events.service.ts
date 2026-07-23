@@ -300,6 +300,15 @@ export async function detectEventsFromSources(options?: {
     }
     if (clusterCandidates.length < 2) continue;
 
+    // A real org/business/student event must be anchored by a substantive
+    // business source (email, escalation, or work unit). Meetings are only
+    // context/enrichment — a cluster made only of meetings is just a meeting,
+    // not an org event, so skip it.
+    const businessAnchors = clusterCandidates.filter(
+      (candidate) => candidate.sourceType !== "MEETING"
+    );
+    if (businessAnchors.length === 0) continue;
+
     const latest = clusterCandidates.reduce((max, item) =>
       item.occurredAt > max ? item.occurredAt : max
     , clusterCandidates[0].occurredAt);

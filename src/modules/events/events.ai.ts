@@ -122,12 +122,17 @@ export async function clusterSourcesIntoEvents(
     "1) Only create a cluster when 2+ items clearly refer to the same real-world event/topic. " +
     "2) Only cluster genuine org/business/student topics. Ignore purely operational/HR " +
     "noise (attendance, ETA, WFH, leave) — never build an event from it. " +
-    "3) sourceKeys MUST be copied exactly from the provided keys (SOURCE_TYPE:id). " +
-    "4) Do not invent keys. Leave noisy/unrelated singles unclustered. " +
-    "5) MEETING keys are transcript excerpts only — never treat a bare call as an event. " +
-    "6) Prefer precise titles (what/when) over vague ones. " +
-    "7) confidence is 0-1. " +
-    "8) summary is optional — a short overview only (1–3 sentences). " +
+    "3) Every cluster MUST be anchored by at least one substantive business source " +
+    "(GMAIL, ESCALATION, or WORK_UNIT). NEVER create a cluster made only of meetings — " +
+    "a recurring/1:1/catch-up call by itself is NOT an org event. " +
+    "4) MEETING keys are transcript excerpts and may ONLY be added as extra context to a " +
+    "cluster that already has a business anchor about the same topic. If a meeting doesn't " +
+    "clearly relate to a business topic in the data, leave it out entirely. " +
+    "5) sourceKeys MUST be copied exactly from the provided keys (SOURCE_TYPE:id). " +
+    "6) Do not invent keys. Leave noisy/unrelated singles (and lone meetings) unclustered. " +
+    "7) Prefer precise topic titles (what it is about), not the meeting name. " +
+    "8) confidence is 0-1. " +
+    "9) summary is optional — a short overview only (1–3 sentences). " +
     "Do NOT repeat a dated timeline in summary; dates are added separately from source timestamps.";
 
   const userPrompt = [

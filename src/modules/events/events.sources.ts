@@ -20,6 +20,37 @@ function lookbackDate(days: number): Date {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
+// Calendar invites, meeting notifications and automated meeting-report emails
+// are just "meetings" — not org/business topics. They must not seed events.
+const MEETING_NOISE_SUBJECT_RE =
+  /^(invitation|updated invitation|accepted|declined|tentative|canceled|cancelled|new time proposed|reminder):/i;
+const MEETING_NOISE_PHRASE_RE =
+  /(invited you to|invitation to join|you'?re mentioned in the meeting summary|read meeting report|meeting records?:|meeting summary|meeting notes|meeting report|join with google meet|scheduled with akiflow|this event has been updated|has accepted this invitation|has declined this invitation|been invited by .* to attend an event)/i;
+// Automated senders for calendar / meeting bots.
+const MEETING_NOISE_SENDER_RE =
+  /(calendar-notification@google\.com|@resource\.calendar\.google\.com|read\.ai|otter\.ai|fireflies|fathom\.video|fathom\.ai|tldv|meetgeek|@akiflow)/i;
+
+function isMeetingNoiseEmail(input: {
+  subject?: string | null;
+  fromAddress?: string | null;
+  snippet?: string | null;
+  bodyText?: string | null;
+}): boolean {
+  const subject = input.subject ?? "";
+  const from = input.fromAddress ?? "";
+  const body = `${input.snippet ?? ""} ${input.bodyText ?? ""}`;
+
+  if (MEETING_NOISE_SENDER_RE.test(from)) return true;
+  if (MEETING_NOISE_SUBJECT_RE.test(subject.trim())) return true;
+  if (MEETING_NOISE_PHRASE_RE.test(subject)) return true;
+  if (MEETING_NOISE_PHRASE_RE.test(body)) return true;
+  // Calendar invites frequently encode the slot as "Title @ Day DD Mon YYYY".
+  if (/@\s+(mon|tue|wed|thu|fri|sat|sun)\s+\d{1,2}\s+[a-z]{3}\s+\d{4}/i.test(subject)) {
+    return true;
+  }
+  return false;
+}
+
 const MEETING_TRANSCRIPT_BODY_MAX = 2000;
 
 function hasUsableTranscript(transcript: string | null | undefined): boolean {
@@ -95,6 +126,18 @@ export async function loadUnattachedSourceCandidates(options?: {
       include: { connection: { select: { userId: true, oauthEmail: true } } }
     });
     for (const message of messages) {
+      // Skip calendar invites / meeting notifications / meeting-report bots —
+      // these are meetings, not org/business topics.
+      if (
+        isMeetingNoiseEmail({
+          subject: message.subject,
+          fromAddress: message.fromAddress,
+          snippet: message.snippet,
+          bodyText: message.bodyText
+        })
+      ) {
+        continue;
+      }
       push({
         sourceType: "GMAIL",
         sourceId: message.id,

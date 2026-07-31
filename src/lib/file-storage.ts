@@ -13,20 +13,22 @@ import {
 import { env } from "../config/env";
 import { HttpError } from "../utils/httpError";
 
-export type StorageRoot = "audio" | "visions" | "thumbnails";
+export type StorageRoot = "audio" | "visions" | "thumbnails" | "prereads";
 
 const PLACEHOLDER_SECRETS = new Set(["your_s3_secret_access_key", ""]);
 
 function localDirForRoot(root: StorageRoot): string {
   if (root === "audio") return env.audioStorageDir;
   if (root === "visions") return env.visionStorageDir;
-  return env.thumbnailStorageDir;
+  if (root === "thumbnails") return env.thumbnailStorageDir;
+  return env.prereadStorageDir;
 }
 
 function s3PrefixForRoot(root: StorageRoot): string {
   if (root === "audio") return env.s3AudioPrefix;
   if (root === "visions") return env.s3VisionPrefix;
-  return env.s3ThumbnailPrefix;
+  if (root === "thumbnails") return env.s3ThumbnailPrefix;
+  return env.s3PrereadPrefix;
 }
 
 function sanitizeRelativePath(relativePath: string): string {

@@ -31,6 +31,7 @@ import { gmailRouter } from "../../../modules/gmail/gmail.routes";
 import { eventsRouter } from "../../../modules/events/events.routes";
 import { attendanceRouter } from "../../../modules/attendance/attendance.routes";
 import { graphRouter } from "../../../modules/graph/graph.routes";
+import { prereadRouter } from "../../../modules/preread/preread.routes";
 
 const v1Router = Router();
 
@@ -65,6 +66,7 @@ v1Router.use("/gmail", gmailRouter);
 v1Router.use("/events", eventsRouter);
 v1Router.use("/attendance", attendanceRouter);
 v1Router.use("/graph", graphRouter);
+v1Router.use("/prereads", prereadRouter);
 
 // Existing Meltwater-based routes
 v1Router.use("/instagram", instagramRouter);

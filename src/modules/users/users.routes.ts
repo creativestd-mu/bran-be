@@ -11,6 +11,7 @@ import {
   getUserById,
   getUserHierarchy,
   upsertUserHierarchy,
+  reparentUser,
   updateUserProfile,
   removeUser,
   addSocialAccount,
@@ -45,11 +46,14 @@ usersRouter.get("/", async (req, res, next) => {
   }
 });
 
+const reportModeSchema = z.enum(["with_user", "reattach_to_previous"]);
+
 const upsertUserHierarchySchema = z.object({
   members: z.array(
     z.object({
       userId: z.string().uuid(),
-      managerUserId: z.string().uuid().nullable().optional()
+      managerUserId: z.string().uuid().nullable().optional(),
+      reportMode: reportModeSchema.optional()
     })
   )
 });
@@ -135,10 +139,30 @@ const updateUserSchema = z.object({
   phone: z.string().optional(),
   designation: z.string().optional(),
   managerUserId: z.string().uuid().nullable().optional(),
+  reportMode: reportModeSchema.optional(),
   roleId: z.string().uuid().optional(),
   isActive: z.boolean().optional(),
   isPlaceholder: z.boolean().optional(),
   email: z.string().email().optional()
+});
+
+const reparentUserSchema = z.object({
+  managerUserId: z.string().uuid().nullable(),
+  reportMode: reportModeSchema.optional()
+});
+
+usersRouter.put("/:id/manager", requirePermission("manage_users"), async (req, res, next) => {
+  try {
+    const payload = reparentUserSchema.parse(req.body);
+    const user = await reparentUser(
+      param(req.params.id),
+      payload.managerUserId,
+      payload.reportMode ?? "with_user"
+    );
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
 });
 
 usersRouter.put("/:id", async (req, res, next) => {
@@ -148,6 +172,7 @@ usersRouter.put("/:id", async (req, res, next) => {
     const data = updateUserSchema.parse(req.body);
     const requiresManageUsers =
       data.managerUserId !== undefined ||
+      data.reportMode !== undefined ||
       data.isPlaceholder !== undefined ||
       data.email !== undefined ||
       (!isSelf && (data.roleId !== undefined || data.isActive !== undefined));

@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
 import { HttpError } from "../../utils/httpError";
+import { prisma } from "../../lib/prisma";
 import {
   findAllUsers,
   findAllUserManagerLinks,
+  findDirectReportIds,
   findUserById,
   findUserByEmail,
   findUserManagerLink,
@@ -17,9 +19,13 @@ import {
 
 const VALID_PLATFORMS = ["YOUTUBE", "INSTAGRAM", "LINKEDIN", "FACEBOOK"] as const;
 
+/** with_user = subtree stays under the moved user; reattach_to_previous = direct reports go to old manager */
+export type ReportMode = "with_user" | "reattach_to_previous";
+
 type UserHierarchyMemberInput = {
   userId: string;
   managerUserId?: string | null;
+  reportMode?: ReportMode;
 };
 
 type UserHierarchyListMember = {
@@ -260,6 +266,50 @@ export async function createNewHire(data: {
   });
 }
 
+export async function reparentUser(
+  userId: string,
+  managerUserId: string | null,
+  reportMode: ReportMode = "with_user"
+) {
+  const user = await findUserManagerLink(userId);
+  if (!user) throw new HttpError(404, "User not found");
+
+  const previousManagerId = user.managerUserId ?? null;
+  if (previousManagerId === managerUserId) {
+    return getUserById(userId);
+  }
+
+  await ensureManagerCanBeAssigned(userId, managerUserId);
+
+  const reportIds =
+    reportMode === "reattach_to_previous" ? await findDirectReportIds(userId) : [];
+
+  for (const reportId of reportIds) {
+    if (previousManagerId === reportId) {
+      throw new HttpError(400, "Cannot reattach a report onto itself");
+    }
+    await ensureManagerCanBeAssigned(reportId, previousManagerId);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (reportMode === "reattach_to_previous") {
+      for (const reportId of reportIds) {
+        await tx.user.update({
+          where: { id: reportId },
+          data: { managerUserId: previousManagerId }
+        });
+      }
+    }
+
+    await tx.user.update({
+      where: { id: userId },
+      data: { managerUserId }
+    });
+  });
+
+  return getUserById(userId);
+}
+
 export async function updateUserProfile(
   id: string,
   data: {
@@ -268,6 +318,7 @@ export async function updateUserProfile(
     phone?: string;
     designation?: string;
     managerUserId?: string | null;
+    reportMode?: ReportMode;
     roleId?: string;
     isActive?: boolean;
     isPlaceholder?: boolean;
@@ -276,18 +327,28 @@ export async function updateUserProfile(
 ) {
   await getUserById(id);
 
-  if (data.email !== undefined) {
-    const email = data.email.trim().toLowerCase();
+  const { reportMode, managerUserId, ...profileData } = data;
+
+  if (profileData.email !== undefined) {
+    const email = profileData.email.trim().toLowerCase();
     if (!email) throw new HttpError(400, "Email is required");
     const existing = await findUserByEmail(email);
     if (existing && existing.id !== id) {
       throw new HttpError(409, "User with this email already exists");
     }
-    data = { ...data, email };
+    profileData.email = email;
   }
 
-  await ensureManagerCanBeAssigned(id, data.managerUserId);
-  return updateUser(id, data);
+  if (managerUserId !== undefined) {
+    await reparentUser(id, managerUserId ?? null, reportMode ?? "with_user");
+  }
+
+  const hasProfileUpdates = Object.values(profileData).some((value) => value !== undefined);
+  if (!hasProfileUpdates) {
+    return getUserById(id);
+  }
+
+  return updateUser(id, profileData);
 }
 
 export async function removeUser(id: string) {
@@ -329,7 +390,13 @@ export async function upsertUserHierarchy(members: UserHierarchyMemberInput[]) {
   await validateUserHierarchyUpdates(members);
 
   for (const member of members) {
-    if (member.managerUserId === undefined) continue;
+    if (member.managerUserId === undefined && member.reportMode === undefined) continue;
+
+    if (member.reportMode) {
+      await reparentUser(member.userId, member.managerUserId ?? null, member.reportMode);
+      continue;
+    }
+
     await updateUser(member.userId, {
       managerUserId: member.managerUserId ?? null
     });

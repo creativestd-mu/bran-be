@@ -66,6 +66,14 @@ export async function findAllUserManagerLinks() {
   });
 }
 
+export async function findDirectReportIds(managerUserId: string) {
+  const rows = await prisma.user.findMany({
+    where: { managerUserId },
+    select: { id: true }
+  });
+  return rows.map((row) => row.id);
+}
+
 export async function findUsersForHierarchy(isActive?: boolean) {
   const where = isActive !== undefined ? { isActive } : {};
 

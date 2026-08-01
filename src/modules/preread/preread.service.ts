@@ -252,7 +252,7 @@ export async function updatePreread(
   userId: string,
   data: { title?: string; description?: string | null }
 ) {
-  await assertCanAccess(prereadId, userId);
+  await assertIsOwner(prereadId, userId);
   await repo.updatePreread(prereadId, data);
   return getPrereadDetail(prereadId, userId);
 }
@@ -292,7 +292,7 @@ export async function createNode(
     orderIndex?: number;
   }
 ) {
-  await assertCanAccess(prereadId, userId);
+  await assertIsOwner(prereadId, userId);
   await validateParent(prereadId, data.parentId);
   const node = await repo.createNode({
     prereadId,
@@ -317,7 +317,7 @@ export async function updateNode(
     orderIndex?: number;
   }
 ) {
-  await assertCanAccess(prereadId, userId);
+  await assertIsOwner(prereadId, userId);
   await assertNodeInPreread(prereadId, nodeId);
   if (data.parentId !== undefined) {
     await validateParent(prereadId, data.parentId, nodeId);
@@ -339,7 +339,7 @@ async function collectDescendantMedia(
 }
 
 export async function deleteNode(prereadId: string, nodeId: string, userId: string) {
-  await assertCanAccess(prereadId, userId);
+  await assertIsOwner(prereadId, userId);
   await assertNodeInPreread(prereadId, nodeId);
   // The node's children cascade-delete in the DB, but their media files on
   // disk/S3 must be cleaned up explicitly, so collect the whole subtree first.
@@ -393,7 +393,7 @@ export async function uploadNodeMedia(
   userId: string,
   file: Express.Multer.File
 ) {
-  await assertCanAccess(prereadId, userId);
+  await assertIsOwner(prereadId, userId);
   await assertNodeInPreread(prereadId, nodeId);
 
   const mediaId = crypto.randomUUID();
@@ -441,7 +441,7 @@ export async function deleteNodeMedia(
   mediaId: string,
   userId: string
 ) {
-  await assertCanAccess(prereadId, userId);
+  await assertIsOwner(prereadId, userId);
   await assertNodeInPreread(prereadId, nodeId);
   const media = await repo.findMediaById(mediaId);
   if (!media || media.nodeId !== nodeId) {

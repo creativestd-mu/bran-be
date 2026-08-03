@@ -17,6 +17,7 @@ import {
   verifySlackSignature
 } from "./attendance.slack";
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
+import { processSlackWorkMessage } from "../work/work.service";
 
 function readRawBody(req: Request): string {
   if (req.body instanceof Buffer) {
@@ -144,6 +145,20 @@ export async function slackEventsHandler(
         files: event.files
       }).catch((error) => {
         console.error("Slack escalation event processing failed:", error);
+      });
+    }
+
+    if (hasText) {
+      void processSlackWorkMessage({
+        channelId: event.channel,
+        userId: event.user,
+        text: event.text,
+        ts: event.ts,
+        botId: event.bot_id,
+        subtype: event.subtype,
+        threadTs: event.thread_ts
+      }).catch((error) => {
+        console.error("Slack work event processing failed:", error);
       });
     }
   } catch (error) {

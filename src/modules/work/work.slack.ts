@@ -11,8 +11,10 @@ import {
   DEFAULT_WORK_INGEST_MAX_PER_SOURCE,
   type WorkIngestSourceType
 } from "./work.constants";
-import { loadProcessedSourceKeys } from "./work.source-ledger";
+import { findWorkUnitSource, loadProcessedSourceKeys } from "./work.source-ledger";
 import type { WorkIngestCandidate } from "./work.sources";
+
+const MIN_SLACK_WORK_TEXT_LENGTH = 40;
 
 /** Slack mention markup: <@U123> or <@U123|display>. */
 const SLACK_MENTION_RE = /<@([UW][A-Z0-9]+)(?:\|[^>]+)?>/g;
@@ -178,16 +180,21 @@ function collectMentionedSlackUserIds(messages: SlackMessage[]): string[] {
   return [...ids];
 }
 
+type MentionAssigneeResolution =
+  | { kind: "none" }
+  | { kind: "unmapped" } // @mention present but no Bran user match
+  | { kind: "assignee"; userId: string }
+  | { kind: "ambiguous" }; // multiple distinct Bran users mentioned
+
 /**
- * Prefer a single @mentioned Bran user (other than the author) as the assignee.
- * Multiple distinct mentions → leave unset so AI can decide.
+ * Resolve @mentions to Bran users only. Non-Bran Slack users are ignored for assignment.
  */
 async function resolvePreferredAssigneeFromMentions(
   messages: SlackMessage[],
   authorSlackId: string
-): Promise<string | null> {
+): Promise<MentionAssigneeResolution> {
   const mentioned = collectMentionedSlackUserIds(messages).filter((id) => id !== authorSlackId);
-  if (mentioned.length === 0) return null;
+  if (mentioned.length === 0) return { kind: "none" };
 
   const branIds: string[] = [];
   for (const slackUserId of mentioned) {
@@ -197,7 +204,9 @@ async function resolvePreferredAssigneeFromMentions(
     }
   }
 
-  return branIds.length === 1 ? branIds[0] : null;
+  if (branIds.length === 0) return { kind: "unmapped" };
+  if (branIds.length === 1) return { kind: "assignee", userId: branIds[0] };
+  return { kind: "ambiguous" };
 }
 
 async function resolveExcludedChannelIds(): Promise<Set<string>> {
@@ -266,6 +275,134 @@ async function resolveBranUserIdForSlackUser(slackUserId: string): Promise<strin
   return user?.id ?? null;
 }
 
+async function resolveChannelName(channelId: string): Promise<string | undefined> {
+  try {
+    const data = await slackApi<{
+      ok: boolean;
+      channel?: { name?: string };
+    }>("conversations.info", { channel: channelId });
+    return data.channel?.name;
+  } catch {
+    return undefined;
+  }
+}
+
+async function buildCandidateFromMessages(input: {
+  channelId: string;
+  channelName?: string;
+  threadTs: string;
+  messages: SlackMessage[];
+}): Promise<WorkIngestCandidate | null> {
+  const rawText = buildThreadText(input.messages);
+  if (rawText.length < MIN_SLACK_WORK_TEXT_LENGTH) return null;
+
+  // Expand <@U…> mentions to display names so AI can match Bran team members.
+  const text = await resolveSlackMentionsInText(rawText);
+  if (text.length < MIN_SLACK_WORK_TEXT_LENGTH) return null;
+
+  const authorSlackId = input.messages.find((message) => message.user)?.user;
+  if (!authorSlackId) return null;
+
+  // Author must be an active Bran user (matched via Slack email).
+  const authorBranUserId = await resolveBranUserIdForSlackUser(authorSlackId);
+  if (!authorBranUserId) {
+    console.warn(
+      `[work.slack] Skip ${input.channelId}:${input.threadTs}: author is not a Bran user`
+    );
+    return null;
+  }
+
+  const mentionResolution = await resolvePreferredAssigneeFromMentions(
+    input.messages,
+    authorSlackId
+  );
+
+  // Tagged people must also map to Bran users — never assign to unknown Slack accounts.
+  if (mentionResolution.kind === "unmapped") {
+    console.warn(
+      `[work.slack] Skip ${input.channelId}:${input.threadTs}: @mention is not a Bran user`
+    );
+    return null;
+  }
+
+  const preferredAssigneeUserId =
+    mentionResolution.kind === "assignee" ? mentionResolution.userId : null;
+
+  const titleSource = await resolveSlackMentionsInText(input.messages[0]?.text ?? "");
+  const title =
+    input.channelName && titleSource
+      ? `#${input.channelName}: ${titleSource.slice(0, 120)}`
+      : titleSource.slice(0, 120) || "Slack thread";
+
+  return {
+    sourceType: "SLACK",
+    sourceId: `${input.channelId}:${input.threadTs}`,
+    ownerUserId: authorBranUserId,
+    preferredAssigneeUserId,
+    title,
+    text,
+    occurredAt: new Date(Number(input.threadTs.split(".")[0]) * 1000)
+  };
+}
+
+/**
+ * Near-real-time path: build one work-ingest candidate from a Slack Events API message.
+ */
+export async function loadSlackWorkIngestCandidateFromEvent(input: {
+  channelId: string;
+  userId: string;
+  text: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  threadTs?: string;
+}): Promise<WorkIngestCandidate | null> {
+  if (!env.slackBotToken) {
+    console.warn("[work.slack] SLACK_BOT_TOKEN is not set — skipping Slack work event");
+    return null;
+  }
+
+  const eventMessage: SlackMessage = {
+    user: input.userId,
+    text: input.text,
+    ts: input.ts,
+    bot_id: input.botId,
+    subtype: input.subtype,
+    thread_ts: input.threadTs
+  };
+
+  if (shouldSkipSlackMessage(eventMessage)) return null;
+
+  const excludedChannels = await resolveExcludedChannelIds();
+  if (excludedChannels.has(input.channelId)) {
+    return null;
+  }
+
+  const threadTs = input.threadTs ?? input.ts;
+  const sourceId = `${input.channelId}:${threadTs}`;
+  const existing = await findWorkUnitSource("SLACK", sourceId);
+  if (existing && (existing.status === "PROCESSED" || existing.status === "SKIPPED")) {
+    return null;
+  }
+
+  // Prefer full thread context when available (parent + replies).
+  let messages: SlackMessage[] = [eventMessage];
+  try {
+    const replies = await fetchThreadReplies(input.channelId, threadTs);
+    if (replies.length > 0) messages = replies;
+  } catch {
+    messages = [eventMessage];
+  }
+
+  const channelName = await resolveChannelName(input.channelId);
+  return buildCandidateFromMessages({
+    channelId: input.channelId,
+    channelName,
+    threadTs,
+    messages
+  });
+}
+
 export async function loadSlackWorkIngestCandidates(options?: {
   days?: number;
   maxPerRun?: number;
@@ -330,41 +467,13 @@ export async function loadSlackWorkIngestCandidates(options?: {
         }
       }
 
-      const rawText = buildThreadText(messages);
-      if (rawText.length < 40) continue;
-
-      // Expand <@U…> mentions to display names so AI can match Bran team members.
-      const text = await resolveSlackMentionsInText(rawText);
-      if (text.length < 40) continue;
-
-      const authorSlackId = messages.find((message) => message.user)?.user;
-      if (!authorSlackId) continue;
-
-      const ownerUserId = await resolveBranUserIdForSlackUser(authorSlackId);
-      if (!ownerUserId) continue;
-
-      const preferredAssigneeUserId = await resolvePreferredAssigneeFromMentions(
-        messages,
-        authorSlackId
-      );
-
-      const titleSource = await resolveSlackMentionsInText(messages[0]?.text ?? "");
-      const title =
-        channel.name && titleSource
-          ? `#${channel.name}: ${titleSource.slice(0, 120)}`
-          : titleSource.slice(0, 120) || "Slack thread";
-
-      const occurredAt = new Date(Number(threadTs.split(".")[0]) * 1000);
-
-      candidates.push({
-        sourceType: "SLACK",
-        sourceId,
-        ownerUserId,
-        preferredAssigneeUserId,
-        title,
-        text,
-        occurredAt
+      const candidate = await buildCandidateFromMessages({
+        channelId: channel.id,
+        channelName: channel.name,
+        threadTs,
+        messages
       });
+      if (candidate) candidates.push(candidate);
     }
   }
 

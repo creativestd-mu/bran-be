@@ -42,7 +42,10 @@ import {
 import type { WorkIngestSourceType } from "./work.constants";
 import { hasSimilarOpenWorkUnit } from "./work.dedup";
 import { loadGmailWorkIngestCandidates } from "./work.sources";
-import { loadSlackWorkIngestCandidates } from "./work.slack";
+import {
+  loadSlackWorkIngestCandidateFromEvent,
+  loadSlackWorkIngestCandidates
+} from "./work.slack";
 import { findWorkUnitSource, recordWorkUnitSource } from "./work.source-ledger";
 import type { WorkIngestCandidate } from "./work.sources";
 
@@ -345,7 +348,8 @@ async function ingestWorkFromText(input: {
 }) {
   if (input.useLedger && input.sourceType && input.sourceId) {
     const existing = await findWorkUnitSource(input.sourceType, input.sourceId);
-    if (existing) {
+    // Allow ERROR rows to be retried; PROCESSED/SKIPPED stay terminal.
+    if (existing && existing.status !== "ERROR") {
       return {
         transcript: input.text,
         workUnits: [],
@@ -441,6 +445,48 @@ export async function ingestWorkUnitsFromSlack() {
     created += result.workUnits.length;
   });
   return { scanned: candidates.length, created };
+}
+
+/**
+ * Slack Events webhook path — ingest a single channel/thread message near-real-time.
+ */
+export async function processSlackWorkMessage(input: {
+  channelId: string;
+  userId: string;
+  text?: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  threadTs?: string;
+}): Promise<{ handled: boolean; reason?: string; created?: number }> {
+  if (!isWorkExtractionAiConfigured()) {
+    return { handled: false, reason: "ai_not_configured" };
+  }
+
+  const text = input.text?.trim() ?? "";
+  if (!text) {
+    return { handled: false, reason: "empty_text" };
+  }
+
+  const candidate = await loadSlackWorkIngestCandidateFromEvent({
+    channelId: input.channelId,
+    userId: input.userId,
+    text,
+    ts: input.ts,
+    botId: input.botId,
+    subtype: input.subtype,
+    threadTs: input.threadTs
+  });
+
+  if (!candidate) {
+    return { handled: false, reason: "no_candidate" };
+  }
+
+  const result = await ingestWorkFromCandidate(candidate);
+  console.log(
+    `[work.slack-event] ${candidate.sourceId} → created ${result.workUnits.length} work unit(s)`
+  );
+  return { handled: true, created: result.workUnits.length };
 }
 
 async function mapWithConcurrency<T>(

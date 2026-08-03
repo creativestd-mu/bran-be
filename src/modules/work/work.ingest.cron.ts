@@ -26,6 +26,9 @@ export function startWorkIngestCron(): void {
   const interval = Math.max(env.workIngestIntervalMs, 60_000);
   console.log(`[work-ingest-cron] Enabled — ingesting every ${Math.round(interval / 1000)}s`);
 
+  // Catch anything posted while the process was down / before webhook fired.
+  void runIngest();
+
   timer = setInterval(() => {
     void runIngest();
   }, interval);

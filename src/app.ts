@@ -83,7 +83,8 @@ app.get("/", (_req, res) => {
       slackEvents: "/api/slack/events",
       slackCommands: "/api/slack/commands",
       etaCron: "/api/cron/eta-check",
-      escalationCron: "/api/cron/escalation-check"
+      escalationCron: "/api/cron/escalation-check",
+      workIngest: "slack message events + WORK_INGEST cron"
     }
   });
 });

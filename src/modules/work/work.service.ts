@@ -281,6 +281,7 @@ async function persistExtractedUnits(
     audioRecordingId?: string | null;
     sourceType?: WorkIngestSourceType;
     sourceId?: string;
+    preferredAssigneeUserId?: string | null;
   }
 ) {
   const { availableProjects, availableUsers, resolutionContext } = context;
@@ -296,7 +297,9 @@ async function persistExtractedUnits(
     });
 
     const assignedToUserId =
-      resolveUserIdFromName(unit.assigneeName, availableUsers, resolutionContext) ?? null;
+      resolveUserIdFromName(unit.assigneeName, availableUsers, resolutionContext) ??
+      meta.preferredAssigneeUserId ??
+      null;
     const ownerUserId = assignedToUserId ?? defaultOwnerUserId;
 
     if (await hasSimilarOpenWorkUnit(ownerUserId, unit.title)) {
@@ -336,6 +339,7 @@ async function ingestWorkFromText(input: {
   audioRecordingId?: string | null;
   sourceType?: WorkIngestSourceType;
   sourceId?: string;
+  preferredAssigneeUserId?: string | null;
   useLedger: boolean;
   throwOnExtractError: boolean;
 }) {
@@ -382,7 +386,8 @@ async function ingestWorkFromText(input: {
       transcriptOrText: input.text,
       audioRecordingId: input.audioRecordingId,
       sourceType: input.sourceType,
-      sourceId: input.sourceId
+      sourceId: input.sourceId,
+      preferredAssigneeUserId: input.preferredAssigneeUserId
     }
   );
 
@@ -412,6 +417,7 @@ async function ingestWorkFromCandidate(candidate: WorkIngestCandidate) {
     extractionKind: kind,
     sourceType: candidate.sourceType,
     sourceId: candidate.sourceId,
+    preferredAssigneeUserId: candidate.preferredAssigneeUserId,
     useLedger: true,
     throwOnExtractError: false
   });

@@ -149,6 +149,11 @@ function buildExtractionSystemPrompt(options: {
         ? "Slack channel/thread messages"
         : "spoken meeting notes or voice memos";
 
+  const slackMentionHint =
+    options.kind === "slack"
+      ? "In Slack threads, a person named with @ (e.g. @Dhananjay) is usually the assignee for that task — set assigneeName to their exact team-member name. "
+      : "";
+
   return (
     "You extract structured work units from " +
     kindLabel +
@@ -160,6 +165,7 @@ function buildExtractionSystemPrompt(options: {
     options.projectHint +
     "projectName must be null unless clearly mentioned; never invent a project name; " +
     options.teamHint +
+    slackMentionHint +
     "assigneeName at the work unit level means the whole task is for that person; assigneeName on a step means only that step is for them; set to null if unclear; only use exact names from the team members list; " +
     "sourceExcerpt must be a verbatim quote from the source that this work unit or step was derived from; use null only if no specific phrase can be identified; " +
     "deadline must be ISO-8601 resolved relative to the provided current date-time: use full datetime when a time is mentioned, otherwise date-only, or null if none mentioned; " +

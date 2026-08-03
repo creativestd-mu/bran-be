@@ -1,7 +1,10 @@
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { getSlackUserInfo, resolveChannelId as resolveAttendanceChannelId, type SlackMessage } from "../attendance/attendance.slack";
-import { resolveEscalationChannelId } from "../escalation/escalation.slack";
+import {
+  resolveEscalationChannelId,
+  resolveSlackMentionsInText
+} from "../escalation/escalation.slack";
 import { prisma } from "../../lib/prisma";
 import {
   DEFAULT_WORK_INGEST_LOOKBACK_DAYS,
@@ -10,6 +13,9 @@ import {
 } from "./work.constants";
 import { loadProcessedSourceKeys } from "./work.source-ledger";
 import type { WorkIngestCandidate } from "./work.sources";
+
+/** Slack mention markup: <@U123> or <@U123|display>. */
+const SLACK_MENTION_RE = /<@([UW][A-Z0-9]+)(?:\|[^>]+)?>/g;
 
 const SLACK_API = "https://slack.com/api";
 
@@ -160,6 +166,40 @@ function buildThreadText(messages: SlackMessage[]): string {
     .join("\n\n");
 }
 
+function collectMentionedSlackUserIds(messages: SlackMessage[]): string[] {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    if (shouldSkipSlackMessage(message)) continue;
+    const text = message.text ?? "";
+    for (const match of text.matchAll(SLACK_MENTION_RE)) {
+      ids.add(match[1]);
+    }
+  }
+  return [...ids];
+}
+
+/**
+ * Prefer a single @mentioned Bran user (other than the author) as the assignee.
+ * Multiple distinct mentions → leave unset so AI can decide.
+ */
+async function resolvePreferredAssigneeFromMentions(
+  messages: SlackMessage[],
+  authorSlackId: string
+): Promise<string | null> {
+  const mentioned = collectMentionedSlackUserIds(messages).filter((id) => id !== authorSlackId);
+  if (mentioned.length === 0) return null;
+
+  const branIds: string[] = [];
+  for (const slackUserId of mentioned) {
+    const branUserId = await resolveBranUserIdForSlackUser(slackUserId);
+    if (branUserId && !branIds.includes(branUserId)) {
+      branIds.push(branUserId);
+    }
+  }
+
+  return branIds.length === 1 ? branIds[0] : null;
+}
+
 async function resolveExcludedChannelIds(): Promise<Set<string>> {
   const excluded = new Set<string>();
 
@@ -290,7 +330,11 @@ export async function loadSlackWorkIngestCandidates(options?: {
         }
       }
 
-      const text = buildThreadText(messages);
+      const rawText = buildThreadText(messages);
+      if (rawText.length < 40) continue;
+
+      // Expand <@U…> mentions to display names so AI can match Bran team members.
+      const text = await resolveSlackMentionsInText(rawText);
       if (text.length < 40) continue;
 
       const authorSlackId = messages.find((message) => message.user)?.user;
@@ -299,10 +343,16 @@ export async function loadSlackWorkIngestCandidates(options?: {
       const ownerUserId = await resolveBranUserIdForSlackUser(authorSlackId);
       if (!ownerUserId) continue;
 
+      const preferredAssigneeUserId = await resolvePreferredAssigneeFromMentions(
+        messages,
+        authorSlackId
+      );
+
+      const titleSource = await resolveSlackMentionsInText(messages[0]?.text ?? "");
       const title =
-        channel.name && messages[0]?.text
-          ? `#${channel.name}: ${messages[0].text.slice(0, 120)}`
-          : messages[0]?.text?.slice(0, 120) ?? "Slack thread";
+        channel.name && titleSource
+          ? `#${channel.name}: ${titleSource.slice(0, 120)}`
+          : titleSource.slice(0, 120) || "Slack thread";
 
       const occurredAt = new Date(Number(threadTs.split(".")[0]) * 1000);
 
@@ -310,6 +360,7 @@ export async function loadSlackWorkIngestCandidates(options?: {
         sourceType: "SLACK",
         sourceId,
         ownerUserId,
+        preferredAssigneeUserId,
         title,
         text,
         occurredAt

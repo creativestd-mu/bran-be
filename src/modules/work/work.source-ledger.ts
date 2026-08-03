@@ -42,8 +42,12 @@ export async function recordWorkUnitSource(input: {
 export async function loadProcessedSourceKeys(
   sourceType: WorkIngestSourceType
 ): Promise<Set<string>> {
+  // Retry ERROR rows on the next cron pass; skip only settled outcomes.
   const rows = await prisma.workUnitSource.findMany({
-    where: { sourceType },
+    where: {
+      sourceType,
+      status: { in: ["PROCESSED", "SKIPPED"] }
+    },
     select: { sourceId: true }
   });
   return new Set(rows.map((row) => row.sourceId));

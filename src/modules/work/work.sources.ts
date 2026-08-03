@@ -12,6 +12,8 @@ export type WorkIngestCandidate = {
   sourceType: WorkIngestSourceType;
   sourceId: string;
   ownerUserId: string;
+  /** When set (e.g. a single @mention in Slack), used if AI does not resolve an assignee. */
+  preferredAssigneeUserId?: string | null;
   title: string;
   text: string;
   occurredAt: Date;

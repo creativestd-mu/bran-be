@@ -237,34 +237,59 @@ export async function authTest(): Promise<{ ok: boolean; user?: string; team?: s
   return slackApi("auth.test");
 }
 
+export type SlackSignatureFailureReason =
+  | "missing_secret"
+  | "missing_headers"
+  | "bad_timestamp"
+  | "stale_timestamp"
+  | "mismatch";
+
 export function verifySlackSignature(params: {
   signingSecret: string;
   signature: string | undefined;
   timestamp: string | undefined;
-  rawBody: string;
-}): boolean {
+  rawBody: string | Buffer;
+}): { ok: true } | { ok: false; reason: SlackSignatureFailureReason; detail?: string } {
   const { signingSecret, signature, timestamp, rawBody } = params;
-  if (!signingSecret || !signature || !timestamp) {
-    return false;
+  if (!signingSecret) {
+    return { ok: false, reason: "missing_secret" };
+  }
+  if (!signature || !timestamp) {
+    return { ok: false, reason: "missing_headers" };
   }
 
   const ts = Number(timestamp);
-  if (!Number.isFinite(ts)) return false;
+  if (!Number.isFinite(ts)) {
+    return { ok: false, reason: "bad_timestamp" };
+  }
 
   const ageSeconds = Math.abs(Date.now() / 1000 - ts);
   if (ageSeconds > 60 * 5) {
-    return false;
+    return {
+      ok: false,
+      reason: "stale_timestamp",
+      detail: `age=${Math.round(ageSeconds)}s`
+    };
   }
 
-  const base = `v0:${timestamp}:${rawBody}`;
+  const bodyBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody, "utf8");
+  const base = Buffer.concat([Buffer.from(`v0:${timestamp}:`, "utf8"), bodyBuffer]);
   const hmac = crypto.createHmac("sha256", signingSecret).update(base).digest("hex");
   const computed = `v0=${hmac}`;
 
   try {
     const a = Buffer.from(computed);
     const b = Buffer.from(signature);
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+      return { ok: true };
+    }
   } catch {
-    return false;
+    // fall through to mismatch
   }
+
+  return {
+    ok: false,
+    reason: "mismatch",
+    detail: `bodyBytes=${bodyBuffer.length} secretLen=${signingSecret.length}`
+  };
 }

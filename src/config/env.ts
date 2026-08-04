@@ -39,6 +39,11 @@ function parsePositiveNumber(value: string | undefined, fallback: number): numbe
   return parsed;
 }
 
+/** Trim and strip wrapping quotes — Railway/dotenv often leave these on secrets. */
+function cleanEnvSecret(value: string | undefined): string {
+  return (value ?? "").trim().replace(/^['"]|['"]$/g, "");
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: parsedPort,
@@ -138,8 +143,8 @@ export const env = {
     from: process.env.SMTP_FROM ?? ""
   },
   // Attendance / ETA tracker (Slack)
-  slackBotToken: process.env.SLACK_BOT_TOKEN ?? "",
-  slackSigningSecret: process.env.SLACK_SIGNING_SECRET ?? "",
+  slackBotToken: cleanEnvSecret(process.env.SLACK_BOT_TOKEN),
+  slackSigningSecret: cleanEnvSecret(process.env.SLACK_SIGNING_SECRET),
   slackChannelName: process.env.SLACK_CHANNEL_NAME ?? "cs-day-off",
   slackChannelId: process.env.SLACK_CHANNEL_ID ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",

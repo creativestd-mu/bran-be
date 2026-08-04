@@ -19,30 +19,40 @@ import {
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
 import { processSlackWorkMessage } from "../work/work.service";
 
-function readRawBody(req: Request): string {
-  if (req.body instanceof Buffer) {
-    return req.body.toString("utf8");
-  }
-  if (typeof req.body === "string") {
+function readRawBodyBuffer(req: Request): Buffer {
+  if (Buffer.isBuffer(req.body)) {
     return req.body;
   }
-  return JSON.stringify(req.body ?? {});
+  if (typeof req.body === "string") {
+    return Buffer.from(req.body, "utf8");
+  }
+  // Body was parsed/rewritten — signature will almost certainly fail.
+  console.warn(
+    "[slack-webhook] Request body is not a raw Buffer; Slack signature verification will likely fail"
+  );
+  return Buffer.from(JSON.stringify(req.body ?? {}), "utf8");
 }
 
-function assertSlackSignature(req: Request, rawBody: string): void {
+function assertSlackSignature(req: Request, rawBody: Buffer): void {
   if (!env.slackSigningSecret) {
     throw new HttpError(500, "SLACK_SIGNING_SECRET is not configured");
   }
 
-  const valid = verifySlackSignature({
+  const result = verifySlackSignature({
     signingSecret: env.slackSigningSecret,
     signature: req.header("x-slack-signature") ?? undefined,
     timestamp: req.header("x-slack-request-timestamp") ?? undefined,
     rawBody
   });
 
-  if (!valid) {
-    throw new HttpError(401, "Invalid Slack signature");
+  if (!result.ok) {
+    console.error("[slack-webhook] Signature verification failed:", {
+      reason: result.reason,
+      detail: result.detail,
+      contentType: req.header("content-type") ?? null,
+      bodyIsBuffer: Buffer.isBuffer(req.body)
+    });
+    throw new HttpError(401, `Invalid Slack signature (${result.reason})`);
   }
 }
 
@@ -60,7 +70,7 @@ export async function slackEventsHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const rawBody = readRawBody(req);
+    const rawBody = readRawBodyBuffer(req);
 
     let payload: {
       type?: string;
@@ -90,7 +100,7 @@ export async function slackEventsHandler(
     };
 
     try {
-      payload = JSON.parse(rawBody) as typeof payload;
+      payload = JSON.parse(rawBody.toString("utf8")) as typeof payload;
     } catch {
       throw new HttpError(400, "Invalid JSON body");
     }
@@ -175,10 +185,10 @@ export async function slackCommandsHandler(
   next: NextFunction
 ): Promise<void> {
   try {
-    const rawBody = readRawBody(req);
+    const rawBody = readRawBodyBuffer(req);
     assertSlackSignature(req, rawBody);
 
-    const params = new URLSearchParams(rawBody);
+    const params = new URLSearchParams(rawBody.toString("utf8"));
     const userId = params.get("user_id") ?? "";
     const text = (params.get("text") ?? "").trim();
     const channelId = params.get("channel_id") ?? "";

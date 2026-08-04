@@ -105,7 +105,7 @@ prereadRouter.put("/:id/members", async (req, res, next) => {
   try {
     const id = param(req.params.id);
     const payload = replaceMembersSchema.parse(req.body);
-    const data = await replaceMembers(id, req.user!.userId, payload.userIds);
+    const data = await replaceMembers(id, req.user!.userId, payload.members);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

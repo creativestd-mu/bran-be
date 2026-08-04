@@ -1,4 +1,4 @@
-import type { PrereadNodeKind } from "@prisma/client";
+import type { PrereadMemberRole, PrereadNodeKind } from "@prisma/client";
 
 import { prisma } from "../../lib/prisma";
 
@@ -78,13 +78,20 @@ export async function deletePreread(id: string) {
   return prisma.preread.delete({ where: { id } });
 }
 
-export async function replacePrereadMembers(prereadId: string, userIds: string[]) {
+export async function replacePrereadMembers(
+  prereadId: string,
+  members: Array<{ userId: string; role: PrereadMemberRole }>
+) {
   return prisma.$transaction(async (tx) => {
     await tx.prereadMember.deleteMany({ where: { prereadId } });
-    if (userIds.length === 0) return [];
+    if (members.length === 0) return [];
 
     await tx.prereadMember.createMany({
-      data: userIds.map((userId) => ({ prereadId, userId })),
+      data: members.map((member) => ({
+        prereadId,
+        userId: member.userId,
+        role: member.role
+      })),
       skipDuplicates: true
     });
 

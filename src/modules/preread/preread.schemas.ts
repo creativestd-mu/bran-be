@@ -13,7 +13,12 @@ export const updatePrereadSchema = z.object({
 });
 
 export const replaceMembersSchema = z.object({
-  userIds: z.array(z.string().uuid())
+  members: z.array(
+    z.object({
+      userId: z.string().uuid(),
+      role: z.enum(["viewer", "editor"]).default("viewer")
+    })
+  )
 });
 
 export const createNodeSchema = z.object({

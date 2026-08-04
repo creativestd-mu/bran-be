@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { PrereadNodeKind } from "@prisma/client";
+import type { PrereadMemberRole, PrereadNodeKind } from "@prisma/client";
 
 import {
   deleteStoredFile,
@@ -19,7 +19,7 @@ type UserSummary = {
   designation: string | null;
 };
 
-export type PrereadAccess = "owner" | "member";
+export type PrereadAccess = "owner" | "editor" | "viewer";
 
 export interface PrereadTreeNode {
   id: string;
@@ -127,9 +127,13 @@ function buildTree(nodes: Awaited<ReturnType<typeof repo.findNodesByPrereadId>>)
   return roots;
 }
 
-function getAccess(preread: { ownerId: string }, userId: string, isMember: boolean): PrereadAccess {
+function getAccess(
+  preread: { ownerId: string },
+  userId: string,
+  member: { role: PrereadMemberRole } | undefined
+): PrereadAccess {
   if (preread.ownerId === userId) return "owner";
-  if (isMember) return "member";
+  if (member) return member.role;
   throw new HttpError(403, "You do not have access to this preread.");
 }
 
@@ -141,17 +145,25 @@ async function loadPrereadOrThrow(prereadId: string) {
 
 export async function assertCanAccess(prereadId: string, userId: string) {
   const preread = await loadPrereadOrThrow(prereadId);
-  const isMember = preread.members.some((member) => member.userId === userId);
-  if (preread.ownerId !== userId && !isMember) {
+  const member = preread.members.find((m) => m.userId === userId);
+  if (preread.ownerId !== userId && !member) {
     throw new HttpError(403, "You do not have access to this preread.");
   }
-  return { preread, access: getAccess(preread, userId, isMember) };
+  return { preread, access: getAccess(preread, userId, member) };
 }
 
 export async function assertIsOwner(prereadId: string, userId: string) {
   const { preread, access } = await assertCanAccess(prereadId, userId);
   if (access !== "owner") {
     throw new HttpError(403, "Only the preread owner can perform this action.");
+  }
+  return preread;
+}
+
+export async function assertCanEdit(prereadId: string, userId: string) {
+  const { preread, access } = await assertCanAccess(prereadId, userId);
+  if (access !== "owner" && access !== "editor") {
+    throw new HttpError(403, "You need edit access to perform this action.");
   }
   return preread;
 }
@@ -189,20 +201,21 @@ function serializePrereadSummary(
   preread: Awaited<ReturnType<typeof repo.listPrereadsForUser>>[number],
   userId: string
 ) {
-  const isMember = preread.members.some((member) => member.userId === userId);
+  const member = preread.members.find((m) => m.userId === userId);
   return {
     id: preread.id,
     title: preread.title,
     description: preread.description,
     ownerId: preread.ownerId,
     owner: serializeUser(preread.owner),
-    access: getAccess(preread, userId, isMember),
+    access: getAccess(preread, userId, member),
     memberCount: preread.members.length,
     nodeCount: preread._count.nodes,
-    members: preread.members.map((member) => ({
-      userId: member.userId,
-      user: serializeUser(member.user),
-      createdAt: member.createdAt.toISOString()
+    members: preread.members.map((m) => ({
+      userId: m.userId,
+      user: serializeUser(m.user),
+      role: m.role,
+      createdAt: m.createdAt.toISOString()
     })),
     createdAt: preread.createdAt.toISOString(),
     updatedAt: preread.updatedAt.toISOString()
@@ -239,6 +252,7 @@ export async function getPrereadDetail(prereadId: string, userId: string) {
     members: preread.members.map((member) => ({
       userId: member.userId,
       user: serializeUser(member.user),
+      role: member.role,
       createdAt: member.createdAt.toISOString()
     })),
     tree: buildTree(nodes),
@@ -252,7 +266,7 @@ export async function updatePreread(
   userId: string,
   data: { title?: string; description?: string | null }
 ) {
-  await assertIsOwner(prereadId, userId);
+  await assertCanEdit(prereadId, userId);
   await repo.updatePreread(prereadId, data);
   return getPrereadDetail(prereadId, userId);
 }
@@ -268,15 +282,27 @@ export async function deletePreread(prereadId: string, userId: string) {
   }
 }
 
-export async function replaceMembers(prereadId: string, userId: string, userIds: string[]) {
+export async function replaceMembers(
+  prereadId: string,
+  userId: string,
+  members: Array<{ userId: string; role: PrereadMemberRole }>
+) {
   const preread = await assertIsOwner(prereadId, userId);
-  const uniqueIds = [...new Set(userIds.filter((id) => id !== preread.ownerId))];
-  const validUsers = await repo.findValidUserIds(uniqueIds);
-  const validIds = validUsers.map((user) => user.id);
-  const members = await repo.replacePrereadMembers(prereadId, validIds);
-  return members.map((member) => ({
+  const roleByUserId = new Map<string, PrereadMemberRole>();
+  for (const entry of members) {
+    if (entry.userId === preread.ownerId) continue;
+    roleByUserId.set(entry.userId, entry.role);
+  }
+  const validUsers = await repo.findValidUserIds([...roleByUserId.keys()]);
+  const validEntries = validUsers.map((user) => ({
+    userId: user.id,
+    role: roleByUserId.get(user.id)!
+  }));
+  const saved = await repo.replacePrereadMembers(prereadId, validEntries);
+  return saved.map((member) => ({
     userId: member.userId,
     user: serializeUser(member.user),
+    role: member.role,
     createdAt: member.createdAt.toISOString()
   }));
 }
@@ -292,7 +318,7 @@ export async function createNode(
     orderIndex?: number;
   }
 ) {
-  await assertIsOwner(prereadId, userId);
+  await assertCanEdit(prereadId, userId);
   await validateParent(prereadId, data.parentId);
   const node = await repo.createNode({
     prereadId,
@@ -317,7 +343,7 @@ export async function updateNode(
     orderIndex?: number;
   }
 ) {
-  await assertIsOwner(prereadId, userId);
+  await assertCanEdit(prereadId, userId);
   await assertNodeInPreread(prereadId, nodeId);
   if (data.parentId !== undefined) {
     await validateParent(prereadId, data.parentId, nodeId);
@@ -339,7 +365,7 @@ async function collectDescendantMedia(
 }
 
 export async function deleteNode(prereadId: string, nodeId: string, userId: string) {
-  await assertIsOwner(prereadId, userId);
+  await assertCanEdit(prereadId, userId);
   await assertNodeInPreread(prereadId, nodeId);
   // The node's children cascade-delete in the DB, but their media files on
   // disk/S3 must be cleaned up explicitly, so collect the whole subtree first.
@@ -381,7 +407,7 @@ export async function deleteNodeComment(
   if (!comment || comment.nodeId !== nodeId) {
     throw new HttpError(404, "Comment not found.");
   }
-  if (access !== "owner" && comment.authorId !== userId) {
+  if (access === "viewer" && comment.authorId !== userId) {
     throw new HttpError(403, "You can only delete your own comments.");
   }
   await repo.deleteComment(commentId);
@@ -393,7 +419,7 @@ export async function uploadNodeMedia(
   userId: string,
   file: Express.Multer.File
 ) {
-  await assertIsOwner(prereadId, userId);
+  await assertCanEdit(prereadId, userId);
   await assertNodeInPreread(prereadId, nodeId);
 
   const mediaId = crypto.randomUUID();
@@ -441,7 +467,7 @@ export async function deleteNodeMedia(
   mediaId: string,
   userId: string
 ) {
-  await assertIsOwner(prereadId, userId);
+  await assertCanEdit(prereadId, userId);
   await assertNodeInPreread(prereadId, nodeId);
   const media = await repo.findMediaById(mediaId);
   if (!media || media.nodeId !== nodeId) {

@@ -37,17 +37,29 @@ import { enrichWorkUnitWithTagging } from "./work.tagging";
 import { listAllProjectSummaries } from "../projects/projects.repository";
 import { prisma } from "../../lib/prisma";
 import {
-  findVoiceRecordingById
+  findVoiceRecordingById,
+  updateVoiceRecording
 } from "../voice-recording/voice-recording.repository";
 import type { WorkIngestSourceType } from "./work.constants";
 import { hasSimilarOpenWorkUnit } from "./work.dedup";
 import { loadGmailWorkIngestCandidates } from "./work.sources";
+import { postSlackMessage, sendDm } from "../attendance/attendance.slack";
 import {
   loadSlackWorkIngestCandidateFromEvent,
-  loadSlackWorkIngestCandidates
+  loadSlackWorkIngestCandidates,
+  resolveBranUserIdForSlackUser
 } from "./work.slack";
+import {
+  downloadSlackAudio,
+  extractSlackAudioAttachments,
+  isAcceptAsIsConfirmReply,
+  isSlackDmChannel
+} from "./work.slack-voice";
 import { findWorkUnitSource, recordWorkUnitSource } from "./work.source-ledger";
 import type { WorkIngestCandidate } from "./work.sources";
+import type { SlackFile } from "../escalation/escalation.slack";
+
+const SLACK_VOICE_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -90,7 +102,8 @@ function parseRangeTo(value?: string): Date | undefined {
 }
 
 function canViewAll(roleName: string): boolean {
-  return roleName === "admin" || roleName === "manager" || roleName === "superadmin";
+  const role = roleName.trim().toLowerCase();
+  return role === "admin" || role === "manager" || role === "superadmin" || role === "chief_of_staff";
 }
 
 function canAccessWorkUnit(
@@ -261,6 +274,7 @@ export async function createWorkUnitsFromRecording(
   options?: {
     sourceType?: WorkIngestSourceType;
     sourceId?: string;
+    throwOnExtractError?: boolean;
   }
 ) {
   return ingestWorkFromText({
@@ -271,7 +285,7 @@ export async function createWorkUnitsFromRecording(
     sourceType: options?.sourceType,
     sourceId: options?.sourceId,
     useLedger: Boolean(options?.sourceType && options?.sourceId),
-    throwOnExtractError: true
+    throwOnExtractError: options?.throwOnExtractError ?? true
   });
 }
 
@@ -463,6 +477,11 @@ export async function processSlackWorkMessage(input: {
     return { handled: false, reason: "ai_not_configured" };
   }
 
+  // Channel work ingest is for channels; DMs use the voice-draft flow instead.
+  if (isSlackDmChannel(input.channelId)) {
+    return { handled: false, reason: "dm_skipped" };
+  }
+
   const text = input.text?.trim() ?? "";
   if (!text) {
     return { handled: false, reason: "empty_text" };
@@ -487,6 +506,291 @@ export async function processSlackWorkMessage(input: {
     `[work.slack-event] ${candidate.sourceId} → created ${result.workUnits.length} work unit(s)`
   );
   return { handled: true, created: result.workUnits.length };
+}
+
+/**
+ * DM voice note → Sarvam transcript → draft → thread reply asking for confirm/edit.
+ */
+export async function processSlackVoiceWorkMessage(input: {
+  channelId: string;
+  userId: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  channelType?: string;
+  files?: SlackFile[];
+}): Promise<{ handled: boolean; reason?: string }> {
+  if (input.botId) {
+    return { handled: false, reason: "ignored_bot" };
+  }
+
+  // Allow file_share (typical for Slack voice notes); skip other subtypes.
+  if (input.subtype && input.subtype !== "file_share") {
+    return { handled: false, reason: "ignored_subtype" };
+  }
+
+  if (!isSlackDmChannel(input.channelId, input.channelType)) {
+    return { handled: false, reason: "not_dm" };
+  }
+
+  const attachments = extractSlackAudioAttachments(input.files);
+  if (attachments.length === 0) {
+    return { handled: false, reason: "no_audio" };
+  }
+
+  const existing = await prisma.slackVoiceWorkDraft.findUnique({
+    where: {
+      slackChannelId_slackThreadTs: {
+        slackChannelId: input.channelId,
+        slackThreadTs: input.ts
+      }
+    }
+  });
+  if (existing) {
+    return { handled: false, reason: "already_drafted" };
+  }
+
+  const branUserId = await resolveBranUserIdForSlackUser(input.userId);
+  if (!branUserId) {
+    try {
+      await sendDm(
+        input.userId,
+        "Your Slack email isn’t linked to a Bran account yet, so I can’t turn this voice note into work units. Ask an admin to match your Slack email to Bran, then try again."
+      );
+    } catch (error) {
+      console.error("[work.slack-voice] failed to notify unlinked user:", error);
+    }
+    return { handled: false, reason: "bran_user_unlinked" };
+  }
+
+  const audio = await downloadSlackAudio(attachments[0]);
+  if (!audio) {
+    try {
+      await postSlackMessage(
+        input.channelId,
+        "I couldn’t download that voice note (unsupported format or over 25 MB). Try again with a shorter clip.",
+        { threadTs: input.ts }
+      );
+    } catch (error) {
+      console.error("[work.slack-voice] failed to post download error:", error);
+    }
+    return { handled: false, reason: "download_failed" };
+  }
+
+  let recording: { id: string };
+  let transcript: string;
+  try {
+    const archived = await transcribeAndArchiveVoiceRecording({
+      userId: branUserId,
+      source: "slack_work",
+      fileBuffer: audio.buffer,
+      originalname: audio.name,
+      mimetype: audio.mimetype
+    });
+    recording = archived.recording;
+    transcript = archived.sarvam.transcript.trim();
+  } catch (error) {
+    console.error("[work.slack-voice] transcription failed:", error);
+    try {
+      await postSlackMessage(
+        input.channelId,
+        "Sorry — I couldn’t transcribe that voice note. Please try again in a moment.",
+        { threadTs: input.ts }
+      );
+    } catch (postError) {
+      console.error("[work.slack-voice] failed to post transcription error:", postError);
+    }
+    return { handled: false, reason: "transcription_failed" };
+  }
+
+  if (!transcript) {
+    try {
+      await postSlackMessage(
+        input.channelId,
+        "I got the audio but couldn’t extract any speech. Try speaking a bit clearer or longer.",
+        { threadTs: input.ts }
+      );
+    } catch (error) {
+      console.error("[work.slack-voice] failed to post empty transcript notice:", error);
+    }
+    return { handled: false, reason: "empty_transcript" };
+  }
+
+  try {
+    await prisma.slackVoiceWorkDraft.create({
+      data: {
+        branUserId,
+        slackUserId: input.userId,
+        slackChannelId: input.channelId,
+        slackThreadTs: input.ts,
+        voiceRecordingId: recording.id,
+        transcript,
+        status: "AWAITING_CONFIRM"
+      }
+    });
+  } catch (error) {
+    // Unique collision from a concurrent duplicate event — treat as already handled.
+    console.warn("[work.slack-voice] draft create race:", error);
+    return { handled: false, reason: "draft_create_race" };
+  }
+
+  const reply = [
+    "Here's the transcript:",
+    "",
+    transcript,
+    "",
+    "Reply in this thread with your edited text to create work units,",
+    "or reply `create` to use this as-is."
+  ].join("\n");
+
+  try {
+    await postSlackMessage(input.channelId, reply, { threadTs: input.ts });
+  } catch (error) {
+    console.error("[work.slack-voice] failed to post transcript reply:", error);
+  }
+
+  console.log(
+    `[work.slack-voice] draft ready for ${input.channelId}:${input.ts} (recording ${recording.id})`
+  );
+  return { handled: true };
+}
+
+/**
+ * DM thread reply on a voice draft → create work units from edited or accepted transcript.
+ */
+export async function processSlackVoiceWorkConfirm(input: {
+  channelId: string;
+  userId: string;
+  text?: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  threadTs?: string;
+  channelType?: string;
+}): Promise<{ handled: boolean; reason?: string; created?: number }> {
+  if (input.botId || input.subtype) {
+    return { handled: false, reason: "ignored_bot_or_subtype" };
+  }
+
+  if (!isSlackDmChannel(input.channelId, input.channelType)) {
+    return { handled: false, reason: "not_dm" };
+  }
+
+  const threadTs = input.threadTs;
+  if (!threadTs || threadTs === input.ts) {
+    return { handled: false, reason: "not_thread_reply" };
+  }
+
+  const text = input.text?.trim() ?? "";
+  if (!text) {
+    return { handled: false, reason: "empty_text" };
+  }
+
+  const draft = await prisma.slackVoiceWorkDraft.findUnique({
+    where: {
+      slackChannelId_slackThreadTs: {
+        slackChannelId: input.channelId,
+        slackThreadTs: threadTs
+      }
+    }
+  });
+
+  if (!draft) {
+    return { handled: false, reason: "no_draft" };
+  }
+
+  if (draft.status === "CREATED") {
+    return { handled: false, reason: "already_created" };
+  }
+
+  if (draft.status === "EXPIRED" || draft.status === "FAILED") {
+    return { handled: false, reason: `draft_${draft.status.toLowerCase()}` };
+  }
+
+  if (draft.status !== "AWAITING_CONFIRM") {
+    return { handled: false, reason: "draft_not_awaiting" };
+  }
+
+  const ageMs = Date.now() - draft.createdAt.getTime();
+  if (ageMs > SLACK_VOICE_DRAFT_TTL_MS) {
+    await prisma.slackVoiceWorkDraft.update({
+      where: { id: draft.id },
+      data: { status: "EXPIRED" }
+    });
+    try {
+      await postSlackMessage(
+        input.channelId,
+        "This voice draft expired (older than 24 hours). Send a new voice note to start again.",
+        { threadTs }
+      );
+    } catch (error) {
+      console.error("[work.slack-voice] failed to post expiry notice:", error);
+    }
+    return { handled: false, reason: "draft_expired" };
+  }
+
+  if (draft.slackUserId !== input.userId) {
+    return { handled: false, reason: "wrong_user" };
+  }
+
+  const finalText = isAcceptAsIsConfirmReply(text) ? draft.transcript : text;
+  if (!finalText.trim()) {
+    return { handled: false, reason: "empty_final_text" };
+  }
+
+  if (!isWorkExtractionAiConfigured()) {
+    try {
+      await postSlackMessage(
+        input.channelId,
+        "Work extraction isn’t configured right now, so I can’t create work units from this yet.",
+        { threadTs }
+      );
+    } catch (error) {
+      console.error("[work.slack-voice] failed to post AI-config notice:", error);
+    }
+    return { handled: false, reason: "ai_not_configured" };
+  }
+
+  try {
+    const result = await createWorkUnitsFromRecording(
+      draft.branUserId,
+      { id: draft.voiceRecordingId },
+      finalText,
+      { sourceType: "SLACK", sourceId: draft.id, throwOnExtractError: false }
+    );
+
+    await prisma.slackVoiceWorkDraft.update({
+      where: { id: draft.id },
+      data: { status: "CREATED" }
+    });
+
+    const titles = result.workUnits.map((unit) => `• ${unit.title}`).join("\n");
+    const count = result.workUnits.length;
+    const reply =
+      count === 0
+        ? "I processed that, but didn’t find any new work units to create (they may already exist)."
+        : `Created ${count} work unit${count === 1 ? "" : "s"}:\n${titles}`;
+
+    await postSlackMessage(input.channelId, reply, { threadTs });
+
+    console.log(
+      `[work.slack-voice] confirm ${draft.id} → created ${count} work unit(s)`
+    );
+    return { handled: true, created: count };
+  } catch (error) {
+    console.error("[work.slack-voice] confirm/create failed:", error);
+    try {
+      await postSlackMessage(
+        input.channelId,
+        "Sorry — I couldn’t create work units from that text. Reply again with an edit (or `create`), or send a new voice note.",
+        { threadTs }
+      );
+    } catch (postError) {
+      console.error("[work.slack-voice] failed to post create error:", postError);
+    }
+    // Leave status AWAITING_CONFIRM so the user can retry.
+    return { handled: true, reason: "create_failed" };
+  }
 }
 
 async function mapWithConcurrency<T>(
@@ -632,18 +936,19 @@ export async function listWorkUnits(options: {
   const page = Math.max(1, Number(options.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(options.pageSize) || 20));
 
-  // Admins/managers may filter by any user; others can only see their own units.
+  // Admins/managers may list everyone or filter by person; others only see their own.
   const isPrivileged = canViewAll(options.viewerRole ?? "");
-  const filterUserId =
-    options.targetUserId && isPrivileged
-      ? options.targetUserId
-      : options.viewerUserId;
+  const filterUserId = isPrivileged ? options.targetUserId : options.viewerUserId;
 
   const { items, total } = await findWorkUnits({
     userId: filterUserId,
     status: options.status,
     from: parseRangeFrom(options.from),
     to: parseRangeTo(options.to),
+    // Privileged "everyone": hide others' private units. Person filter: include that person's private units.
+    isPrivateVisibleForUserId: isPrivileged
+      ? (options.targetUserId ?? options.viewerUserId)
+      : undefined,
     page,
     pageSize
   });
@@ -940,16 +1245,26 @@ export async function createWorkUnitsFromAudio(
   };
 }
 
-export async function regenerateWorkUnitsFromRecording(recordingId: string, userId: string) {
+export async function regenerateWorkUnitsFromRecording(
+  recordingId: string,
+  userId: string,
+  transcript?: string
+) {
   const recording = await findVoiceRecordingById(recordingId);
   if (!recording) {
     throw new HttpError(404, "Voice recording not found");
   }
-  if (!recording.transcript) {
+
+  const nextTranscript = (transcript ?? recording.transcript)?.trim() ?? "";
+  if (!nextTranscript) {
     throw new HttpError(422, "Voice recording has no transcript to regenerate from");
   }
 
-  const result = await createWorkUnitsFromRecording(userId, recording, recording.transcript, {
+  if (nextTranscript !== (recording.transcript ?? "").trim()) {
+    await updateVoiceRecording(recordingId, { transcript: nextTranscript });
+  }
+
+  const result = await createWorkUnitsFromRecording(userId, recording, nextTranscript, {
     ...(await prisma.meeting
       .findFirst({
         where: { voiceRecordingId: recordingId },
@@ -961,8 +1276,8 @@ export async function regenerateWorkUnitsFromRecording(recordingId: string, user
   });
 
   return {
-    transcript: recording.transcript,
-    audioRecording: recording,
+    transcript: nextTranscript,
+    audioRecording: { ...recording, transcript: nextTranscript },
     workUnits: result.workUnits,
     taggingMappings: result.taggingMappings
   };

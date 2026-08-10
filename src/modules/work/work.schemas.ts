@@ -54,6 +54,10 @@ export const deadlinesQuerySchema = z.object({
   date: z.string().datetime().optional()
 });
 
+export const regenerateFromRecordingSchema = z.object({
+  transcript: z.string().trim().min(1).max(100_000).optional()
+});
+
 export const reassignWorkUnitAssignmentsSchema = z
   .object({
     ownerUserId: z.string().uuid().nullable().optional(),

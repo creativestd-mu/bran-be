@@ -17,7 +17,12 @@ import {
   verifySlackSignature
 } from "./attendance.slack";
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
-import { processSlackWorkMessage } from "../work/work.service";
+import {
+  processSlackVoiceWorkConfirm,
+  processSlackVoiceWorkMessage,
+  processSlackWorkMessage
+} from "../work/work.service";
+import { hasSlackAudioFiles, isSlackDmChannel } from "../work/work.slack-voice";
 
 function readRawBodyBuffer(req: Request): Buffer {
   if (Buffer.isBuffer(req.body)) {
@@ -91,6 +96,7 @@ export async function slackEventsHandler(
           title?: string;
           mimetype?: string;
           filetype?: string;
+          size?: number;
           url_private?: string;
           url_private_download?: string;
           permalink?: string;
@@ -127,8 +133,58 @@ export async function slackEventsHandler(
 
     const hasText = Boolean(event.text?.trim());
     const hasFiles = Boolean(event.files?.length);
+    const isDm = isSlackDmChannel(event.channel, event.channel_type);
+    const hasAudio = hasSlackAudioFiles(event.files);
+    const isThreadReply = Boolean(event.thread_ts && event.thread_ts !== event.ts);
 
-    if (hasText) {
+    // DM voice → transcript draft (async; STT can exceed Slack's 3s ack window)
+    if (isDm && hasAudio) {
+      void processSlackVoiceWorkMessage({
+        channelId: event.channel,
+        userId: event.user,
+        ts: event.ts,
+        botId: event.bot_id,
+        subtype: event.subtype,
+        channelType: event.channel_type,
+        files: event.files
+      }).catch((error) => {
+        console.error("Slack voice work event processing failed:", error);
+      });
+    }
+
+    // DM thread confirm for voice drafts — run before attendance so "ok"/"yes"/"create"
+    // on a draft thread does not collide with WFH/leave approval replies.
+    // Skip attendance entirely for DM audio messages (voice note captions).
+    if (isDm && hasAudio) {
+      // voice handler above; no attendance on the audio message itself
+    } else if (isDm && isThreadReply && hasText) {
+      void processSlackVoiceWorkConfirm({
+        channelId: event.channel,
+        userId: event.user,
+        text: event.text,
+        ts: event.ts,
+        botId: event.bot_id,
+        subtype: event.subtype,
+        threadTs: event.thread_ts,
+        channelType: event.channel_type
+      })
+        .then((result) => {
+          if (result.handled) return;
+          return processSlackChannelMessage({
+            channelId: event.channel!,
+            userId: event.user!,
+            text: event.text!,
+            ts: event.ts!,
+            botId: event.bot_id,
+            subtype: event.subtype,
+            threadTs: event.thread_ts,
+            channelType: event.channel_type
+          });
+        })
+        .catch((error) => {
+          console.error("Slack voice confirm / attendance processing failed:", error);
+        });
+    } else if (hasText) {
       void processSlackChannelMessage({
         channelId: event.channel,
         userId: event.user,
@@ -158,7 +214,8 @@ export async function slackEventsHandler(
       });
     }
 
-    if (hasText) {
+    // Channel text work ingest — skip DM voice/confirm flows (and DMs generally).
+    if (hasText && !isDm) {
       void processSlackWorkMessage({
         channelId: event.channel,
         userId: event.user,

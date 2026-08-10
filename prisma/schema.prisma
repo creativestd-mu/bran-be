@@ -106,6 +106,7 @@ model User {
   prereadMemberships        PrereadMember[]
   prereadComments           PrereadComment[]        @relation("PrereadCommentAuthor")
   prereadMediaUploads       PrereadMedia[]          @relation("PrereadMediaUploader")
+  slackVoiceWorkDrafts      SlackVoiceWorkDraft[]   @relation("SlackVoiceWorkDraftOwner")
 
   @@index([roleId])
   @@index([managerUserId])
@@ -360,7 +361,7 @@ model VisionUser {
 model VoiceRecording {
   id                  String   @id @default(uuid())
   userId              String
-  source              String // work | ai_translate
+  source              String // work | ai_translate | meeting | slack_work
   originalFilename    String   @db.VarChar(500)
   mimeType            String   @db.VarChar(100)
   fileSizeBytes       Int
@@ -374,13 +375,39 @@ model VoiceRecording {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  user      User       @relation("VoiceRecordingOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  workUnits WorkUnit[]
-  meetings  Meeting[]
+  user               User                  @relation("VoiceRecordingOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  workUnits          WorkUnit[]
+  meetings           Meeting[]
+  slackVoiceWorkDraft SlackVoiceWorkDraft?
 
   @@index([userId])
   @@index([userId, createdAt])
   @@index([source])
+}
+
+/// Slack DM voice → transcript → confirm → work units draft.
+model SlackVoiceWorkDraft {
+  id               String   @id @default(uuid())
+  branUserId       String   @map("bran_user_id")
+  slackUserId      String   @map("slack_user_id")
+  slackChannelId   String   @map("slack_channel_id")
+  /// Root voice-message ts (thread parent).
+  slackThreadTs    String   @map("slack_thread_ts")
+  voiceRecordingId String   @unique @map("voice_recording_id")
+  transcript       String   @db.Text
+  /// AWAITING_CONFIRM | CREATED | EXPIRED | FAILED
+  status           String   @default("AWAITING_CONFIRM")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  branUser       User           @relation("SlackVoiceWorkDraftOwner", fields: [branUserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  voiceRecording VoiceRecording @relation(fields: [voiceRecordingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([slackChannelId, slackThreadTs])
+  @@index([branUserId])
+  @@index([slackUserId])
+  @@index([status])
+  @@map("slack_voice_work_drafts")
 }
 
 // ── Google Meet / Calendar Integration ──────────────────────

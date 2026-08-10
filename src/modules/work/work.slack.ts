@@ -240,7 +240,7 @@ async function resolveExcludedChannelIds(): Promise<Set<string>> {
 
 const branUserByEmailCache = new Map<string, string | null>();
 
-async function resolveBranUserIdForSlackUser(slackUserId: string): Promise<string | null> {
+export async function resolveBranUserIdForSlackUser(slackUserId: string): Promise<string | null> {
   const cachedMember = await prisma.slackMember.findUnique({
     where: { slackUserId },
     select: { email: true }

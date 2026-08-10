@@ -527,44 +527,53 @@ export async function processAiQuery(query: string, requestingUserId?: string) {
   const adhocStats = computeAdhocStats(adhocWork);
   const workStats = computeWorkStats(workUnits, rangeFrom, rangeTo);
 
-  const report = await generatePerformanceReport({
-    userName: displayName,
-    query: rawQuery,
-    tasks: tasks.slice(0, MAX_TASKS_FOR_LLM).map((t) => ({
-      title: t.title,
-      type: t.type,
-      platform: t.platform,
-      status: t.status,
-      contentUrl: t.contentUrl,
-      metadata: t.metadata,
-      createdAt: t.createdAt,
-      completedAt: t.completedAt
-    })),
-    adhocWork: adhocWork.slice(0, MAX_ADHOC_FOR_LLM).map((entry) => ({
-      description: entry.description,
-      output: entry.output,
-      effortHours: entry.effortHours,
-      createdAt: entry.createdAt
-    })),
-    workUnits: workUnits.slice(0, MAX_WORK_FOR_LLM).map((unit) => ({
-      title: unit.title,
-      context: unit.context,
-      status: unit.status,
-      steps: unit.steps.map((step) => ({
-        description: step.description,
-        deadline: step.deadline
+  let report: string;
+  try {
+    report = await generatePerformanceReport({
+      userName: displayName,
+      query: rawQuery,
+      tasks: tasks.slice(0, MAX_TASKS_FOR_LLM).map((t) => ({
+        title: t.title,
+        type: t.type,
+        platform: t.platform,
+        status: t.status,
+        contentUrl: t.contentUrl,
+        metadata: t.metadata,
+        createdAt: t.createdAt,
+        completedAt: t.completedAt
       })),
-      createdAt: unit.createdAt
-    })),
-    stats,
-    adhocStats,
-    workStats,
-    socialStats,
-    semanticContext,
-    guidanceQuery,
-    visions,
-    kpis
-  });
+      adhocWork: adhocWork.slice(0, MAX_ADHOC_FOR_LLM).map((entry) => ({
+        description: entry.description,
+        output: entry.output,
+        effortHours: entry.effortHours,
+        createdAt: entry.createdAt
+      })),
+      workUnits: workUnits.slice(0, MAX_WORK_FOR_LLM).map((unit) => ({
+        title: unit.title,
+        context: unit.context,
+        status: unit.status,
+        steps: unit.steps.map((step) => ({
+          description: step.description,
+          deadline: step.deadline
+        })),
+        createdAt: unit.createdAt
+      })),
+      stats,
+      adhocStats,
+      workStats,
+      socialStats,
+      semanticContext,
+      guidanceQuery,
+      visions,
+      kpis
+    });
+  } catch (error) {
+    console.error("[ai-query] report generation failed:", error);
+    throw new HttpError(
+      502,
+      "AI report generation failed. Please try again in a moment."
+    );
+  }
 
   const meta = {
     user:

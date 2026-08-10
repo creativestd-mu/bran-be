@@ -111,8 +111,12 @@ export async function findWorkUnits(options: {
 }) {
   const where: Prisma.WorkUnitWhereInput = {};
 
+  // "Person" filter = owner of the work unit OR assignee on any step.
   if (options.userId) {
-    where.OR = [{ userId: options.userId }, { createdById: options.userId }];
+    where.OR = [
+      { userId: options.userId },
+      { steps: { some: { assigneeId: options.userId } } }
+    ];
   }
   if (options.status) where.status = options.status;
 

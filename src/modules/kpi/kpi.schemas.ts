@@ -2,7 +2,8 @@ import { z } from "zod";
 
 const kpiItemFields = {
   title: z.string().trim().min(1).max(500),
-  description: z.string().trim().min(1).max(8000),
+  // Description is optional in the UI; empty string is stored as "".
+  description: z.string().trim().max(8000).optional().default(""),
   sortOrder: z.coerce.number().int().min(0).optional(),
   isActive: z.boolean().optional(),
   isKey: z.boolean().optional()

@@ -11,6 +11,7 @@ import {
   deadlinesQuerySchema,
   listWorkUnitsQuerySchema,
   reassignWorkUnitAssignmentsSchema,
+  regenerateFromRecordingSchema,
   updateWorkUnitSchema
 } from "./work.schemas";
 import {
@@ -72,9 +73,11 @@ workRouter.post(
   requirePermission("create_tasks"),
   async (req, res, next) => {
     try {
+      const payload = regenerateFromRecordingSchema.parse(req.body ?? {});
       const result = await regenerateWorkUnitsFromRecording(
         param(req.params.recordingId),
-        req.user!.userId
+        req.user!.userId,
+        payload.transcript
       );
       res.status(201).json({ success: true, data: result });
     } catch (error) {

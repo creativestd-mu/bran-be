@@ -155,12 +155,11 @@ export async function listEscalations(filters: {
     ...(filters.priority ? { priority: filters.priority } : {}),
     ...(filters.search
       ? {
+          // Prefer visible fields so short queries like "mac" don't match buried context noise.
           OR: [
             { title: { contains: filters.search, mode: "insensitive" as const } },
-            { problemContext: { contains: filters.search, mode: "insensitive" as const } },
-            { latestContext: { contains: filters.search, mode: "insensitive" as const } },
-            { aiSummary: { contains: filters.search, mode: "insensitive" as const } },
-            { reporterName: { contains: filters.search, mode: "insensitive" as const } }
+            { reporterName: { contains: filters.search, mode: "insensitive" as const } },
+            { aiIssueDescription: { contains: filters.search, mode: "insensitive" as const } }
           ]
         }
       : {})

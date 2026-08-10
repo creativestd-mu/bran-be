@@ -13,7 +13,16 @@ export function errorHandler(
   const isProd = env.nodeEnv === "production";
   const statusCode =
     error instanceof ZodError ? 400 : error instanceof HttpError ? error.statusCode : 500;
-  const message = error instanceof ZodError ? "Validation error" : error.message;
+  const message =
+    error instanceof ZodError
+      ? error.issues
+          .map((issue) => {
+            const path = issue.path.length ? `${issue.path.join(".")}: ` : "";
+            return `${path}${issue.message}`;
+          })
+          .slice(0, 3)
+          .join("; ") || "Validation error"
+      : error.message;
 
   if (!isProd) {
     console.error("[error-handler]", {

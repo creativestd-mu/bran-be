@@ -44,7 +44,7 @@ import {
 import { previewWorkText, type WorkIngestSourceType } from "./work.constants";
 import { hasSimilarOpenWorkUnit } from "./work.dedup";
 import { loadGmailWorkIngestCandidates } from "./work.sources";
-import { postSlackMessage, sendDm } from "../attendance/attendance.slack";
+import { getSlackBotUserId, postSlackMessage, sendDm } from "../attendance/attendance.slack";
 import {
   isAllowedSlackWorkChannel,
   loadSlackWorkIngestCandidateFromEvent,
@@ -54,8 +54,10 @@ import {
 import {
   classifyWorkUnitsForTaskList,
   formatSlackTaskListMessage,
+  looksLikeTaskListQuery,
   rangeIncludesToday,
-  resolveSlackTaskListQuery
+  resolveSlackTaskListQuery,
+  textMentionsSlackUser
 } from "./work.slack-tasks";
 import {
   downloadSlackAudio,
@@ -68,6 +70,19 @@ import type { WorkIngestCandidate } from "./work.sources";
 import type { SlackFile } from "../escalation/escalation.slack";
 
 const SLACK_VOICE_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+const TASK_LIST_DEDUP_TTL_MS = 60 * 1000;
+const recentTaskListEvents = new Map<string, number>();
+
+function markTaskListEvent(channelId: string, ts: string): boolean {
+  const now = Date.now();
+  for (const [key, seenAt] of recentTaskListEvents) {
+    if (now - seenAt > TASK_LIST_DEDUP_TTL_MS) recentTaskListEvents.delete(key);
+  }
+  const key = `${channelId}:${ts}`;
+  if (recentTaskListEvents.has(key)) return false;
+  recentTaskListEvents.set(key, now);
+  return true;
+}
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -628,7 +643,7 @@ export async function processSlackWorkMessage(input: {
 }
 
 /**
- * DM: "list my tasks" / "what do I have yesterday" → pending + completed for that range.
+ * DM, or @Bran in a channel/group: list pending + completed tasks for a date range.
  */
 export async function processSlackTaskListMessage(input: {
   channelId: string;
@@ -637,18 +652,30 @@ export async function processSlackTaskListMessage(input: {
   ts: string;
   botId?: string;
   subtype?: string;
+  threadTs?: string;
   channelType?: string;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId) return { handled: false, reason: "ignored_bot" };
   if (input.subtype && input.subtype !== "thread_broadcast") {
     return { handled: false, reason: "ignored_subtype" };
   }
-  if (!isSlackDmChannel(input.channelId, input.channelType)) {
-    return { handled: false, reason: "not_dm" };
-  }
 
   const text = input.text?.trim() ?? "";
   if (!text) return { handled: false, reason: "empty_text" };
+
+  const isDm = isSlackDmChannel(input.channelId, input.channelType);
+  if (!isDm) {
+    const botUserId = await getSlackBotUserId();
+    if (!botUserId || !textMentionsSlackUser(text, botUserId)) {
+      return { handled: false, reason: "channel_requires_mention" };
+    }
+  }
+
+  if (!looksLikeTaskListQuery(text)) return { handled: false, reason: "not_task_list" };
+
+  if (!markTaskListEvent(input.channelId, input.ts)) {
+    return { handled: true, reason: "duplicate" };
+  }
 
   const query = await resolveSlackTaskListQuery(text);
   if (!query) return { handled: false, reason: "not_task_list" };
@@ -657,7 +684,8 @@ export async function processSlackTaskListMessage(input: {
   if (!branUserId) {
     await postSlackMessage(
       input.channelId,
-      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can list your tasks here."
+      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can list your tasks here.",
+      isDm ? undefined : { threadTs: input.threadTs ?? input.ts }
     );
     return { handled: true, reason: "unmapped_user" };
   }
@@ -687,10 +715,16 @@ export async function processSlackTaskListMessage(input: {
     appUrl: env.appUrl
   });
 
-  await postSlackMessage(input.channelId, message);
+  await postSlackMessage(
+    input.channelId,
+    message,
+    isDm ? undefined : { threadTs: input.threadTs ?? input.ts }
+  );
   console.log("[work.slack-tasks] listed", {
     slackUserId: input.userId,
     branUserId,
+    channelId: input.channelId,
+    isDm,
     source: query.source,
     label: query.range.label,
     pending: pending.length,

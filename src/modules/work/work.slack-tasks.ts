@@ -116,8 +116,20 @@ function formatRangeLabel(from: CalendarDay, to: CalendarDay, hint?: string): st
   return hint ? `${hint} (${span}, IST)` : `${span} (IST)`;
 }
 
+const SLACK_USER_MENTION_RE = /<@[UW][A-Z0-9]+(?:\|[^>]+)?>/gi;
+
+export function stripSlackUserMentions(text: string): string {
+  return text.replace(SLACK_USER_MENTION_RE, " ").replace(/\s+/g, " ").trim();
+}
+
+export function textMentionsSlackUser(text: string, slackUserId: string): boolean {
+  if (!slackUserId) return false;
+  const escaped = slackUserId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`<@${escaped}(?:\\|[^>]+)?>`, "i").test(text);
+}
+
 export function looksLikeTaskListQuery(text: string): boolean {
-  const trimmed = text.trim();
+  const trimmed = stripSlackUserMentions(text);
   if (!trimmed) return false;
   if (isAcceptAsIsConfirmReply(trimmed)) return false;
   if (parseAttendanceMessage(trimmed)) return false;
@@ -370,10 +382,11 @@ export async function resolveSlackTaskListQuery(
 ): Promise<SlackTaskListQuery | null> {
   if (!looksLikeTaskListQuery(text)) return null;
 
-  const heuristic = parseTaskListDateRangeHeuristic(text, now);
+  const cleaned = stripSlackUserMentions(text);
+  const heuristic = parseTaskListDateRangeHeuristic(cleaned, now);
 
   try {
-    const llm = await parseTaskListDateRangeWithLlm(text, now);
+    const llm = await parseTaskListDateRangeWithLlm(cleaned, now);
     if (llm) return { isTaskList: true, range: llm, source: "llm" };
   } catch (error) {
     console.warn("[work.slack-tasks] date parse LLM failed, using heuristic", {

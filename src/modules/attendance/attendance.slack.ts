@@ -233,8 +233,27 @@ export async function sendDm(
   return postSlackMessage(channel, text);
 }
 
-export async function authTest(): Promise<{ ok: boolean; user?: string; team?: string }> {
+export async function authTest(): Promise<{
+  ok: boolean;
+  user?: string;
+  user_id?: string;
+  team?: string;
+}> {
   return slackApi("auth.test");
+}
+
+let cachedBotUserId: string | null = null;
+
+export async function getSlackBotUserId(): Promise<string | null> {
+  if (cachedBotUserId) return cachedBotUserId;
+  try {
+    const data = await authTest();
+    cachedBotUserId = data.user_id ?? null;
+    return cachedBotUserId;
+  } catch (error) {
+    console.warn("[slack] auth.test failed while resolving bot user id", error);
+    return null;
+  }
 }
 
 export type SlackSignatureFailureReason =

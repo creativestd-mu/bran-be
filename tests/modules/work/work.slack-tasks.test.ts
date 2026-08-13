@@ -8,7 +8,8 @@ describe("Slack task list query", () => {
   const now = new Date("2026-08-13T08:30:00.000Z"); // 14:00 IST on Thu 13 Aug 2026
 
   it("detects list-tasks phrasing and ignores attendance", () => {
-    expect(looksLikeTaskListQuery("list my pending tasks")).toBe(true);
+    expect(looksLikeTaskListQuery("<@U123> list my pending tasks")).toBe(true);
+    expect(looksLikeTaskListQuery("<@U123|bran> what do I have yesterday")).toBe(true);
     expect(looksLikeTaskListQuery("what do I have today")).toBe(true);
     expect(looksLikeTaskListQuery("show my tasks from 23rd june to 25th july")).toBe(true);
     expect(looksLikeTaskListQuery("wfh")).toBe(false);

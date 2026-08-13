@@ -124,7 +124,7 @@ export async function slackEventsHandler(
     res.status(200).json({ ok: true });
 
     const event = payload.event;
-    if (!event || event.type !== "message") {
+    if (!event || (event.type !== "message" && event.type !== "app_mention")) {
       return;
     }
 
@@ -178,6 +178,7 @@ export async function slackEventsHandler(
             ts: event.ts!,
             botId: event.bot_id,
             subtype: event.subtype,
+            threadTs: event.thread_ts,
             channelType: event.channel_type
           }).then((taskResult) => {
             if (taskResult.handled) return;
@@ -204,6 +205,7 @@ export async function slackEventsHandler(
         ts: event.ts,
         botId: event.bot_id,
         subtype: event.subtype,
+        threadTs: event.thread_ts,
         channelType: event.channel_type
       })
         .then((result) => {
@@ -223,18 +225,32 @@ export async function slackEventsHandler(
           console.error("Slack task list / attendance processing failed:", error);
         });
     } else if (hasText) {
-      void processSlackChannelMessage({
+      void processSlackTaskListMessage({
         channelId: event.channel,
         userId: event.user,
-        text: event.text!,
+        text: event.text,
         ts: event.ts,
         botId: event.bot_id,
         subtype: event.subtype,
         threadTs: event.thread_ts,
         channelType: event.channel_type
-      }).catch((error) => {
-        console.error("Slack attendance event processing failed:", error);
-      });
+      })
+        .then((result) => {
+          if (result.handled) return;
+          return processSlackChannelMessage({
+            channelId: event.channel!,
+            userId: event.user!,
+            text: event.text!,
+            ts: event.ts!,
+            botId: event.bot_id,
+            subtype: event.subtype,
+            threadTs: event.thread_ts,
+            channelType: event.channel_type
+          });
+        })
+        .catch((error) => {
+          console.error("Slack task list / attendance event processing failed:", error);
+        });
     }
 
     if (hasText || hasFiles) {
@@ -252,19 +268,33 @@ export async function slackEventsHandler(
       });
     }
 
-    // Channel text work ingest — skip DM voice/confirm flows (and DMs generally).
+    // Channel text work ingest — skip DMs, and skip if this message was a @Bran task list.
     if (hasText && !isDm) {
-      void processSlackWorkMessage({
+      void processSlackTaskListMessage({
         channelId: event.channel,
         userId: event.user,
         text: event.text,
         ts: event.ts,
         botId: event.bot_id,
         subtype: event.subtype,
-        threadTs: event.thread_ts
-      }).catch((error) => {
-        console.error("Slack work event processing failed:", error);
-      });
+        threadTs: event.thread_ts,
+        channelType: event.channel_type
+      })
+        .then((result) => {
+          if (result.handled) return;
+          return processSlackWorkMessage({
+            channelId: event.channel!,
+            userId: event.user!,
+            text: event.text,
+            ts: event.ts!,
+            botId: event.bot_id,
+            subtype: event.subtype,
+            threadTs: event.thread_ts
+          });
+        })
+        .catch((error) => {
+          console.error("Slack work event processing failed:", error);
+        });
     }
   } catch (error) {
     next(error);

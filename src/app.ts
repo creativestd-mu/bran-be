@@ -84,7 +84,8 @@ app.get("/", (_req, res) => {
       slackCommands: "/api/slack/commands",
       etaCron: "/api/cron/eta-check",
       escalationCron: "/api/cron/escalation-check",
-      workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)"
+      workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)",
+      slackTaskList: "DM Bran to list pending/completed tasks by date"
     }
   });
 });

@@ -152,6 +152,10 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
   }
 }
 
+export async function callWorkLlm(systemPrompt: string, userPrompt: string): Promise<string> {
+  return callLlm(systemPrompt, userPrompt);
+}
+
 export function isWorkExtractionAiConfigured(): boolean {
   const provider = getAiProvider();
   return provider === "gemini" ? Boolean(env.geminiApiKey) : Boolean(env.anthropicApiKey);

@@ -250,6 +250,53 @@ export async function findWorkUnitsByUserAndDateRange(userId: string, from: Date
   });
 }
 
+const SLACK_TASK_LIST_LIMIT = 150;
+
+export async function findWorkUnitsForSlackTaskList(input: {
+  userId: string;
+  from: Date;
+  to: Date;
+  includeOverdue: boolean;
+  includeUndatedOpen: boolean;
+}) {
+  const inRange: Prisma.DateTimeFilter = { gte: input.from, lte: input.to };
+  const belongsToUser: Prisma.WorkUnitWhereInput = {
+    OR: [{ userId: input.userId }, { steps: { some: { assigneeId: input.userId } } }]
+  };
+
+  const dateOr: Prisma.WorkUnitWhereInput[] = [
+    { nextDueAt: inRange },
+    { firstDueAt: inRange },
+    { closedAt: inRange },
+    { steps: { some: { deadline: inRange } } }
+  ];
+
+  if (input.includeOverdue) {
+    dateOr.push({
+      status: "OPEN",
+      nextDueAt: { lt: input.from }
+    });
+  }
+
+  if (input.includeUndatedOpen) {
+    dateOr.push({
+      status: "OPEN",
+      nextDueAt: null,
+      firstDueAt: null,
+      steps: { none: { deadline: { not: null } } }
+    });
+  }
+
+  return prisma.workUnit.findMany({
+    where: {
+      AND: [belongsToUser, { OR: dateOr }]
+    },
+    include: workUnitInclude,
+    take: SLACK_TASK_LIST_LIMIT,
+    orderBy: [{ nextDueAt: { sort: "asc", nulls: "last" } }, { createdAt: "desc" }]
+  });
+}
+
 export async function findWorkStepsByUserAndDeadlineRange(userId: string, from: Date, to: Date) {
   return prisma.workStep.findMany({
     where: {

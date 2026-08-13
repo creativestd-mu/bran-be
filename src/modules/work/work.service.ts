@@ -30,6 +30,7 @@ import {
   findWorkStepsByUserAndDeadlineRange,
   findWorkUnitById,
   findWorkUnits,
+  findWorkUnitsForSlackTaskList,
   updateWorkStepAssignee,
   updateWorkUnit as updateWorkUnitInDb
 } from "./work.repository";
@@ -50,6 +51,12 @@ import {
   loadSlackWorkIngestCandidates,
   resolveBranUserIdForSlackUser
 } from "./work.slack";
+import {
+  classifyWorkUnitsForTaskList,
+  formatSlackTaskListMessage,
+  rangeIncludesToday,
+  resolveSlackTaskListQuery
+} from "./work.slack-tasks";
 import {
   downloadSlackAudio,
   extractSlackAudioAttachments,
@@ -618,6 +625,78 @@ export async function processSlackWorkMessage(input: {
     }
   );
   return { handled: true, created: result.workUnits.length, reason: result.skipReason };
+}
+
+/**
+ * DM: "list my tasks" / "what do I have yesterday" → pending + completed for that range.
+ */
+export async function processSlackTaskListMessage(input: {
+  channelId: string;
+  userId: string;
+  text?: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  channelType?: string;
+}): Promise<{ handled: boolean; reason?: string }> {
+  if (input.botId) return { handled: false, reason: "ignored_bot" };
+  if (input.subtype && input.subtype !== "thread_broadcast") {
+    return { handled: false, reason: "ignored_subtype" };
+  }
+  if (!isSlackDmChannel(input.channelId, input.channelType)) {
+    return { handled: false, reason: "not_dm" };
+  }
+
+  const text = input.text?.trim() ?? "";
+  if (!text) return { handled: false, reason: "empty_text" };
+
+  const query = await resolveSlackTaskListQuery(text);
+  if (!query) return { handled: false, reason: "not_task_list" };
+
+  const branUserId = await resolveBranUserIdForSlackUser(input.userId);
+  if (!branUserId) {
+    await postSlackMessage(
+      input.channelId,
+      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can list your tasks here."
+    );
+    return { handled: true, reason: "unmapped_user" };
+  }
+
+  const includeToday = rangeIncludesToday(query.range);
+  const units = await findWorkUnitsForSlackTaskList({
+    userId: branUserId,
+    from: query.range.from,
+    to: query.range.to,
+    includeOverdue: includeToday,
+    includeUndatedOpen: includeToday
+  });
+
+  const { pending, completed } = classifyWorkUnitsForTaskList({
+    userId: branUserId,
+    from: query.range.from,
+    to: query.range.to,
+    includeOverdue: includeToday,
+    includeUndatedOpen: includeToday,
+    units
+  });
+
+  const message = formatSlackTaskListMessage({
+    range: query.range,
+    pending,
+    completed,
+    appUrl: env.appUrl
+  });
+
+  await postSlackMessage(input.channelId, message);
+  console.log("[work.slack-tasks] listed", {
+    slackUserId: input.userId,
+    branUserId,
+    source: query.source,
+    label: query.range.label,
+    pending: pending.length,
+    completed: completed.length
+  });
+  return { handled: true, reason: "listed" };
 }
 
 /**

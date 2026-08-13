@@ -18,6 +18,7 @@ import {
 } from "./attendance.slack";
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
 import {
+  processSlackTaskListMessage,
   processSlackVoiceWorkConfirm,
   processSlackVoiceWorkMessage,
   processSlackWorkMessage
@@ -170,6 +171,43 @@ export async function slackEventsHandler(
       })
         .then((result) => {
           if (result.handled) return;
+          return processSlackTaskListMessage({
+            channelId: event.channel!,
+            userId: event.user!,
+            text: event.text,
+            ts: event.ts!,
+            botId: event.bot_id,
+            subtype: event.subtype,
+            channelType: event.channel_type
+          }).then((taskResult) => {
+            if (taskResult.handled) return;
+            return processSlackChannelMessage({
+              channelId: event.channel!,
+              userId: event.user!,
+              text: event.text!,
+              ts: event.ts!,
+              botId: event.bot_id,
+              subtype: event.subtype,
+              threadTs: event.thread_ts,
+              channelType: event.channel_type
+            });
+          });
+        })
+        .catch((error) => {
+          console.error("Slack voice confirm / task list / attendance processing failed:", error);
+        });
+    } else if (isDm && hasText) {
+      void processSlackTaskListMessage({
+        channelId: event.channel,
+        userId: event.user,
+        text: event.text,
+        ts: event.ts,
+        botId: event.bot_id,
+        subtype: event.subtype,
+        channelType: event.channel_type
+      })
+        .then((result) => {
+          if (result.handled) return;
           return processSlackChannelMessage({
             channelId: event.channel!,
             userId: event.user!,
@@ -182,7 +220,7 @@ export async function slackEventsHandler(
           });
         })
         .catch((error) => {
-          console.error("Slack voice confirm / attendance processing failed:", error);
+          console.error("Slack task list / attendance processing failed:", error);
         });
     } else if (hasText) {
       void processSlackChannelMessage({

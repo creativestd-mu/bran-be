@@ -45,6 +45,7 @@ import { hasSimilarOpenWorkUnit } from "./work.dedup";
 import { loadGmailWorkIngestCandidates } from "./work.sources";
 import { postSlackMessage, sendDm } from "../attendance/attendance.slack";
 import {
+  isAllowedSlackWorkChannel,
   loadSlackWorkIngestCandidateFromEvent,
   loadSlackWorkIngestCandidates,
   resolveBranUserIdForSlackUser
@@ -442,6 +443,10 @@ async function ingestWorkFromCandidate(candidate: WorkIngestCandidate) {
 }
 
 export async function ingestWorkUnitsFromGmail() {
+  if (!env.workIngestGmailEnabled) {
+    return { scanned: 0, created: 0 };
+  }
+
   const candidates = await loadGmailWorkIngestCandidates();
   let created = 0;
   await mapWithConcurrency(candidates, env.workIngestConcurrency, async (candidate) => {
@@ -480,6 +485,10 @@ export async function processSlackWorkMessage(input: {
   // Channel work ingest is for channels; DMs use the voice-draft flow instead.
   if (isSlackDmChannel(input.channelId)) {
     return { handled: false, reason: "dm_skipped" };
+  }
+
+  if (!(await isAllowedSlackWorkChannel(input.channelId))) {
+    return { handled: false, reason: "channel_not_allowed" };
   }
 
   const text = input.text?.trim() ?? "";

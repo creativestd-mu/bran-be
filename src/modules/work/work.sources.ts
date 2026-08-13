@@ -45,6 +45,10 @@ export async function loadGmailWorkIngestCandidates(options?: {
   days?: number;
   maxPerRun?: number;
 }): Promise<WorkIngestCandidate[]> {
+  if (!env.workIngestGmailEnabled) {
+    return [];
+  }
+
   const days = options?.days ?? env.workIngestLookbackDays ?? DEFAULT_WORK_INGEST_LOOKBACK_DAYS;
   const maxPerRun = options?.maxPerRun ?? env.workIngestMaxPerSource ?? DEFAULT_WORK_INGEST_MAX_PER_SOURCE;
   const since = lookbackDate(days);

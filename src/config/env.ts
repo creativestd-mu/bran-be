@@ -179,6 +179,17 @@ export const env = {
   workIngestLookbackDays: Number(process.env.WORK_INGEST_LOOKBACK_DAYS ?? 7),
   workIngestMaxPerSource: Number(process.env.WORK_INGEST_MAX_PER_SOURCE ?? 40),
   workIngestConcurrency: Number(process.env.WORK_INGEST_CONCURRENCY ?? 3),
+  /**
+   * Auto-create work units from Gmail. Off by default — work ingest is Slack
+   * #tech-team only unless this is explicitly set to true.
+   */
+  workIngestGmailEnabled:
+    (process.env.WORK_INGEST_GMAIL_ENABLED ?? "false").toLowerCase() === "true",
+  /**
+   * Comma-separated Slack channel names or IDs allowed for work ingest.
+   * Default is tech-team only. Empty still defaults to tech-team.
+   */
+  slackWorkChannels: process.env.SLACK_WORK_CHANNELS ?? "tech-team",
   /** Comma-separated Slack channel IDs or names to exclude from work ingest (plus attendance/escalation). */
   slackWorkExcludeChannels: process.env.SLACK_WORK_EXCLUDE_CHANNELS ?? ""
 };

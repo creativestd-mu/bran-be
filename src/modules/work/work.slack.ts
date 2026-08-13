@@ -1,6 +1,11 @@
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
-import { getSlackUserInfo, resolveChannelId as resolveAttendanceChannelId, type SlackMessage } from "../attendance/attendance.slack";
+import {
+  getSlackUserInfo,
+  listChannelMemberIds,
+  resolveChannelId as resolveAttendanceChannelId,
+  type SlackMessage
+} from "../attendance/attendance.slack";
 import {
   resolveEscalationChannelId,
   resolveSlackMentionsInText
@@ -15,6 +20,11 @@ import { findWorkUnitSource, loadProcessedSourceKeys } from "./work.source-ledge
 import type { WorkIngestCandidate } from "./work.sources";
 
 const MIN_SLACK_WORK_TEXT_LENGTH = 40;
+const DEFAULT_SLACK_WORK_CHANNEL = "tech-team";
+const ALLOWED_CHANNEL_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let allowedWorkChannelIdsCache: { ids: Set<string>; expiresAt: number } | null = null;
+let workChannelMemberEmailsCache: { emails: Set<string>; expiresAt: number } | null = null;
 
 /** Slack mention markup: <@U123> or <@U123|display>. */
 const SLACK_MENTION_RE = /<@([UW][A-Z0-9]+)(?:\|[^>]+)?>/g;
@@ -209,16 +219,127 @@ async function resolvePreferredAssigneeFromMentions(
   return { kind: "ambiguous" };
 }
 
+function parseSlackChannelEntries(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim().replace(/^#/, ""))
+    .filter(Boolean);
+}
+
+function isSlackChannelId(value: string): boolean {
+  return /^[CGD][A-Z0-9]+$/i.test(value);
+}
+
+function workChannelAllowlist(): string[] {
+  const parsed = parseSlackChannelEntries(env.slackWorkChannels);
+  return parsed.length > 0 ? parsed : [DEFAULT_SLACK_WORK_CHANNEL];
+}
+
+/**
+ * Resolve SLACK_WORK_CHANNELS (names or IDs) to channel IDs the bot is in.
+ * Cached briefly so webhook events do not hit Slack on every message.
+ */
+export async function resolveAllowedWorkChannelIds(): Promise<Set<string>> {
+  const now = Date.now();
+  if (allowedWorkChannelIdsCache && allowedWorkChannelIdsCache.expiresAt > now) {
+    return allowedWorkChannelIdsCache.ids;
+  }
+
+  const allow = workChannelAllowlist();
+  const memberChannels = await listBotMemberChannels();
+  const ids = new Set<string>();
+
+  for (const entry of allow) {
+    if (isSlackChannelId(entry)) {
+      ids.add(entry);
+      continue;
+    }
+    const name = entry.toLowerCase();
+    for (const channel of memberChannels) {
+      if ((channel.name ?? "").toLowerCase() === name) {
+        ids.add(channel.id);
+      }
+    }
+  }
+
+  allowedWorkChannelIdsCache = { ids, expiresAt: now + ALLOWED_CHANNEL_CACHE_TTL_MS };
+  return ids;
+}
+
+export async function isAllowedSlackWorkChannel(channelId: string): Promise<boolean> {
+  const allowed = await resolveAllowedWorkChannelIds();
+  return allowed.has(channelId);
+}
+
+/**
+ * Emails of people currently in SLACK_WORK_CHANNELS (default #tech-team).
+ * Used to gate work-assignment SMTP so only that Slack group gets mail.
+ */
+export async function loadSlackWorkChannelMemberEmails(): Promise<Set<string>> {
+  const now = Date.now();
+  if (workChannelMemberEmailsCache && workChannelMemberEmailsCache.expiresAt > now) {
+    return workChannelMemberEmailsCache.emails;
+  }
+
+  const channelIds = await resolveAllowedWorkChannelIds();
+  const slackUserIds = new Set<string>();
+
+  for (const channelId of channelIds) {
+    try {
+      const members = await listChannelMemberIds(channelId);
+      for (const id of members) slackUserIds.add(id);
+    } catch (error) {
+      console.warn(`[work.slack] Failed to list members for ${channelId}:`, error);
+    }
+  }
+
+  const emails = new Set<string>();
+  if (slackUserIds.size === 0) {
+    workChannelMemberEmailsCache = { emails, expiresAt: now + ALLOWED_CHANNEL_CACHE_TTL_MS };
+    return emails;
+  }
+
+  const cachedMembers = await prisma.slackMember.findMany({
+    where: { slackUserId: { in: [...slackUserIds] } },
+    select: { slackUserId: true, email: true, isBot: true, isDeleted: true }
+  });
+  const cachedById = new Map(cachedMembers.map((member) => [member.slackUserId, member]));
+
+  for (const slackUserId of slackUserIds) {
+    const cached = cachedById.get(slackUserId);
+    if (cached?.isBot || cached?.isDeleted) continue;
+
+    let email = cached?.email?.trim().toLowerCase() ?? "";
+    if (!email) {
+      try {
+        const profile = await getSlackUserInfo(slackUserId);
+        if (profile.is_bot || profile.deleted) continue;
+        email = profile.profile?.email?.trim().toLowerCase() ?? "";
+      } catch {
+        continue;
+      }
+    }
+    if (email) emails.add(email);
+  }
+
+  workChannelMemberEmailsCache = { emails, expiresAt: now + ALLOWED_CHANNEL_CACHE_TTL_MS };
+  return emails;
+}
+
+export async function isEmailInSlackWorkChannel(email: string): Promise<boolean> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return false;
+  const members = await loadSlackWorkChannelMemberEmails();
+  return members.has(normalized);
+}
+
 async function resolveExcludedChannelIds(): Promise<Set<string>> {
   const excluded = new Set<string>();
 
-  const fromEnv = env.slackWorkExcludeChannels
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const fromEnv = parseSlackChannelEntries(env.slackWorkExcludeChannels);
 
   for (const entry of fromEnv) {
-    if (/^[CGD][A-Z0-9]+$/i.test(entry)) {
+    if (isSlackChannelId(entry)) {
       excluded.add(entry);
     }
   }
@@ -373,6 +494,10 @@ export async function loadSlackWorkIngestCandidateFromEvent(input: {
 
   if (shouldSkipSlackMessage(eventMessage)) return null;
 
+  if (!(await isAllowedSlackWorkChannel(input.channelId))) {
+    return null;
+  }
+
   const excludedChannels = await resolveExcludedChannelIds();
   if (excludedChannels.has(input.channelId)) {
     return null;
@@ -417,11 +542,24 @@ export async function loadSlackWorkIngestCandidates(options?: {
   const oldest = String(Math.floor(Date.now() / 1000) - days * 24 * 60 * 60);
 
   const processed = await loadProcessedSourceKeys("SLACK" as WorkIngestSourceType);
+  const allowedChannelIds = await resolveAllowedWorkChannelIds();
   const excludedChannels = await resolveExcludedChannelIds();
   const candidates: WorkIngestCandidate[] = [];
 
-  const channels = await listBotMemberChannels();
-  console.log(`[work.slack] Scanning ${channels.length} member channel(s) for work tasks`);
+  if (allowedChannelIds.size === 0) {
+    console.warn(
+      `[work.slack] No channels matched SLACK_WORK_CHANNELS=${workChannelAllowlist().join(",")}. Invite the bot to those channels.`
+    );
+    return [];
+  }
+
+  const memberChannels = await listBotMemberChannels();
+  const channels = memberChannels.filter(
+    (channel) => allowedChannelIds.has(channel.id) && !excludedChannels.has(channel.id)
+  );
+  console.log(
+    `[work.slack] Scanning ${channels.length} allowed channel(s) for work tasks (${workChannelAllowlist().join(",")})`
+  );
 
   for (const channel of channels) {
     if (candidates.length >= maxPerRun) break;

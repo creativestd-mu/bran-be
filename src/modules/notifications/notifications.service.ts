@@ -2,6 +2,7 @@ import { env } from "../../config/env";
 import { sendEmail } from "../../lib/email";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../utils/httpError";
+import { isEmailInSlackWorkChannel } from "../work/work.slack";
 import {
   createNotification,
   CreateNotificationInput,
@@ -585,6 +586,30 @@ export type CreateNotificationServiceInput = CreateNotificationInput;
 
 // ── Work unit / step assignment & overdue notifications ──
 
+async function sendWorkAssignmentEmail(input: {
+  email: string | null;
+  subject: string;
+  text: string;
+  html: string;
+}): Promise<boolean> {
+  if (!input.email) return false;
+  const allowed = await isEmailInSlackWorkChannel(input.email);
+  if (!allowed) {
+    if (env.nodeEnv !== "test") {
+      console.info(
+        `[email] Skip work email to ${input.email} — not a member of Slack ${env.slackWorkChannels || "tech-team"}`
+      );
+    }
+    return false;
+  }
+  return sendEmail({
+    to: input.email,
+    subject: input.subject,
+    text: input.text,
+    html: input.html
+  });
+}
+
 export type NotifyWorkUnitAssignedInput = {
   workUnitId: string;
   workUnitTitle: string;
@@ -617,8 +642,8 @@ export async function notifyWorkUnitAssigned(
 
   if (!notification.emailSentAt && user.email) {
     const emailLines = [body, ...(link ? ["", `Open in app: ${link}`] : [])];
-    const sent = await sendEmail({
-      to: user.email,
+    const sent = await sendWorkAssignmentEmail({
+      email: user.email,
       subject: title,
       text: emailLines.join("\n"),
       html: `<p>${escapeHtml(body)}</p>${link ? `<p><a href="${escapeAttr(link)}">Open in Bran</a></p>` : ""}`
@@ -664,8 +689,8 @@ export async function notifyWorkStepAssigned(
 
   if (!notification.emailSentAt && user.email) {
     const emailLines = [body, ...(link ? ["", `Open in app: ${link}`] : [])];
-    const sent = await sendEmail({
-      to: user.email,
+    const sent = await sendWorkAssignmentEmail({
+      email: user.email,
       subject: title,
       text: emailLines.join("\n"),
       html: `<p>${escapeHtml(body)}</p>${link ? `<p><a href="${escapeAttr(link)}">Open in Bran</a></p>` : ""}`
@@ -710,8 +735,8 @@ export async function notifyWorkStepOverdue(
 
   if (!notification.emailSentAt && user.email) {
     const emailLines = [body, ...(link ? ["", `Open in app: ${link}`] : [])];
-    const sent = await sendEmail({
-      to: user.email,
+    const sent = await sendWorkAssignmentEmail({
+      email: user.email,
       subject: title,
       text: emailLines.join("\n"),
       html: `<p>${escapeHtml(body)}</p>${link ? `<p><a href="${escapeAttr(link)}">Open in Bran</a></p>` : ""}`

@@ -84,7 +84,7 @@ app.get("/", (_req, res) => {
       slackCommands: "/api/slack/commands",
       etaCron: "/api/cron/eta-check",
       escalationCron: "/api/cron/escalation-check",
-      workIngest: "slack message events + WORK_INGEST cron"
+      workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)"
     }
   });
 });

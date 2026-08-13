@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
-import { WORK_STATUSES } from "./work.constants";
+import { previewWorkText, WORK_STATUSES } from "./work.constants";
 
 export type ExtractedStep = {
   description: string;
@@ -47,6 +47,21 @@ function getGemini(): GoogleGenerativeAI {
 
 function getAiProvider(): "anthropic" | "gemini" {
   return env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
+}
+
+function getAiModel(provider: "anthropic" | "gemini"): string {
+  return provider === "gemini" ? env.geminiModel : env.anthropicModel;
+}
+
+function describeLlmError(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { error: String(error) };
+  const extra = error as Error & { status?: unknown; code?: unknown };
+  return {
+    error: error.message,
+    name: error.name,
+    status: extra.status ?? null,
+    code: extra.code ?? null
+  };
 }
 
 // Treat empty strings the same as null — LLMs frequently return "" instead of null.
@@ -107,32 +122,48 @@ export function parseDeadlineToIso(value: string | null | undefined): string | n
 
 async function callLlm(systemPrompt: string, userPrompt: string): Promise<string> {
   const provider = getAiProvider();
+  const model = getAiModel(provider);
+  console.log("[work.extraction] calling LLM", { provider, model, promptChars: userPrompt.length });
 
-  if (provider === "gemini") {
-    const model = getGemini().getGenerativeModel({
-      model: env.geminiModel,
-      systemInstruction: systemPrompt,
-      generationConfig: { maxOutputTokens: 2048, temperature: 0.2 }
+  try {
+    if (provider === "gemini") {
+      const gemini = getGemini().getGenerativeModel({
+        model,
+        systemInstruction: systemPrompt,
+        generationConfig: { maxOutputTokens: 2048, temperature: 0.2 }
+      });
+      const result = await gemini.generateContent(userPrompt);
+      return result.response.text() || "";
+    }
+
+    const response = await getAnthropic().messages.create({
+      model,
+      max_tokens: 2048,
+      temperature: 0.2,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }]
     });
-    const result = await model.generateContent(userPrompt);
-    return result.response.text() || "";
+
+    const textBlock = response.content.find((block) => block.type === "text");
+    return textBlock?.text ?? "";
+  } catch (error) {
+    console.error("[work.extraction] LLM call failed", { provider, model, ...describeLlmError(error) });
+    throw error;
   }
-
-  const response = await getAnthropic().messages.create({
-    model: env.anthropicModel,
-    max_tokens: 2048,
-    temperature: 0.2,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }]
-  });
-
-  const textBlock = response.content.find((block) => block.type === "text");
-  return textBlock?.text ?? "";
 }
 
 export function isWorkExtractionAiConfigured(): boolean {
-  const provider = env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
+  const provider = getAiProvider();
   return provider === "gemini" ? Boolean(env.geminiApiKey) : Boolean(env.anthropicApiKey);
+}
+
+export function getWorkExtractionAiInfo() {
+  const provider = getAiProvider();
+  return {
+    provider,
+    model: getAiModel(provider),
+    configured: isWorkExtractionAiConfigured()
+  };
 }
 
 export type WorkExtractionTextKind = "transcript" | "email" | "slack";
@@ -251,8 +282,29 @@ export async function extractWorkUnitsFromText(
 
   const userPrompt = `Current date-time: ${now.toISOString()}\n\n${label}:\n"""${text}"""`;
 
+  console.log("[work.extraction] start", {
+    kind: options.kind,
+    ...getWorkExtractionAiInfo(),
+    textChars: text.length,
+    textPreview: previewWorkText(text),
+    teamCount: availableUsers.length,
+    projectCount: availableProjects.length
+  });
+
   const raw = await callLlm(systemPrompt, userPrompt);
-  return parseExtractedWorkUnits(raw);
+  console.log("[work.extraction] LLM raw response", {
+    kind: options.kind,
+    rawChars: raw.length,
+    rawPreview: previewWorkText(raw, 400)
+  });
+
+  const units = await parseExtractedWorkUnits(raw);
+  console.log("[work.extraction] parsed", {
+    kind: options.kind,
+    count: units.length,
+    titles: units.map((unit) => unit.title)
+  });
+  return units;
 }
 
 export async function extractWorkUnitsFromTranscript(

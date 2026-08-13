@@ -13,7 +13,7 @@ import {
   formatWorkUnitForResponse,
   resolveStatusAndClosedAt
 } from "./work.due-fields";
-import { extractWorkUnitsFromText, extractWorkUnitsFromTranscript, isWorkExtractionAiConfigured, type WorkExtractionTextKind } from "./work.extraction";
+import { extractWorkUnitsFromText, extractWorkUnitsFromTranscript, getWorkExtractionAiInfo, isWorkExtractionAiConfigured, type WorkExtractionTextKind } from "./work.extraction";
 import { resolveProjectIdFromExtraction } from "./work.project-matching";
 import {
   learnAssignmentPreference,
@@ -40,7 +40,7 @@ import {
   findVoiceRecordingById,
   updateVoiceRecording
 } from "../voice-recording/voice-recording.repository";
-import type { WorkIngestSourceType } from "./work.constants";
+import { previewWorkText, type WorkIngestSourceType } from "./work.constants";
 import { hasSimilarOpenWorkUnit } from "./work.dedup";
 import { loadGmailWorkIngestCandidates } from "./work.sources";
 import { postSlackMessage, sendDm } from "../attendance/attendance.slack";
@@ -304,6 +304,7 @@ async function persistExtractedUnits(
 ) {
   const { availableProjects, availableUsers, resolutionContext } = context;
   const workUnits = [];
+  let skippedDedup = 0;
 
   for (const unit of extracted) {
     const projectId = resolveProjectIdFromExtraction({
@@ -321,6 +322,15 @@ async function persistExtractedUnits(
     const ownerUserId = assignedToUserId ?? defaultOwnerUserId;
 
     if (await hasSimilarOpenWorkUnit(ownerUserId, unit.title)) {
+      skippedDedup += 1;
+      console.log("[work.ingest] skip similar open unit", {
+        sourceType: meta.sourceType ?? null,
+        sourceId: meta.sourceId ?? null,
+        title: unit.title,
+        ownerUserId,
+        assignedToUserId,
+        assigneeName: unit.assigneeName ?? null
+      });
       continue;
     }
 
@@ -345,9 +355,19 @@ async function persistExtractedUnits(
       }))
     });
     workUnits.push(created);
+    console.log("[work.ingest] created unit", {
+      sourceType: meta.sourceType ?? null,
+      sourceId: meta.sourceId ?? null,
+      workUnitId: created.id,
+      title: unit.title,
+      ownerUserId,
+      assignedToUserId,
+      assigneeName: unit.assigneeName ?? null,
+      steps: unit.steps.length
+    });
   }
 
-  return workUnits;
+  return { workUnits, skippedDedup };
 }
 
 async function ingestWorkFromText(input: {
@@ -365,16 +385,34 @@ async function ingestWorkFromText(input: {
     const existing = await findWorkUnitSource(input.sourceType, input.sourceId);
     // Allow ERROR rows to be retried; PROCESSED/SKIPPED stay terminal.
     if (existing && existing.status !== "ERROR") {
+      console.log("[work.ingest] skip ledger already settled", {
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        ledgerStatus: existing.status,
+        previousWorkUnitCount: existing.workUnitCount,
+        textPreview: previewWorkText(input.text)
+      });
       return {
         transcript: input.text,
         workUnits: [],
         taggingMappings: [],
-        skippedLedger: true as const
+        skippedLedger: true as const,
+        skipReason: `ledger_${existing.status.toLowerCase()}`
       };
     }
   }
 
   const assignmentContext = await buildAssignmentContext(input.defaultOwnerUserId);
+  console.log("[work.ingest] extracting", {
+    sourceType: input.sourceType ?? null,
+    sourceId: input.sourceId ?? null,
+    kind: input.extractionKind,
+    ownerUserId: input.defaultOwnerUserId,
+    preferredAssigneeUserId: input.preferredAssigneeUserId ?? null,
+    textChars: input.text.length,
+    textPreview: previewWorkText(input.text),
+    ...getWorkExtractionAiInfo()
+  });
 
   let extracted: Awaited<ReturnType<typeof extractWorkUnitsFromTranscript>>;
   try {
@@ -384,20 +422,33 @@ async function ingestWorkFromText(input: {
       availableUsers: assignmentContext.availableUsers
     });
   } catch (error) {
+    const extractError = error instanceof Error ? error.message : String(error);
+    console.error("[work.ingest] extraction failed", {
+      sourceType: input.sourceType ?? null,
+      sourceId: input.sourceId ?? null,
+      extractError,
+      ...getWorkExtractionAiInfo()
+    });
     if (input.useLedger && input.sourceType && input.sourceId) {
       await recordWorkUnitSource({
         sourceType: input.sourceType,
         sourceId: input.sourceId,
         status: "ERROR",
         workUnitCount: 0,
-        errorMessage: error instanceof Error ? error.message : String(error)
+        errorMessage: extractError
       });
     }
     if (input.throwOnExtractError) throw error;
-    return { transcript: input.text, workUnits: [], taggingMappings: [] };
+    return {
+      transcript: input.text,
+      workUnits: [],
+      taggingMappings: [],
+      skipReason: "extract_error",
+      extractError
+    };
   }
 
-  const workUnits = await persistExtractedUnits(
+  const persisted = await persistExtractedUnits(
     input.defaultOwnerUserId,
     extracted,
     assignmentContext,
@@ -409,6 +460,14 @@ async function ingestWorkFromText(input: {
       preferredAssigneeUserId: input.preferredAssigneeUserId
     }
   );
+  const workUnits = persisted.workUnits;
+
+  let skipReason: string | undefined;
+  if (workUnits.length === 0) {
+    if (extracted.length === 0) skipReason = "llm_returned_empty";
+    else if (persisted.skippedDedup === extracted.length) skipReason = "all_deduped";
+    else skipReason = "none_persisted";
+  }
 
   if (input.useLedger && input.sourceType && input.sourceId) {
     await recordWorkUnitSource({
@@ -419,10 +478,23 @@ async function ingestWorkFromText(input: {
     });
   }
 
+  console.log("[work.ingest] done", {
+    sourceType: input.sourceType ?? null,
+    sourceId: input.sourceId ?? null,
+    extracted: extracted.length,
+    created: workUnits.length,
+    skippedDedup: persisted.skippedDedup,
+    skipReason: skipReason ?? null,
+    titles: extracted.map((unit) => unit.title)
+  });
+
   return {
     transcript: input.text,
     workUnits,
-    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings ?? [])
+    taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings ?? []),
+    skipReason,
+    extractedCount: extracted.length,
+    skippedDedupCount: persisted.skippedDedup
   };
 }
 
@@ -478,21 +550,33 @@ export async function processSlackWorkMessage(input: {
   subtype?: string;
   threadTs?: string;
 }): Promise<{ handled: boolean; reason?: string; created?: number }> {
+  const eventMeta = {
+    channelId: input.channelId,
+    userId: input.userId,
+    ts: input.ts,
+    threadTs: input.threadTs ?? null,
+    textPreview: previewWorkText(input.text ?? "")
+  };
+
   if (!isWorkExtractionAiConfigured()) {
+    console.warn("[work.slack-event] skip", { reason: "ai_not_configured", ...eventMeta, ...getWorkExtractionAiInfo() });
     return { handled: false, reason: "ai_not_configured" };
   }
 
   // Channel work ingest is for channels; DMs use the voice-draft flow instead.
   if (isSlackDmChannel(input.channelId)) {
+    console.log("[work.slack-event] skip", { reason: "dm_skipped", ...eventMeta });
     return { handled: false, reason: "dm_skipped" };
   }
 
   if (!(await isAllowedSlackWorkChannel(input.channelId))) {
+    console.log("[work.slack-event] skip", { reason: "channel_not_allowed", ...eventMeta });
     return { handled: false, reason: "channel_not_allowed" };
   }
 
   const text = input.text?.trim() ?? "";
   if (!text) {
+    console.log("[work.slack-event] skip", { reason: "empty_text", ...eventMeta });
     return { handled: false, reason: "empty_text" };
   }
 
@@ -507,14 +591,33 @@ export async function processSlackWorkMessage(input: {
   });
 
   if (!candidate) {
+    console.log("[work.slack-event] skip", { reason: "no_candidate", ...eventMeta });
     return { handled: false, reason: "no_candidate" };
   }
 
+  console.log("[work.slack-event] candidate ready", {
+    sourceId: candidate.sourceId,
+    ownerUserId: candidate.ownerUserId,
+    preferredAssigneeUserId: candidate.preferredAssigneeUserId ?? null,
+    title: candidate.title,
+    textChars: candidate.text.length,
+    textPreview: previewWorkText(candidate.text),
+    ...getWorkExtractionAiInfo()
+  });
+
   const result = await ingestWorkFromCandidate(candidate);
   console.log(
-    `[work.slack-event] ${candidate.sourceId} → created ${result.workUnits.length} work unit(s)`
+    `[work.slack-event] ${candidate.sourceId} → created ${result.workUnits.length} work unit(s)`,
+    {
+      skipReason: result.skipReason ?? null,
+      skippedLedger: Boolean(result.skippedLedger),
+      extractedCount: result.extractedCount ?? null,
+      skippedDedupCount: result.skippedDedupCount ?? null,
+      extractError: result.extractError ?? null,
+      ...getWorkExtractionAiInfo()
+    }
   );
-  return { handled: true, created: result.workUnits.length };
+  return { handled: true, created: result.workUnits.length, reason: result.skipReason };
 }
 
 /**

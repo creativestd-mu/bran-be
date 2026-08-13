@@ -14,6 +14,7 @@ import { prisma } from "../../lib/prisma";
 import {
   DEFAULT_WORK_INGEST_LOOKBACK_DAYS,
   DEFAULT_WORK_INGEST_MAX_PER_SOURCE,
+  previewWorkText,
   type WorkIngestSourceType
 } from "./work.constants";
 import { findWorkUnitSource, loadProcessedSourceKeys } from "./work.source-ledger";
@@ -162,12 +163,12 @@ async function fetchThreadReplies(channelId: string, threadTs: string): Promise<
   return data.messages ?? [];
 }
 
-function shouldSkipSlackMessage(message: SlackMessage): boolean {
-  if (message.bot_id) return true;
-  if (message.subtype && message.subtype !== "thread_broadcast") return true;
-  if (!message.user) return true;
-  if (!message.text?.trim()) return true;
-  return false;
+function shouldSkipSlackMessage(message: SlackMessage): string | null {
+  if (message.bot_id) return "bot_message";
+  if (message.subtype && message.subtype !== "thread_broadcast") return `subtype_${message.subtype}`;
+  if (!message.user) return "missing_user";
+  if (!message.text?.trim()) return "empty_text";
+  return null;
 }
 
 function buildThreadText(messages: SlackMessage[]): string {
@@ -414,22 +415,46 @@ async function buildCandidateFromMessages(input: {
   threadTs: string;
   messages: SlackMessage[];
 }): Promise<WorkIngestCandidate | null> {
+  const sourceKey = `${input.channelId}:${input.threadTs}`;
   const rawText = buildThreadText(input.messages);
-  if (rawText.length < MIN_SLACK_WORK_TEXT_LENGTH) return null;
+  if (rawText.length < MIN_SLACK_WORK_TEXT_LENGTH) {
+    console.log("[work.slack] skip candidate", {
+      reason: "text_too_short",
+      sourceId: sourceKey,
+      minChars: MIN_SLACK_WORK_TEXT_LENGTH,
+      textChars: rawText.length,
+      textPreview: previewWorkText(rawText)
+    });
+    return null;
+  }
 
   // Expand <@U…> mentions to display names so AI can match Bran team members.
   const text = await resolveSlackMentionsInText(rawText);
-  if (text.length < MIN_SLACK_WORK_TEXT_LENGTH) return null;
+  if (text.length < MIN_SLACK_WORK_TEXT_LENGTH) {
+    console.log("[work.slack] skip candidate", {
+      reason: "text_too_short_after_mentions",
+      sourceId: sourceKey,
+      minChars: MIN_SLACK_WORK_TEXT_LENGTH,
+      textChars: text.length,
+      textPreview: previewWorkText(text)
+    });
+    return null;
+  }
 
   const authorSlackId = input.messages.find((message) => message.user)?.user;
-  if (!authorSlackId) return null;
+  if (!authorSlackId) {
+    console.log("[work.slack] skip candidate", { reason: "no_author", sourceId: sourceKey });
+    return null;
+  }
 
   // Author must be an active Bran user (matched via Slack email).
   const authorBranUserId = await resolveBranUserIdForSlackUser(authorSlackId);
   if (!authorBranUserId) {
-    console.warn(
-      `[work.slack] Skip ${input.channelId}:${input.threadTs}: author is not a Bran user`
-    );
+    console.warn("[work.slack] skip candidate", {
+      reason: "author_not_bran_user",
+      sourceId: sourceKey,
+      authorSlackId
+    });
     return null;
   }
 
@@ -440,9 +465,11 @@ async function buildCandidateFromMessages(input: {
 
   // Tagged people must also map to Bran users — never assign to unknown Slack accounts.
   if (mentionResolution.kind === "unmapped") {
-    console.warn(
-      `[work.slack] Skip ${input.channelId}:${input.threadTs}: @mention is not a Bran user`
-    );
+    console.warn("[work.slack] skip candidate", {
+      reason: "mention_not_bran_user",
+      sourceId: sourceKey,
+      authorSlackId
+    });
     return null;
   }
 
@@ -455,9 +482,21 @@ async function buildCandidateFromMessages(input: {
       ? `#${input.channelName}: ${titleSource.slice(0, 120)}`
       : titleSource.slice(0, 120) || "Slack thread";
 
+  console.log("[work.slack] candidate built", {
+    sourceId: sourceKey,
+    channelName: input.channelName ?? null,
+    authorSlackId,
+    ownerUserId: authorBranUserId,
+    mentionKind: mentionResolution.kind,
+    preferredAssigneeUserId,
+    title,
+    textChars: text.length,
+    textPreview: previewWorkText(text)
+  });
+
   return {
     sourceType: "SLACK",
-    sourceId: `${input.channelId}:${input.threadTs}`,
+    sourceId: sourceKey,
     ownerUserId: authorBranUserId,
     preferredAssigneeUserId,
     title,
@@ -492,14 +531,35 @@ export async function loadSlackWorkIngestCandidateFromEvent(input: {
     thread_ts: input.threadTs
   };
 
-  if (shouldSkipSlackMessage(eventMessage)) return null;
+  const skipMessage = shouldSkipSlackMessage(eventMessage);
+  if (skipMessage) {
+    console.log("[work.slack] skip event", {
+      reason: skipMessage,
+      channelId: input.channelId,
+      ts: input.ts,
+      subtype: input.subtype ?? null,
+      textPreview: previewWorkText(input.text)
+    });
+    return null;
+  }
 
   if (!(await isAllowedSlackWorkChannel(input.channelId))) {
+    console.log("[work.slack] skip event", {
+      reason: "channel_not_allowed",
+      channelId: input.channelId,
+      ts: input.ts,
+      textPreview: previewWorkText(input.text)
+    });
     return null;
   }
 
   const excludedChannels = await resolveExcludedChannelIds();
   if (excludedChannels.has(input.channelId)) {
+    console.log("[work.slack] skip event", {
+      reason: "channel_excluded",
+      channelId: input.channelId,
+      ts: input.ts
+    });
     return null;
   }
 
@@ -507,6 +567,12 @@ export async function loadSlackWorkIngestCandidateFromEvent(input: {
   const sourceId = `${input.channelId}:${threadTs}`;
   const existing = await findWorkUnitSource("SLACK", sourceId);
   if (existing && (existing.status === "PROCESSED" || existing.status === "SKIPPED")) {
+    console.log("[work.slack] skip event", {
+      reason: "ledger_already_settled",
+      sourceId,
+      ledgerStatus: existing.status,
+      previousWorkUnitCount: existing.workUnitCount
+    });
     return null;
   }
 
@@ -515,7 +581,11 @@ export async function loadSlackWorkIngestCandidateFromEvent(input: {
   try {
     const replies = await fetchThreadReplies(input.channelId, threadTs);
     if (replies.length > 0) messages = replies;
-  } catch {
+  } catch (error) {
+    console.warn("[work.slack] thread replies failed, using event message only", {
+      sourceId,
+      error: error instanceof Error ? error.message : String(error)
+    });
     messages = [eventMessage];
   }
 

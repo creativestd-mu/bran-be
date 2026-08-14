@@ -128,6 +128,10 @@ export function textMentionsSlackUser(text: string, slackUserId: string): boolea
   return new RegExp(`<@${escaped}(?:\\|[^>]+)?>`, "i").test(text);
 }
 
+export function looksLikeOverdueTaskQuery(text: string): boolean {
+  return /\boverdue\b/i.test(stripSlackUserMentions(text));
+}
+
 export function looksLikeTaskListQuery(text: string): boolean {
   const trimmed = stripSlackUserMentions(text);
   if (!trimmed) return false;
@@ -425,7 +429,6 @@ export function classifyWorkUnitsForTaskList(input: {
   from: Date;
   to: Date;
   includeOverdue: boolean;
-  includeUndatedOpen: boolean;
   units: Array<{
     id: string;
     title: string;
@@ -454,97 +457,62 @@ export function classifyWorkUnitsForTaskList(input: {
     );
     const steps = relevantSteps.length > 0 ? relevantSteps : unit.steps;
 
-    const dueInRange = steps.some((step) => inRange(step.deadline, input.from, input.to));
-    const closedInRange = inRange(unit.closedAt, input.from, input.to);
-    const nextDueInRange = inRange(unit.nextDueAt, input.from, input.to);
-    const firstDueInRange = inRange(unit.firstDueAt, input.from, input.to);
-    const overdueOpen =
-      input.includeOverdue &&
-      unit.status === "OPEN" &&
-      Boolean(unit.nextDueAt && unit.nextDueAt.getTime() < input.from.getTime());
-    const undatedOpen =
-      input.includeUndatedOpen &&
-      unit.status === "OPEN" &&
-      !unit.nextDueAt &&
-      !unit.firstDueAt &&
-      steps.every((step) => !step.deadline);
-
-    const relevant =
-      dueInRange || closedInRange || nextDueInRange || firstDueInRange || overdueOpen || undatedOpen;
-    if (!relevant) continue;
-
-    const pendingSteps = steps.filter((step) => {
-      if (step.done) return false;
+    const dueSteps = steps.filter((step) => {
       if (inRange(step.deadline, input.from, input.to)) return true;
       if (
         input.includeOverdue &&
+        !step.done &&
         step.deadline &&
         step.deadline.getTime() < input.from.getTime()
       ) {
         return true;
       }
-      if (input.includeUndatedOpen && !step.deadline) return true;
       return false;
     });
-    const completedSteps = steps.filter(
-      (step) => step.done && (inRange(step.deadline, input.from, input.to) || closedInRange)
-    );
 
-    const isCompletedUnit =
-      unit.status === "CLOSED" && (closedInRange || dueInRange || firstDueInRange);
+    const unitDueInRange =
+      inRange(unit.nextDueAt, input.from, input.to) ||
+      inRange(unit.firstDueAt, input.from, input.to);
+    const overdueOpen =
+      input.includeOverdue &&
+      unit.status === "OPEN" &&
+      Boolean(unit.nextDueAt && unit.nextDueAt.getTime() < input.from.getTime());
 
-    if (isCompletedUnit || (pendingSteps.length === 0 && completedSteps.length > 0 && unit.status === "CLOSED")) {
-      completed.push({
-        id: unit.id,
-        title: unit.title,
-        status: "completed",
-        dueAt: unit.firstDueAt ?? steps.find((step) => step.deadline)?.deadline ?? null,
-        closedAt: unit.closedAt,
-        overdue: false,
-        steps: completedSteps.map((step) => ({
-          description: step.description,
-          done: true,
-          deadline: step.deadline
-        }))
-      });
-      continue;
-    }
+    if (dueSteps.length === 0 && !unitDueInRange && !overdueOpen) continue;
 
-    if (unit.status === "OPEN" && (pendingSteps.length > 0 || overdueOpen || undatedOpen || dueInRange || nextDueInRange)) {
-      pending.push({
-        id: unit.id,
-        title: unit.title,
-        status: "pending",
-        dueAt: unit.nextDueAt ?? pendingSteps.find((step) => step.deadline)?.deadline ?? null,
-        closedAt: null,
-        overdue: overdueOpen || Boolean(unit.nextDueAt && unit.nextDueAt.getTime() < Date.now()),
-        steps: [...pendingSteps, ...completedSteps].map((step) => ({
-          description: step.description,
-          done: step.done,
-          deadline: step.deadline
-        }))
-      });
-    }
+    const pendingSteps = dueSteps.filter((step) => !step.done);
+    const completedSteps = dueSteps.filter((step) => step.done);
+    const dueAt =
+      pendingSteps.find((step) => step.deadline)?.deadline ??
+      completedSteps.find((step) => step.deadline)?.deadline ??
+      unit.nextDueAt ??
+      unit.firstDueAt ??
+      null;
 
-    if (unit.status === "OPEN" && completedSteps.length > 0 && pendingSteps.length === 0 && !overdueOpen && !undatedOpen) {
-      completed.push({
-        id: unit.id,
-        title: unit.title,
-        status: "completed",
-        dueAt: unit.firstDueAt,
-        closedAt: unit.closedAt,
-        overdue: false,
-        steps: completedSteps.map((step) => ({
-          description: step.description,
-          done: true,
-          deadline: step.deadline
-        }))
-      });
-    }
+    const stillPending =
+      pendingSteps.length > 0 ||
+      (dueSteps.length === 0 && unit.status === "OPEN" && (unitDueInRange || overdueOpen));
+
+    const item: SlackTaskListItem = {
+      id: unit.id,
+      title: unit.title,
+      status: stillPending ? "pending" : "completed",
+      dueAt,
+      closedAt: unit.closedAt,
+      overdue: Boolean(dueAt && dueAt.getTime() < Date.now() && stillPending),
+      steps: dueSteps.map((step) => ({
+        description: step.description,
+        done: step.done,
+        deadline: step.deadline
+      }))
+    };
+
+    if (stillPending) pending.push(item);
+    else completed.push(item);
   }
 
   pending.sort((a, b) => (a.dueAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (b.dueAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
-  completed.sort((a, b) => (b.closedAt?.getTime() ?? 0) - (a.closedAt?.getTime() ?? 0));
+  completed.sort((a, b) => (a.dueAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (b.dueAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
   return { pending, completed };
 }
 
@@ -563,13 +531,9 @@ function formatDue(value: Date | null): string {
 
 function formatItem(item: SlackTaskListItem, link: string): string {
   const title = escapeSlackMrkdwn(item.title);
-  const due = item.status === "completed"
-    ? item.closedAt
-      ? `closed ${formatDue(item.closedAt)}`
-      : "completed"
-    : item.overdue
-      ? `overdue · due ${formatDue(item.dueAt)}`
-      : `due ${formatDue(item.dueAt)}`;
+  const due = item.overdue
+    ? `overdue · due ${formatDue(item.dueAt)}`
+    : `due ${formatDue(item.dueAt)}`;
   const head = link ? `• *<${link}|${title}>* — ${due}` : `• *${title}* — ${due}`;
   const steps = item.steps
     .slice(0, 4)
@@ -594,7 +558,7 @@ export function formatSlackTaskListMessage(input: {
     input.appUrl ? `${input.appUrl.replace(/\/$/, "")}/work/${id}` : "";
 
   const lines = [
-    `*Your tasks · ${escapeSlackMrkdwn(input.range.label)}*`,
+    `*Your tasks by due date · ${escapeSlackMrkdwn(input.range.label)}*`,
     "",
     `*Pending (${input.pending.length})*`
   ];

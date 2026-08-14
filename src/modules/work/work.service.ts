@@ -54,8 +54,8 @@ import {
 import {
   classifyWorkUnitsForTaskList,
   formatSlackTaskListMessage,
+  looksLikeOverdueTaskQuery,
   looksLikeTaskListQuery,
-  rangeIncludesToday,
   resolveSlackTaskListQuery,
   textMentionsSlackUser
 } from "./work.slack-tasks";
@@ -690,21 +690,19 @@ export async function processSlackTaskListMessage(input: {
     return { handled: true, reason: "unmapped_user" };
   }
 
-  const includeToday = rangeIncludesToday(query.range);
+  const includeOverdue = looksLikeOverdueTaskQuery(text);
   const units = await findWorkUnitsForSlackTaskList({
     userId: branUserId,
     from: query.range.from,
     to: query.range.to,
-    includeOverdue: includeToday,
-    includeUndatedOpen: includeToday
+    includeOverdue
   });
 
   const { pending, completed } = classifyWorkUnitsForTaskList({
     userId: branUserId,
     from: query.range.from,
     to: query.range.to,
-    includeOverdue: includeToday,
-    includeUndatedOpen: includeToday,
+    includeOverdue,
     units
   });
 

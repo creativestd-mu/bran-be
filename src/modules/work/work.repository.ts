@@ -257,43 +257,32 @@ export async function findWorkUnitsForSlackTaskList(input: {
   from: Date;
   to: Date;
   includeOverdue: boolean;
-  includeUndatedOpen: boolean;
 }) {
   const inRange: Prisma.DateTimeFilter = { gte: input.from, lte: input.to };
   const belongsToUser: Prisma.WorkUnitWhereInput = {
     OR: [{ userId: input.userId }, { steps: { some: { assigneeId: input.userId } } }]
   };
 
-  const dateOr: Prisma.WorkUnitWhereInput[] = [
+  const dueOr: Prisma.WorkUnitWhereInput[] = [
     { nextDueAt: inRange },
     { firstDueAt: inRange },
-    { closedAt: inRange },
     { steps: { some: { deadline: inRange } } }
   ];
 
   if (input.includeOverdue) {
-    dateOr.push({
+    dueOr.push({
       status: "OPEN",
       nextDueAt: { lt: input.from }
     });
   }
 
-  if (input.includeUndatedOpen) {
-    dateOr.push({
-      status: "OPEN",
-      nextDueAt: null,
-      firstDueAt: null,
-      steps: { none: { deadline: { not: null } } }
-    });
-  }
-
   return prisma.workUnit.findMany({
     where: {
-      AND: [belongsToUser, { OR: dateOr }]
+      AND: [belongsToUser, { OR: dueOr }]
     },
     include: workUnitInclude,
     take: SLACK_TASK_LIST_LIMIT,
-    orderBy: [{ nextDueAt: { sort: "asc", nulls: "last" } }, { createdAt: "desc" }]
+    orderBy: [{ nextDueAt: { sort: "asc", nulls: "last" } }, { firstDueAt: { sort: "asc", nulls: "last" } }]
   });
 }
 

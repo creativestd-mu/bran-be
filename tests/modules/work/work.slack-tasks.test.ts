@@ -48,8 +48,7 @@ describe("Slack task list query", () => {
       userId,
       from,
       to,
-      includeOverdue: true,
-      includeUndatedOpen: true,
+      includeOverdue: false,
       units: [
         {
           id: "open-today",
@@ -69,6 +68,23 @@ describe("Slack task list query", () => {
           ]
         },
         {
+          id: "overdue-june",
+          title: "Sit with Arun",
+          status: "OPEN",
+          userId,
+          closedAt: null,
+          nextDueAt: new Date("2026-06-09T00:00:00.000+05:30"),
+          firstDueAt: new Date("2026-06-09T00:00:00.000+05:30"),
+          steps: [
+            {
+              description: "Meet with Arun",
+              done: false,
+              deadline: new Date("2026-06-09T00:00:00.000+05:30"),
+              assigneeId: userId
+            }
+          ]
+        },
+        {
           id: "closed-today",
           title: "Ship notes",
           status: "CLOSED",
@@ -81,6 +97,23 @@ describe("Slack task list query", () => {
               description: "Ship notes",
               done: true,
               deadline: from,
+              assigneeId: userId
+            }
+          ]
+        },
+        {
+          id: "closed-today-due-last-week",
+          title: "Old task finished today",
+          status: "CLOSED",
+          userId,
+          closedAt: from,
+          nextDueAt: null,
+          firstDueAt: new Date("2026-08-01T00:00:00.000+05:30"),
+          steps: [
+            {
+              description: "Old task",
+              done: true,
+              deadline: new Date("2026-08-01T00:00:00.000+05:30"),
               assigneeId: userId
             }
           ]

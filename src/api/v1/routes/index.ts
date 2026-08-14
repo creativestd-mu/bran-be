@@ -5,6 +5,7 @@ import { instagramRouter } from "../../../modules/instagram/instagram.routes";
 import { linkedinRouter } from "../../../modules/instagram/linkedin.routes";
 import { youtubeRouter } from "../../../modules/instagram/youtube.routes";
 import { meltwaterEarnedRouter } from "../../../modules/meltwater-earned/meltwater-earned.routes";
+import { competitorContentRouter } from "../../../modules/competitor-content/competitor-content.routes";
 import { sentimentRouter } from "../../../modules/sentiment/sentiment.routes";
 import { healthRouter } from "./health.routes";
 
@@ -76,6 +77,7 @@ v1Router.use("/linkedin", linkedinRouter);
 v1Router.use("/youtube", youtubeRouter);
 v1Router.use("/facebook", facebookRouter);
 v1Router.use("/meltwater/earned", meltwaterEarnedRouter);
+v1Router.use("/competitors", competitorContentRouter);
 v1Router.use("/sentiment", sentimentRouter);
 
 export { v1Router };

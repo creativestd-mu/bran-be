@@ -23,6 +23,30 @@ export type MeltwaterCustomAnalyticsRequest = MeltwaterEarnedWindow & {
   analysis: MeltwaterCustomAnalysis;
 };
 
+export type MeltwaterSearchSortBy =
+  | "date"
+  | "reach"
+  | "engagement"
+  | "social_echo"
+  | "relevance"
+  | "prominence"
+  | "country"
+  | "sentiment"
+  | "language"
+  | "title"
+  | "views";
+
+export type MeltwaterSearchRequest = MeltwaterEarnedWindow & {
+  page?: number;
+  page_size?: number;
+  sort_by?: MeltwaterSearchSortBy;
+  sort_order?: "asc" | "desc";
+  sentiments?: Array<"positive" | "negative" | "neutral">;
+  sources?: string[];
+  languages?: string[];
+  template?: { name: string };
+};
+
 export type SentimentCounts = {
   positive: number;
   neutral: number;

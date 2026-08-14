@@ -48,8 +48,8 @@ export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: parsedPort,
   databaseUrl: buildDatabaseUrlFromParts() || process.env.DATABASE_URL || "",
-  meltwaterBaseUrl: process.env.MELTWATER_BASE_URL ?? "",
-  meltwaterApiKey: process.env.MELTWATER_API_KEY ?? "",
+  meltwaterBaseUrl: cleanEnvSecret(process.env.MELTWATER_BASE_URL),
+  meltwaterApiKey: cleanEnvSecret(process.env.MELTWATER_API_KEY),
   meltwaterOwnedPostsEndpoint:
     process.env.MELTWATER_OWNED_POSTS_ENDPOINT ??
     process.env.MELTWATER_INSTAGRAM_ENDPOINT ??
@@ -67,6 +67,11 @@ export const env = {
   meltwaterEarnedCronEnabled:
     (process.env.MELTWATER_EARNED_CRON_ENABLED ?? "true").toLowerCase() !== "false",
   meltwaterEarnedLookbackDays: parsePositiveNumber(process.env.MELTWATER_EARNED_LOOKBACK_DAYS, 14),
+  /** Saved search IDs for competitor impactful-content sync (comma-separated). */
+  meltwaterCompetitorSearchIds: parseCsv(process.env.MELTWATER_COMPETITOR_SEARCH_IDS),
+  meltwaterCompetitorTopN: parsePositiveNumber(process.env.MELTWATER_COMPETITOR_TOP_N, 5),
+  meltwaterCompetitorCronEnabled:
+    (process.env.MELTWATER_COMPETITOR_CRON_ENABLED ?? "true").toLowerCase() !== "false",
   supportedLanguages: (process.env.SUPPORTED_LANGUAGES ?? "en")
     .split(",")
     .map((lang) => lang.trim().toLowerCase())

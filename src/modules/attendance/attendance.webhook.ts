@@ -17,6 +17,7 @@ import {
   verifySlackSignature
 } from "./attendance.slack";
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
+import { processSlackCompetitorMessage } from "../competitor-content/competitor-content.slack";
 import { processSlackSentimentMessage } from "../sentiment/sentiment.slack";
 import {
   processSlackTaskListMessage,
@@ -36,6 +37,10 @@ async function processSlackInteractiveQuery(input: {
   threadTs?: string;
   channelType?: string;
 }): Promise<{ handled: boolean; reason?: string }> {
+  const competitor = await processSlackCompetitorMessage(input);
+  if (competitor.handled) {
+    return competitor;
+  }
   const sentiment = await processSlackSentimentMessage(input);
   if (sentiment.handled) {
     return sentiment;

@@ -726,6 +726,34 @@ model MeltwaterEarnedDaily {
   @@index([searchId, date])
 }
 
+// ── Meltwater competitor impactful content (document-level) ──
+
+model MeltwaterCompetitorContent {
+  id             String    @id @default(uuid())
+  searchId       String
+  searchName     String?
+  documentId     String
+  url            String?
+  title          String?
+  snippet        String?
+  source         String?
+  sourceName     String?
+  author         String?
+  publishedAt    DateTime?
+  sentiment      String
+  engagement     Float     @default(0)
+  reach          Float     @default(0)
+  estimatedViews Float     @default(0)
+  timezone       String    @default("Asia/Kolkata")
+  rawPayload     String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([searchId, documentId])
+  @@index([searchId, sentiment, publishedAt])
+  @@index([publishedAt])
+}
+
 // ── Content Module ──────────────────────────────────────────
 
 model Content {

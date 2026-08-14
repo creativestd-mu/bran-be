@@ -1,0 +1,94 @@
+import { normalizeCompetitorDocuments } from "../../../src/modules/competitor-content/competitor-content.normalize";
+
+describe("normalizeCompetitorDocuments", () => {
+  it("extracts impactful positive documents and skips zero-engagement rows", () => {
+    const payload = {
+      result: {
+        document_count: 3,
+        documents: [
+          {
+            id: "doc-1",
+            title: "Scaler raises funding",
+            content: {
+              title: "Scaler raises funding",
+              body: "Scaler School of Business announced a new round…",
+              url: "https://example.com/scaler-funding"
+            },
+            source: { name: "Economic Times", type: "news" },
+            author: { name: "Reporter A" },
+            published_date: "2026-08-10T08:00:00Z",
+            sentiment: "positive",
+            metrics: { engagement: 12500, reach: 800000, estimated_views: 400000 }
+          },
+          {
+            id: "doc-2",
+            content: { body: "quiet mention with no traction" },
+            sentiment: "positive",
+            metrics: { engagement: 0, reach: 0, estimated_views: 0 }
+          },
+          {
+            meta: { document_id: "doc-3" },
+            content: {
+              headline: "Ashoka University campus news",
+              opening_text: "Students celebrated…",
+              matched_url: "https://example.com/ashoka"
+            },
+            source: { title: "The Hindu" },
+            metrics: { engagement: 900, reach: 12000 },
+            enrichment: { sentiment: "positive" },
+            datetime: "2026-08-11T12:00:00Z"
+          }
+        ]
+      }
+    };
+
+    const records = normalizeCompetitorDocuments(payload, {
+      searchId: "28994734",
+      searchName: "Bran MU Competitors",
+      timezone: "Asia/Kolkata",
+      sentiment: "positive"
+    });
+
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({
+      searchId: "28994734",
+      documentId: "doc-1",
+      title: "Scaler raises funding",
+      url: "https://example.com/scaler-funding",
+      sourceName: "Economic Times",
+      sentiment: "positive",
+      engagement: 12500,
+      reach: 800000
+    });
+    expect(records[1]).toMatchObject({
+      documentId: "doc-3",
+      title: "Ashoka University campus news",
+      url: "https://example.com/ashoka",
+      sourceName: "The Hindu",
+      engagement: 900,
+      reach: 12000
+    });
+  });
+
+  it("falls back to requested sentiment when document sentiment is missing", () => {
+    const payload = {
+      documents: [
+        {
+          id: "neg-1",
+          content: { title: "Complaint thread", body: "Users unhappy with Newton…" },
+          metrics: { engagement: 50, reach: 1000 }
+        }
+      ]
+    };
+
+    const records = normalizeCompetitorDocuments(payload, {
+      searchId: "28994734",
+      timezone: "Asia/Kolkata",
+      sentiment: "negative"
+    });
+
+    expect(records).toHaveLength(1);
+    expect(records[0].sentiment).toBe("negative");
+    expect(records[0].snippet).toContain("Users unhappy");
+  });
+});

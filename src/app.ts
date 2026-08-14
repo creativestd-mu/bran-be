@@ -15,6 +15,8 @@ import {
 } from "./modules/attendance/attendance.webhook";
 import { escalationCronHandler } from "./modules/escalation/escalation.cron";
 import { meltwaterEarnedCronHandler } from "./modules/meltwater-earned/meltwater-earned.cron";
+import { competitorContentCronHandler } from "./modules/competitor-content/competitor-content.cron";
+import { competitorContentRouter } from "./modules/competitor-content/competitor-content.routes";
 import { sentimentRouter } from "./modules/sentiment/sentiment.routes";
 import { handleCalendarOAuthCallback } from "./modules/meetings/meetings.service";
 import { recallWebhookHandler } from "./modules/meetings/meetings.webhook";
@@ -57,6 +59,7 @@ app.get("/api/slack/events", (_req, res) => {
 app.get("/api/cron/eta-check", etaCronHandler);
 app.get("/api/cron/escalation-check", escalationCronHandler);
 app.get("/api/cron/meltwater-earned", meltwaterEarnedCronHandler);
+app.get("/api/cron/meltwater-competitors", competitorContentCronHandler);
 
 app.get("/oauth/google/calendar/callback", (req, res) => {
   void handleCalendarOAuthCallback(req, res);
@@ -76,6 +79,7 @@ if (env.nodeEnv !== "test") {
 // Guide-compatible aliases (JWT auth) — same handlers as /:lang/v1/attendance
 app.use("/api/eta", attendanceRouter);
 app.use("/api/sentiment", sentimentRouter);
+app.use("/api/competitors", competitorContentRouter);
 
 app.get("/", (_req, res) => {
   res.status(200).json({
@@ -89,9 +93,11 @@ app.get("/", (_req, res) => {
       etaCron: "/api/cron/eta-check",
       escalationCron: "/api/cron/escalation-check",
       meltwaterEarnedCron: "/api/cron/meltwater-earned",
+      meltwaterCompetitorsCron: "/api/cron/meltwater-competitors",
       workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)",
       slackTaskList: "DM or @Bran in a channel to list pending/completed tasks",
-      slackSentiment: "DM or @Bran: sentiment / brand mentions (onboarded users)"
+      slackSentiment: "DM or @Bran: sentiment / brand mentions (onboarded users)",
+      slackCompetitors: "DM or @Bran: competitor coverage / impactful content (onboarded users)"
     }
   });
 });

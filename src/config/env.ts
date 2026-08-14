@@ -61,6 +61,12 @@ export const env = {
   meltwaterAccountIdsLinkedin: parseCsv(process.env.MELTWATER_ACCOUNT_IDS_LINKEDIN),
   meltwaterAccountIdsYoutube: parseCsv(process.env.MELTWATER_ACCOUNT_IDS_YOUTUBE),
   meltwaterAccountIdsFacebook: parseCsv(process.env.MELTWATER_ACCOUNT_IDS_FACEBOOK),
+  /** Saved Explore/Listening search IDs for earned mention analytics. */
+  meltwaterSearchIds: parseCsv(process.env.MELTWATER_SEARCH_IDS),
+  meltwaterEarnedTimezone: process.env.MELTWATER_EARNED_TIMEZONE ?? process.env.APP_TIMEZONE ?? "Asia/Kolkata",
+  meltwaterEarnedCronEnabled:
+    (process.env.MELTWATER_EARNED_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  meltwaterEarnedLookbackDays: parsePositiveNumber(process.env.MELTWATER_EARNED_LOOKBACK_DAYS, 14),
   supportedLanguages: (process.env.SUPPORTED_LANGUAGES ?? "en")
     .split(",")
     .map((lang) => lang.trim().toLowerCase())

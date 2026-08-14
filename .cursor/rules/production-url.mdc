@@ -32,6 +32,18 @@ JWT attendance APIs (`/api/eta/*`, `/:lang/v1/attendance/*`) are restricted to r
 - Zero counters: `POST /api/eta/stats/:slackUserId/reset-counts` (history kept).
 - Policies (admin/CoS, editable in-app): `GET|PUT /api/eta/policies` — markdown leave/WFH/ETA SOP doc. FE: `/attendance/policies`.
 
+## Sentiment (earned media)
+
+- Frontend page: `/sentiment`. Available to **every onboarded Bran user** (any authenticated role).
+- JWT APIs (same handlers):
+  - `GET /api/sentiment` and `GET /:lang/v1/sentiment` — dashboard (daily series + totals)
+  - Query: `from`, `to`, `searchId`, `preset=7d|14d|30d|this_week|this_month` (default last 30 days)
+  - `GET /api/sentiment/aggregate` — period totals only
+  - `GET /api/sentiment/searches` — Meltwater saved searches
+  - `POST /api/sentiment/sync` — pull latest Meltwater earned volume/reach/sentiment
+- Slack (DM or `@Bran` in a channel): anyone whose Slack email matches an active Bran user can ask e.g. `sentiment this week`, `brand mentions last month`, `press coverage yesterday`.
+- Data source: Meltwater Listening/Explore saved searches (`MELTWATER_SEARCH_IDS`). Cron: `GET /api/cron/meltwater-earned`.
+
 ## Escalation tracker
 
 - Slack channel: set `SLACK_ESCALATION_CHANNEL_NAME` (default `escalations`) or `SLACK_ESCALATION_CHANNEL_ID`.

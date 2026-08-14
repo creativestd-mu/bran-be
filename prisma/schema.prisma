@@ -702,6 +702,30 @@ model InstagramPerformance {
   @@index([source, language, mentionedAt])
 }
 
+// ── Meltwater earned media (listening / Explore searches) ──
+
+model MeltwaterEarnedDaily {
+  id                 String   @id @default(uuid())
+  searchId           String
+  searchName         String?
+  date               DateTime @db.Date
+  timezone           String   @default("Asia/Kolkata")
+  mentionCount       Int      @default(0)
+  reach              Float    @default(0)
+  estimatedViews     Float    @default(0)
+  sentimentPositive  Int      @default(0)
+  sentimentNeutral   Int      @default(0)
+  sentimentNegative  Int      @default(0)
+  sentimentUnknown   Int      @default(0)
+  rawPayload         String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([searchId, date, timezone])
+  @@index([date])
+  @@index([searchId, date])
+}
+
 // ── Content Module ──────────────────────────────────────────
 
 model Content {

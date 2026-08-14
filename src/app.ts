@@ -14,6 +14,8 @@ import {
   slackEventsHandler
 } from "./modules/attendance/attendance.webhook";
 import { escalationCronHandler } from "./modules/escalation/escalation.cron";
+import { meltwaterEarnedCronHandler } from "./modules/meltwater-earned/meltwater-earned.cron";
+import { sentimentRouter } from "./modules/sentiment/sentiment.routes";
 import { handleCalendarOAuthCallback } from "./modules/meetings/meetings.service";
 import { recallWebhookHandler } from "./modules/meetings/meetings.webhook";
 import { handleGmailOAuthCallback } from "./modules/gmail/gmail.service";
@@ -54,6 +56,7 @@ app.get("/api/slack/events", (_req, res) => {
 });
 app.get("/api/cron/eta-check", etaCronHandler);
 app.get("/api/cron/escalation-check", escalationCronHandler);
+app.get("/api/cron/meltwater-earned", meltwaterEarnedCronHandler);
 
 app.get("/oauth/google/calendar/callback", (req, res) => {
   void handleCalendarOAuthCallback(req, res);
@@ -72,6 +75,7 @@ if (env.nodeEnv !== "test") {
 
 // Guide-compatible aliases (JWT auth) — same handlers as /:lang/v1/attendance
 app.use("/api/eta", attendanceRouter);
+app.use("/api/sentiment", sentimentRouter);
 
 app.get("/", (_req, res) => {
   res.status(200).json({
@@ -84,8 +88,10 @@ app.get("/", (_req, res) => {
       slackCommands: "/api/slack/commands",
       etaCron: "/api/cron/eta-check",
       escalationCron: "/api/cron/escalation-check",
+      meltwaterEarnedCron: "/api/cron/meltwater-earned",
       workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)",
-      slackTaskList: "DM or @Bran in a channel to list pending/completed tasks"
+      slackTaskList: "DM or @Bran in a channel to list pending/completed tasks",
+      slackSentiment: "DM or @Bran: sentiment / brand mentions (onboarded users)"
     }
   });
 });

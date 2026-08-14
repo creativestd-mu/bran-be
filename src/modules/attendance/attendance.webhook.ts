@@ -17,6 +17,7 @@ import {
   verifySlackSignature
 } from "./attendance.slack";
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
+import { processSlackSentimentMessage } from "../sentiment/sentiment.slack";
 import {
   processSlackTaskListMessage,
   processSlackVoiceWorkConfirm,
@@ -24,6 +25,23 @@ import {
   processSlackWorkMessage
 } from "../work/work.service";
 import { hasSlackAudioFiles, isSlackDmChannel } from "../work/work.slack-voice";
+
+async function processSlackInteractiveQuery(input: {
+  channelId: string;
+  userId: string;
+  text?: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  threadTs?: string;
+  channelType?: string;
+}): Promise<{ handled: boolean; reason?: string }> {
+  const sentiment = await processSlackSentimentMessage(input);
+  if (sentiment.handled) {
+    return sentiment;
+  }
+  return processSlackTaskListMessage(input);
+}
 
 function readRawBodyBuffer(req: Request): Buffer {
   if (Buffer.isBuffer(req.body)) {
@@ -171,7 +189,7 @@ export async function slackEventsHandler(
       })
         .then((result) => {
           if (result.handled) return;
-          return processSlackTaskListMessage({
+          return processSlackInteractiveQuery({
             channelId: event.channel!,
             userId: event.user!,
             text: event.text,
@@ -198,7 +216,7 @@ export async function slackEventsHandler(
           console.error("Slack voice confirm / task list / attendance processing failed:", error);
         });
     } else if (isDm && hasText) {
-      void processSlackTaskListMessage({
+      void processSlackInteractiveQuery({
         channelId: event.channel,
         userId: event.user,
         text: event.text,
@@ -222,10 +240,10 @@ export async function slackEventsHandler(
           });
         })
         .catch((error) => {
-          console.error("Slack task list / attendance processing failed:", error);
+          console.error("Slack sentiment / task list / attendance processing failed:", error);
         });
     } else if (hasText) {
-      void processSlackTaskListMessage({
+      void processSlackInteractiveQuery({
         channelId: event.channel,
         userId: event.user,
         text: event.text,
@@ -249,7 +267,7 @@ export async function slackEventsHandler(
           });
         })
         .catch((error) => {
-          console.error("Slack task list / attendance event processing failed:", error);
+          console.error("Slack sentiment / task list / attendance event processing failed:", error);
         });
     }
 
@@ -270,7 +288,7 @@ export async function slackEventsHandler(
 
     // Channel text work ingest — skip DMs, and skip if this message was a @Bran task list.
     if (hasText && !isDm) {
-      void processSlackTaskListMessage({
+      void processSlackInteractiveQuery({
         channelId: event.channel,
         userId: event.user,
         text: event.text,

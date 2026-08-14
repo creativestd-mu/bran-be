@@ -166,3 +166,18 @@ export function isAcceptAsIsConfirmReply(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return normalized === "create" || normalized === "ok" || normalized === "yes";
 }
+
+export function slackVoiceMessageIsAddressedToBot(input: {
+  isDm: boolean;
+  eventType?: string;
+  text?: string;
+  botUserId: string | null;
+}): boolean {
+  if (input.isDm) return true;
+  if (input.eventType === "app_mention") return true;
+  const botUserId = input.botUserId?.trim();
+  const text = input.text ?? "";
+  if (!botUserId || !text) return false;
+  const escaped = botUserId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`<@${escaped}(?:\\|[^>]+)?>`, "i").test(text);
+}

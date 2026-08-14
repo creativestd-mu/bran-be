@@ -49,8 +49,7 @@ import { loadGmailWorkIngestCandidates } from "./work.sources";
 import {
   getSlackBotUserId,
   getSlackUserInfo,
-  postSlackMessage,
-  sendDm
+  postSlackMessage
 } from "../attendance/attendance.slack";
 import {
   isAllowedSlackWorkChannel,
@@ -71,7 +70,8 @@ import {
   downloadSlackAudio,
   extractSlackAudioAttachments,
   isAcceptAsIsConfirmReply,
-  isSlackDmChannel
+  isSlackDmChannel,
+  slackVoiceMessageIsAddressedToBot
 } from "./work.slack-voice";
 import { findWorkUnitSource, recordWorkUnitSource } from "./work.source-ledger";
 import type { WorkIngestCandidate } from "./work.sources";
@@ -306,6 +306,7 @@ export async function createWorkUnitsFromRecording(
     sourceType?: WorkIngestSourceType;
     sourceId?: string;
     throwOnExtractError?: boolean;
+    useLedger?: boolean;
   }
 ) {
   return ingestWorkFromText({
@@ -315,7 +316,7 @@ export async function createWorkUnitsFromRecording(
     audioRecordingId: recording.id,
     sourceType: options?.sourceType,
     sourceId: options?.sourceId,
-    useLedger: Boolean(options?.sourceType && options?.sourceId),
+    useLedger: options?.useLedger ?? Boolean(options?.sourceType && options?.sourceId),
     throwOnExtractError: options?.throwOnExtractError ?? true
   });
 }
@@ -785,8 +786,86 @@ async function slackTaskListOwnerName(slackUserId: string): Promise<string> {
   }
 }
 
+function formatSlackVoiceCreatedUnits(
+  units: Array<{
+    title: string;
+    userId: string;
+    user?: { name?: string | null } | null;
+    assigneeSpokenName?: string | null;
+  }>,
+  speakerUserId: string
+): string {
+  return units
+    .map((unit) => {
+      const owner =
+        unit.userId === speakerUserId
+          ? unit.user?.name
+            ? `${unit.user.name} (you)`
+            : "you"
+          : unit.user?.name?.trim() || unit.assigneeSpokenName?.trim() || "teammate";
+      return `• *${unit.title}* — ${owner}`;
+    })
+    .join("\n");
+}
+
+async function createWorkUnitsFromSlackVoiceDraft(input: {
+  draft: {
+    id: string;
+    branUserId: string;
+    voiceRecordingId: string;
+    transcript: string;
+  };
+  finalText: string;
+  channelId: string;
+  threadTs: string;
+}): Promise<{ created: number }> {
+  const result = await createWorkUnitsFromRecording(
+    input.draft.branUserId,
+    { id: input.draft.voiceRecordingId },
+    input.finalText,
+    {
+      sourceType: "SLACK",
+      sourceId: input.draft.id,
+      throwOnExtractError: false,
+      useLedger: false
+    }
+  );
+
+  const count = result.workUnits.length;
+  if (count > 0) {
+    await prisma.slackVoiceWorkDraft.update({
+      where: { id: input.draft.id },
+      data: { status: "CREATED" }
+    });
+  }
+
+  const titles = formatSlackVoiceCreatedUnits(result.workUnits, input.draft.branUserId);
+  const reply =
+    count === 0
+      ? [
+          "I heard:",
+          "",
+          input.finalText,
+          "",
+          "I didn’t find any new work units to create (they may already exist).",
+          "Reply in this thread with edited text to try again, or `create` to reuse the transcript."
+        ].join("\n")
+      : [
+          "I heard:",
+          "",
+          input.finalText,
+          "",
+          `Created ${count} work unit${count === 1 ? "" : "s"}:`,
+          titles
+        ].join("\n");
+
+  await postSlackMessage(input.channelId, reply, { threadTs: input.threadTs });
+  return { created: count };
+}
+
 /**
- * DM voice note → Sarvam transcript → draft → thread reply asking for confirm/edit.
+ * Voice note in a DM, or @Bran + audio in a channel → transcript → work units
+ * (same extraction/assignment path as the Bran work-units audio upload).
  */
 export async function processSlackVoiceWorkMessage(input: {
   channelId: string;
@@ -795,8 +874,10 @@ export async function processSlackVoiceWorkMessage(input: {
   botId?: string;
   subtype?: string;
   channelType?: string;
+  text?: string;
+  eventType?: string;
   files?: SlackFile[];
-}): Promise<{ handled: boolean; reason?: string }> {
+}): Promise<{ handled: boolean; reason?: string; created?: number }> {
   if (input.botId) {
     return { handled: false, reason: "ignored_bot" };
   }
@@ -806,8 +887,17 @@ export async function processSlackVoiceWorkMessage(input: {
     return { handled: false, reason: "ignored_subtype" };
   }
 
-  if (!isSlackDmChannel(input.channelId, input.channelType)) {
-    return { handled: false, reason: "not_dm" };
+  const isDm = isSlackDmChannel(input.channelId, input.channelType);
+  const botUserId = await getSlackBotUserId();
+  if (
+    !slackVoiceMessageIsAddressedToBot({
+      isDm,
+      eventType: input.eventType,
+      text: input.text,
+      botUserId
+    })
+  ) {
+    return { handled: false, reason: "channel_requires_mention" };
   }
 
   const attachments = extractSlackAudioAttachments(input.files);
@@ -830,9 +920,10 @@ export async function processSlackVoiceWorkMessage(input: {
   const branUserId = await resolveBranUserIdForSlackUser(input.userId);
   if (!branUserId) {
     try {
-      await sendDm(
-        input.userId,
-        "Your Slack email isn’t linked to a Bran account yet, so I can’t turn this voice note into work units. Ask an admin to match your Slack email to Bran, then try again."
+      await postSlackMessage(
+        input.channelId,
+        "Your Slack email isn’t linked to a Bran account yet, so I can’t turn this voice note into work units. Ask an admin to match your Slack email to Bran, then try again.",
+        { threadTs: input.ts }
       );
     } catch (error) {
       console.error("[work.slack-voice] failed to notify unlinked user:", error);
@@ -893,8 +984,9 @@ export async function processSlackVoiceWorkMessage(input: {
     return { handled: false, reason: "empty_transcript" };
   }
 
+  let draft: { id: string; branUserId: string; voiceRecordingId: string; transcript: string };
   try {
-    await prisma.slackVoiceWorkDraft.create({
+    draft = await prisma.slackVoiceWorkDraft.create({
       data: {
         branUserId,
         slackUserId: input.userId,
@@ -911,29 +1003,59 @@ export async function processSlackVoiceWorkMessage(input: {
     return { handled: false, reason: "draft_create_race" };
   }
 
-  const reply = [
-    "Here's the transcript:",
-    "",
-    transcript,
-    "",
-    "Reply in this thread with your edited text to create work units,",
-    "or reply `create` to use this as-is."
-  ].join("\n");
-
-  try {
-    await postSlackMessage(input.channelId, reply, { threadTs: input.ts });
-  } catch (error) {
-    console.error("[work.slack-voice] failed to post transcript reply:", error);
+  if (!isWorkExtractionAiConfigured()) {
+    try {
+      await postSlackMessage(
+        input.channelId,
+        [
+          "I heard:",
+          "",
+          transcript,
+          "",
+          "Work extraction isn’t configured right now, so I can’t create work units from this yet."
+        ].join("\n"),
+        { threadTs: input.ts }
+      );
+    } catch (error) {
+      console.error("[work.slack-voice] failed to post AI-config notice:", error);
+    }
+    return { handled: true, reason: "ai_not_configured" };
   }
 
-  console.log(
-    `[work.slack-voice] draft ready for ${input.channelId}:${input.ts} (recording ${recording.id})`
-  );
-  return { handled: true };
+  try {
+    const { created } = await createWorkUnitsFromSlackVoiceDraft({
+      draft,
+      finalText: transcript,
+      channelId: input.channelId,
+      threadTs: input.ts
+    });
+    console.log(
+      `[work.slack-voice] created ${created} work unit(s) from ${input.channelId}:${input.ts} (recording ${recording.id})`
+    );
+    return { handled: true, created };
+  } catch (error) {
+    console.error("[work.slack-voice] immediate create failed:", error);
+    try {
+      await postSlackMessage(
+        input.channelId,
+        [
+          "I heard:",
+          "",
+          transcript,
+          "",
+          "Sorry — I couldn’t create work units from that yet. Reply in this thread with edited text (or `create`) to try again."
+        ].join("\n"),
+        { threadTs: input.ts }
+      );
+    } catch (postError) {
+      console.error("[work.slack-voice] failed to post create error:", postError);
+    }
+    return { handled: true, reason: "create_failed" };
+  }
 }
 
 /**
- * DM thread reply on a voice draft → create work units from edited or accepted transcript.
+ * Thread reply on a voice draft → create work units from edited or accepted transcript.
  */
 export async function processSlackVoiceWorkConfirm(input: {
   channelId: string;
@@ -947,10 +1069,6 @@ export async function processSlackVoiceWorkConfirm(input: {
 }): Promise<{ handled: boolean; reason?: string; created?: number }> {
   if (input.botId || input.subtype) {
     return { handled: false, reason: "ignored_bot_or_subtype" };
-  }
-
-  if (!isSlackDmChannel(input.channelId, input.channelType)) {
-    return { handled: false, reason: "not_dm" };
   }
 
   const threadTs = input.threadTs;
@@ -1029,31 +1147,14 @@ export async function processSlackVoiceWorkConfirm(input: {
   }
 
   try {
-    const result = await createWorkUnitsFromRecording(
-      draft.branUserId,
-      { id: draft.voiceRecordingId },
+    const { created } = await createWorkUnitsFromSlackVoiceDraft({
+      draft,
       finalText,
-      { sourceType: "SLACK", sourceId: draft.id, throwOnExtractError: false }
-    );
-
-    await prisma.slackVoiceWorkDraft.update({
-      where: { id: draft.id },
-      data: { status: "CREATED" }
+      channelId: input.channelId,
+      threadTs
     });
-
-    const titles = result.workUnits.map((unit) => `• ${unit.title}`).join("\n");
-    const count = result.workUnits.length;
-    const reply =
-      count === 0
-        ? "I processed that, but didn’t find any new work units to create (they may already exist)."
-        : `Created ${count} work unit${count === 1 ? "" : "s"}:\n${titles}`;
-
-    await postSlackMessage(input.channelId, reply, { threadTs });
-
-    console.log(
-      `[work.slack-voice] confirm ${draft.id} → created ${count} work unit(s)`
-    );
-    return { handled: true, created: count };
+    console.log(`[work.slack-voice] confirm ${draft.id} → created ${created} work unit(s)`);
+    return { handled: true, created };
   } catch (error) {
     console.error("[work.slack-voice] confirm/create failed:", error);
     try {

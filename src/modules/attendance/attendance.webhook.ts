@@ -161,8 +161,8 @@ export async function slackEventsHandler(
     const hasAudio = hasSlackAudioFiles(event.files);
     const isThreadReply = Boolean(event.thread_ts && event.thread_ts !== event.ts);
 
-    // DM voice → transcript draft (async; STT can exceed Slack's 3s ack window)
-    if (isDm && hasAudio) {
+    // Voice note → work units (DM, or @Bran + audio in a channel). STT can exceed Slack's 3s ack.
+    if (hasAudio) {
       void processSlackVoiceWorkMessage({
         channelId: event.channel,
         userId: event.user,
@@ -170,18 +170,20 @@ export async function slackEventsHandler(
         botId: event.bot_id,
         subtype: event.subtype,
         channelType: event.channel_type,
+        text: event.text,
+        eventType: event.type,
         files: event.files
       }).catch((error) => {
         console.error("Slack voice work event processing failed:", error);
       });
     }
 
-    // DM thread confirm for voice drafts — run before attendance so "ok"/"yes"/"create"
+    // Thread confirm/edit for voice drafts — run before attendance so "ok"/"yes"/"create"
     // on a draft thread does not collide with WFH/leave approval replies.
-    // Skip attendance entirely for DM audio messages (voice note captions).
-    if (isDm && hasAudio) {
+    // Skip attendance entirely for audio messages addressed to Bran.
+    if (hasAudio) {
       // voice handler above; no attendance on the audio message itself
-    } else if (isDm && isThreadReply && hasText) {
+    } else if (isThreadReply && hasText) {
       void processSlackVoiceWorkConfirm({
         channelId: event.channel,
         userId: event.user,
@@ -291,8 +293,8 @@ export async function slackEventsHandler(
       });
     }
 
-    // Channel text work ingest — skip DMs, and skip if this message was a @Bran task list.
-    if (hasText && !isDm) {
+    // Channel text work ingest — skip DMs, voice notes, and @Bran task-list replies.
+    if (hasText && !isDm && !hasAudio) {
       void processSlackInteractiveQuery({
         channelId: event.channel,
         userId: event.user,

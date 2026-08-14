@@ -20,6 +20,7 @@ import { processSlackEscalationMessage } from "../escalation/escalation.service"
 import { processSlackCompetitorMessage } from "../competitor-content/competitor-content.slack";
 import { processSlackSentimentMessage } from "../sentiment/sentiment.slack";
 import {
+  processSlackDmWorkCreateMessage,
   processSlackTaskListMessage,
   processSlackVoiceWorkConfirm,
   processSlackVoiceWorkMessage,
@@ -216,6 +217,18 @@ export async function slackEventsHandler(
               subtype: event.subtype,
               threadTs: event.thread_ts,
               channelType: event.channel_type
+            }).then((attendance) => {
+              if (attendance.recorded) return;
+              return processSlackDmWorkCreateMessage({
+                channelId: event.channel!,
+                userId: event.user!,
+                text: event.text,
+                ts: event.ts!,
+                botId: event.bot_id,
+                subtype: event.subtype,
+                threadTs: event.thread_ts,
+                channelType: event.channel_type
+              });
             });
           });
         })
@@ -244,6 +257,18 @@ export async function slackEventsHandler(
             subtype: event.subtype,
             threadTs: event.thread_ts,
             channelType: event.channel_type
+          }).then((attendance) => {
+            if (attendance.recorded) return;
+            return processSlackDmWorkCreateMessage({
+              channelId: event.channel!,
+              userId: event.user!,
+              text: event.text,
+              ts: event.ts!,
+              botId: event.bot_id,
+              subtype: event.subtype,
+              threadTs: event.thread_ts,
+              channelType: event.channel_type
+            });
           });
         })
         .catch((error) => {

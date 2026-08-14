@@ -1,6 +1,8 @@
 import {
   classifyWorkUnitsForTaskList,
   formatSlackTaskListMessage,
+  looksLikeCreateWorkQuery,
+  looksLikeSlackDmTaskCreate,
   looksLikeTaskListQuery,
   parseTaskListDateRangeHeuristic,
   resolveTaskListSubject
@@ -17,6 +19,22 @@ describe("Slack task list query", () => {
     expect(looksLikeTaskListQuery("wfh")).toBe(false);
     expect(looksLikeTaskListQuery("eta 12:30")).toBe(false);
     expect(looksLikeTaskListQuery("yes")).toBe(false);
+    expect(looksLikeTaskListQuery("add a task for Dhananjay to follow up")).toBe(false);
+  });
+
+  it("detects DM text that should create work units", () => {
+    expect(looksLikeCreateWorkQuery("add a task for Dhananjay to follow up with the vendor")).toBe(
+      true
+    );
+    expect(looksLikeCreateWorkQuery("Assign Dhananjay: sit with Arun tomorrow")).toBe(true);
+    expect(looksLikeCreateWorkQuery("Dhananjay should send the Meltwater recap")).toBe(true);
+    expect(looksLikeCreateWorkQuery("tasks for today")).toBe(false);
+    expect(looksLikeCreateWorkQuery("my tasks yesterday")).toBe(false);
+    expect(looksLikeSlackDmTaskCreate("Follow up with the vendor today and send the recap")).toBe(
+      true
+    );
+    expect(looksLikeSlackDmTaskCreate("thanks")).toBe(false);
+    expect(looksLikeSlackDmTaskCreate("wfh")).toBe(false);
   });
 
   it("defaults relative phrases to IST calendar ranges", () => {

@@ -280,11 +280,51 @@ export function looksLikeOverdueTaskQuery(text: string): boolean {
   return /\boverdue\b/i.test(stripSlackUserMentions(text));
 }
 
+const CREATE_TASK_PHRASE_RE =
+  /\b((add|create|log|capture|note)\s+(a\s+|an\s+|the\s+|this\s+|these\s+)?(new\s+)?(task|to-?do|todo|work unit|action item)s?)\b/i;
+const CREATE_ASSIGN_RE = /\bassign\b/i;
+const CREATE_LEADING_RE = /^\s*(add|create|task)\b/i;
+const CREATE_DUTY_RE = /\b(should|needs? to|has to|have to)\b/i;
+const CREATE_ACTION_RE =
+  /\b(follow up|send|share|finish|complete|review|prepare|draft|update|fix|ship|publish|check|sit with|meet|email|call|write|remind)\b/i;
+const CHIT_CHAT_RE =
+  /^(hi|hey|hello|thanks|thank you|thx|ok|okay|cool|great|got it|noted|lol|lmk|yes|no|yep|nope)[\s!.]*$/i;
+const LIST_ONLY_RE = /\b(show|list|what(?:'s| is)?|my|our|pending|overdue|completed)\b/i;
+
+export function looksLikeCreateWorkQuery(text: string): boolean {
+  const trimmed = stripSlackUserMentions(text);
+  if (!trimmed) return false;
+  if (isAcceptAsIsConfirmReply(trimmed)) return false;
+  if (parseAttendanceMessage(trimmed)) return false;
+  if (/\btasks?\s+for\s+(today|tomorrow|yesterday|this|last|next)\b/i.test(trimmed)) {
+    return false;
+  }
+
+  if (CREATE_TASK_PHRASE_RE.test(trimmed)) return true;
+  if (CREATE_ASSIGN_RE.test(trimmed)) return true;
+  if (CREATE_LEADING_RE.test(trimmed) && !LIST_ONLY_RE.test(trimmed)) return true;
+  if (CREATE_DUTY_RE.test(trimmed) && trimmed.length >= 16) return true;
+  if (/:\s+\S/.test(trimmed) && trimmed.length >= 12) return true;
+  return false;
+}
+
+export function looksLikeSlackDmTaskCreate(text: string): boolean {
+  if (looksLikeCreateWorkQuery(text)) return true;
+  const trimmed = stripSlackUserMentions(text);
+  if (trimmed.length < 20) return false;
+  if (looksLikeTaskListQuery(text)) return false;
+  if (parseAttendanceMessage(trimmed)) return false;
+  if (isAcceptAsIsConfirmReply(trimmed)) return false;
+  if (CHIT_CHAT_RE.test(trimmed)) return false;
+  return CREATE_ACTION_RE.test(trimmed);
+}
+
 export function looksLikeTaskListQuery(text: string): boolean {
   const trimmed = stripSlackUserMentions(text);
   if (!trimmed) return false;
   if (isAcceptAsIsConfirmReply(trimmed)) return false;
   if (parseAttendanceMessage(trimmed)) return false;
+  if (looksLikeCreateWorkQuery(text)) return false;
   return TASKY_RE.test(trimmed) || ASK_TASKS_RE.test(trimmed);
 }
 

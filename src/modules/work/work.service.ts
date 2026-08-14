@@ -60,7 +60,9 @@ import {
 import {
   classifyWorkUnitsForTaskList,
   formatSlackTaskListMessage,
+  collectSlackUserMentions,
   looksLikeOverdueTaskQuery,
+  looksLikeSlackDmTaskCreate,
   looksLikeTaskListQuery,
   resolveSlackTaskListQuery,
   resolveTaskListSubject,
@@ -649,6 +651,91 @@ export async function processSlackWorkMessage(input: {
     }
   );
   return { handled: true, created: result.workUnits.length, reason: result.skipReason };
+}
+
+/**
+ * DM text → extract and create work units (same pipeline as voice / FE audio).
+ */
+export async function processSlackDmWorkCreateMessage(input: {
+  channelId: string;
+  userId: string;
+  text?: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  threadTs?: string;
+  channelType?: string;
+}): Promise<{ handled: boolean; reason?: string; created?: number }> {
+  if (input.botId) return { handled: false, reason: "ignored_bot" };
+  if (input.subtype && input.subtype !== "thread_broadcast") {
+    return { handled: false, reason: "ignored_subtype" };
+  }
+  if (!isSlackDmChannel(input.channelId, input.channelType)) {
+    return { handled: false, reason: "not_dm" };
+  }
+
+  const text = input.text?.trim() ?? "";
+  if (!text || !looksLikeSlackDmTaskCreate(text)) {
+    return { handled: false, reason: "not_create" };
+  }
+
+  if (!isWorkExtractionAiConfigured()) {
+    await postSlackMessage(
+      input.channelId,
+      "Work extraction isn’t configured right now, so I can’t create work units from this yet."
+    );
+    return { handled: true, reason: "ai_not_configured" };
+  }
+
+  const branUserId = await resolveBranUserIdForSlackUser(input.userId);
+  if (!branUserId) {
+    await postSlackMessage(
+      input.channelId,
+      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can create tasks from this DM."
+    );
+    return { handled: true, reason: "unmapped_user" };
+  }
+
+  const botUserId = await getSlackBotUserId();
+  const mentioned = collectSlackUserMentions(text).filter((id) => {
+    if (botUserId && id.toUpperCase() === botUserId.toUpperCase()) return false;
+    return id.toUpperCase() !== input.userId.toUpperCase();
+  });
+
+  let preferredAssigneeUserId: string | null = null;
+  if (mentioned.length === 1) {
+    preferredAssigneeUserId = await resolveBranUserIdForSlackUser(mentioned[0]);
+  }
+
+  const sourceId = `dm-text:${input.channelId}:${input.ts}`;
+  const result = await ingestWorkFromText({
+    defaultOwnerUserId: branUserId,
+    text,
+    extractionKind: "slack",
+    sourceType: "SLACK",
+    sourceId,
+    preferredAssigneeUserId,
+    useLedger: true,
+    throwOnExtractError: false
+  });
+
+  const count = result.workUnits.length;
+  const titles = formatSlackVoiceCreatedUnits(result.workUnits, branUserId);
+  const reply =
+    count === 0
+      ? "I didn’t find any new work units to create from that (they may already exist, or it didn’t look like a task). Try “add task: …” or say who it’s for."
+      : `Created ${count} work unit${count === 1 ? "" : "s"}:\n${titles}`;
+
+  await postSlackMessage(input.channelId, reply, { threadTs: input.ts });
+  console.log("[work.slack-dm] created", {
+    slackUserId: input.userId,
+    branUserId,
+    preferredAssigneeUserId,
+    sourceId,
+    created: count,
+    skipReason: result.skipReason ?? null
+  });
+  return { handled: true, created: count, reason: count > 0 ? "created" : result.skipReason };
 }
 
 /**

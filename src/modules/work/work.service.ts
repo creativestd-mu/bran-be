@@ -11,7 +11,9 @@ import { transcribeAndArchiveVoiceRecording } from "../voice-recording/voice-rec
 import {
   computeDueFields,
   formatWorkUnitForResponse,
-  resolveStatusAndClosedAt
+  isWorkDeadlineOverdue,
+  resolveStatusAndClosedAt,
+  workDeadlineAtEndOfDay
 } from "./work.due-fields";
 import { extractWorkUnitsFromText, extractWorkUnitsFromTranscript, getWorkExtractionAiInfo, isWorkExtractionAiConfigured, type WorkExtractionTextKind } from "./work.extraction";
 import { resolveProjectIdFromExtraction } from "./work.project-matching";
@@ -44,7 +46,12 @@ import {
 import { previewWorkText, type WorkIngestSourceType } from "./work.constants";
 import { hasSimilarOpenWorkUnit } from "./work.dedup";
 import { loadGmailWorkIngestCandidates } from "./work.sources";
-import { getSlackBotUserId, postSlackMessage, sendDm } from "../attendance/attendance.slack";
+import {
+  getSlackBotUserId,
+  getSlackUserInfo,
+  postSlackMessage,
+  sendDm
+} from "../attendance/attendance.slack";
 import {
   isAllowedSlackWorkChannel,
   loadSlackWorkIngestCandidateFromEvent,
@@ -57,6 +64,7 @@ import {
   looksLikeOverdueTaskQuery,
   looksLikeTaskListQuery,
   resolveSlackTaskListQuery,
+  resolveTaskListSubject,
   textMentionsSlackUser
 } from "./work.slack-tasks";
 import {
@@ -103,7 +111,7 @@ function parseOptionalDate(value?: string | null): Date | null | undefined {
   if (Number.isNaN(parsed.getTime())) {
     throw new HttpError(400, `Invalid date: ${value}`);
   }
-  return parsed;
+  return workDeadlineAtEndOfDay(parsed);
 }
 
 function parseRangeFrom(value?: string): Date | undefined {
@@ -677,17 +685,48 @@ export async function processSlackTaskListMessage(input: {
     return { handled: true, reason: "duplicate" };
   }
 
+  const threadOpts = isDm ? undefined : { threadTs: input.threadTs ?? input.ts };
+  const botUserId = await getSlackBotUserId();
+  const subject = resolveTaskListSubject(text, {
+    requesterSlackId: input.userId,
+    botUserId
+  });
+
+  if (subject.kind === "named_untagged") {
+    await postSlackMessage(
+      input.channelId,
+      `I need a Slack @tag to look up someone else’s tasks. Tag them like \`@${subject.name}\` — writing the name alone isn’t enough.`,
+      threadOpts
+    );
+    return { handled: true, reason: "named_untagged" };
+  }
+
+  if (subject.kind === "tagged" && subject.slackUserIds.length > 1) {
+    await postSlackMessage(
+      input.channelId,
+      "Tag only one person at a time so I know whose tasks to show.",
+      threadOpts
+    );
+    return { handled: true, reason: "multiple_tagged" };
+  }
+
+  const targetSlackUserId =
+    subject.kind === "tagged" ? subject.slackUserIds[0] : input.userId;
+  const viewingOther = targetSlackUserId.toUpperCase() !== input.userId.toUpperCase();
+
   const query = await resolveSlackTaskListQuery(text);
   if (!query) return { handled: false, reason: "not_task_list" };
 
-  const branUserId = await resolveBranUserIdForSlackUser(input.userId);
+  const branUserId = await resolveBranUserIdForSlackUser(targetSlackUserId);
   if (!branUserId) {
     await postSlackMessage(
       input.channelId,
-      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can list your tasks here.",
-      isDm ? undefined : { threadTs: input.threadTs ?? input.ts }
+      viewingOther
+        ? "I couldn’t match that tagged Slack account to a Bran user, so I can’t list their tasks."
+        : "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can list your tasks here.",
+      threadOpts
     );
-    return { handled: true, reason: "unmapped_user" };
+    return { handled: true, reason: viewingOther ? "unmapped_tagged_user" : "unmapped_user" };
   }
 
   const includeOverdue = looksLikeOverdueTaskQuery(text);
@@ -706,29 +745,44 @@ export async function processSlackTaskListMessage(input: {
     units
   });
 
+  const ownerName = viewingOther ? await slackTaskListOwnerName(targetSlackUserId) : undefined;
   const message = formatSlackTaskListMessage({
     range: query.range,
     pending,
     completed,
-    appUrl: env.appUrl
+    appUrl: env.appUrl,
+    ownerName
   });
 
-  await postSlackMessage(
-    input.channelId,
-    message,
-    isDm ? undefined : { threadTs: input.threadTs ?? input.ts }
-  );
+  await postSlackMessage(input.channelId, message, threadOpts);
   console.log("[work.slack-tasks] listed", {
     slackUserId: input.userId,
+    targetSlackUserId,
     branUserId,
     channelId: input.channelId,
     isDm,
+    viewingOther,
     source: query.source,
     label: query.range.label,
     pending: pending.length,
     completed: completed.length
   });
   return { handled: true, reason: "listed" };
+}
+
+async function slackTaskListOwnerName(slackUserId: string): Promise<string> {
+  try {
+    const profile = await getSlackUserInfo(slackUserId);
+    return (
+      profile.profile?.display_name?.trim() ||
+      profile.profile?.real_name?.trim() ||
+      profile.real_name?.trim() ||
+      profile.name?.trim() ||
+      "that person"
+    );
+  } catch {
+    return "that person";
+  }
 }
 
 /**
@@ -1535,13 +1589,16 @@ export async function getMyDeadlines(userId: string, date?: string) {
  */
 export async function checkOverdueAndNotify(userId: string): Promise<number> {
   const now = new Date();
-  const overdueSteps = await findOverdueStepsForUser(userId, now);
+  const overdueSteps = (await findOverdueStepsForUser(userId, now)).filter((step) =>
+    isWorkDeadlineOverdue(step.deadline, now)
+  );
   if (overdueSteps.length === 0) return 0;
 
   const overdueDate = now.toISOString().slice(0, 10);
 
   for (const step of overdueSteps) {
     if (!step.deadline) continue;
+    if (!isWorkDeadlineOverdue(step.deadline, now)) continue;
 
     // Notify the work unit owner
     void notifyWorkStepOverdue({

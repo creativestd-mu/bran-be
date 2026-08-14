@@ -6,6 +6,7 @@ import {
   wallClockToUtc
 } from "../../utils/timezone";
 import { parseAttendanceMessage } from "../attendance/attendance.parser";
+import { implicitWorkDeadline, isWorkDeadlineOverdue } from "./work.due-fields";
 import { callWorkLlm, isWorkExtractionAiConfigured } from "./work.extraction";
 import { isAcceptAsIsConfirmReply } from "./work.slack-voice";
 
@@ -117,15 +118,162 @@ function formatRangeLabel(from: CalendarDay, to: CalendarDay, hint?: string): st
 }
 
 const SLACK_USER_MENTION_RE = /<@[UW][A-Z0-9]+(?:\|[^>]+)?>/gi;
+const SLACK_USER_MENTION_ID_RE = /<@([UW][A-Z0-9]+)(?:\|[^>]+)?>/gi;
+
+const TASK_LIST_RESERVED_NAME_WORDS = new Set([
+  "my",
+  "our",
+  "mine",
+  "me",
+  "i",
+  "the",
+  "a",
+  "an",
+  "today",
+  "tomorrow",
+  "yesterday",
+  "overdue",
+  "this",
+  "last",
+  "next",
+  "pending",
+  "completed",
+  "complete",
+  "due",
+  "open",
+  "closed",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+  "mon",
+  "tue",
+  "tues",
+  "wed",
+  "thu",
+  "thur",
+  "thurs",
+  "fri",
+  "sat",
+  "sun",
+  "january",
+  "february",
+  "march",
+  "april",
+  "may",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "sept",
+  "oct",
+  "nov",
+  "dec",
+  "week",
+  "month",
+  "year",
+  "weekend",
+  "show",
+  "list",
+  "get",
+  "give",
+  "what",
+  "see",
+  "check",
+  "find",
+  "fetch",
+  "please",
+  "pls"
+]);
+
+export type SlackTaskListSubject =
+  | { kind: "self" }
+  | { kind: "tagged"; slackUserIds: string[] }
+  | { kind: "named_untagged"; name: string };
 
 export function stripSlackUserMentions(text: string): string {
   return text.replace(SLACK_USER_MENTION_RE, " ").replace(/\s+/g, " ").trim();
+}
+
+export function collectSlackUserMentions(text: string): string[] {
+  const ids: string[] = [];
+  const re = new RegExp(SLACK_USER_MENTION_ID_RE.source, "gi");
+  for (const match of text.matchAll(re)) {
+    const id = match[1];
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
 }
 
 export function textMentionsSlackUser(text: string, slackUserId: string): boolean {
   if (!slackUserId) return false;
   const escaped = slackUserId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`<@${escaped}(?:\\|[^>]+)?>`, "i").test(text);
+}
+
+function isReservedTaskListName(value: string): boolean {
+  const first = value.trim().toLowerCase().split(/\s+/)[0] ?? "";
+  if (!first || /^\d/.test(first)) return true;
+  return TASK_LIST_RESERVED_NAME_WORDS.has(first);
+}
+
+export function extractUntaggedTaskListPersonName(text: string): string | null {
+  const cleaned = stripSlackUserMentions(text);
+
+  const possessive = cleaned.match(
+    /\b([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*)?)['’]s\s+(?:pending\s+|overdue\s+|completed\s+)?(?:tasks?|to-?dos?|todos?|work units?|deadlines?)\b/i
+  );
+  if (possessive?.[1] && !isReservedTaskListName(possessive[1])) {
+    return possessive[1].trim();
+  }
+
+  const forOf = cleaned.match(
+    /\b(?:tasks?|to-?dos?|todos?|work units?|deadlines?)\s+(?:for|of)\s+([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*)?)\b/i
+  );
+  if (forOf?.[1] && !isReservedTaskListName(forOf[1])) {
+    return forOf[1].trim();
+  }
+
+  const leading = cleaned.match(
+    /\b(?:show|list|get|give me|what(?:'s| is)|see)\s+([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*)?)\s+(?:pending\s+|overdue\s+|completed\s+)?(?:tasks?|to-?dos?|todos?|work units?)\b/i
+  );
+  if (leading?.[1] && !isReservedTaskListName(leading[1])) {
+    return leading[1].trim();
+  }
+
+  return null;
+}
+
+export function resolveTaskListSubject(
+  text: string,
+  input: { requesterSlackId: string; botUserId: string | null }
+): SlackTaskListSubject {
+  const others = collectSlackUserMentions(text).filter((id) => {
+    if (input.botUserId && id.toUpperCase() === input.botUserId.toUpperCase()) return false;
+    return id.toUpperCase() !== input.requesterSlackId.toUpperCase();
+  });
+
+  if (others.length > 0) {
+    return { kind: "tagged", slackUserIds: others };
+  }
+
+  const name = extractUntaggedTaskListPersonName(text);
+  if (name) return { kind: "named_untagged", name };
+  return { kind: "self" };
 }
 
 export function looksLikeOverdueTaskQuery(text: string): boolean {
@@ -435,6 +583,7 @@ export function classifyWorkUnitsForTaskList(input: {
     status: string;
     userId: string;
     closedAt: Date | null;
+    createdAt: Date;
     nextDueAt: Date | null;
     firstDueAt: Date | null;
     steps: Array<{
@@ -458,36 +607,42 @@ export function classifyWorkUnitsForTaskList(input: {
     const steps = relevantSteps.length > 0 ? relevantSteps : unit.steps;
 
     const dueSteps = steps.filter((step) => {
-      if (inRange(step.deadline, input.from, input.to)) return true;
-      if (
-        input.includeOverdue &&
-        !step.done &&
-        step.deadline &&
-        step.deadline.getTime() < input.from.getTime()
-      ) {
+      const due = implicitWorkDeadline(step.deadline, unit.createdAt);
+      if (inRange(due, input.from, input.to)) return true;
+      if (input.includeOverdue && !step.done && due.getTime() < input.from.getTime()) {
         return true;
       }
       return false;
     });
 
+    const implicitUnitDue = implicitWorkDeadline(
+      unit.nextDueAt ?? unit.firstDueAt,
+      unit.createdAt
+    );
     const unitDueInRange =
       inRange(unit.nextDueAt, input.from, input.to) ||
-      inRange(unit.firstDueAt, input.from, input.to);
+      inRange(unit.firstDueAt, input.from, input.to) ||
+      (unit.nextDueAt == null &&
+        unit.firstDueAt == null &&
+        inRange(implicitUnitDue, input.from, input.to));
     const overdueOpen =
       input.includeOverdue &&
       unit.status === "OPEN" &&
-      Boolean(unit.nextDueAt && unit.nextDueAt.getTime() < input.from.getTime());
+      implicitUnitDue.getTime() < input.from.getTime();
 
     if (dueSteps.length === 0 && !unitDueInRange && !overdueOpen) continue;
 
     const pendingSteps = dueSteps.filter((step) => !step.done);
     const completedSteps = dueSteps.filter((step) => step.done);
     const dueAt =
-      pendingSteps.find((step) => step.deadline)?.deadline ??
-      completedSteps.find((step) => step.deadline)?.deadline ??
-      unit.nextDueAt ??
-      unit.firstDueAt ??
-      null;
+      implicitWorkDeadline(
+        pendingSteps.find((step) => step.deadline)?.deadline ??
+          completedSteps.find((step) => step.deadline)?.deadline ??
+          unit.nextDueAt ??
+          unit.firstDueAt ??
+          null,
+        unit.createdAt
+      );
 
     const stillPending =
       pendingSteps.length > 0 ||
@@ -499,11 +654,11 @@ export function classifyWorkUnitsForTaskList(input: {
       status: stillPending ? "pending" : "completed",
       dueAt,
       closedAt: unit.closedAt,
-      overdue: Boolean(dueAt && dueAt.getTime() < Date.now() && stillPending),
+      overdue: stillPending && isWorkDeadlineOverdue(dueAt),
       steps: dueSteps.map((step) => ({
         description: step.description,
         done: step.done,
-        deadline: step.deadline
+        deadline: implicitWorkDeadline(step.deadline, unit.createdAt)
       }))
     };
 
@@ -551,14 +706,18 @@ export function formatSlackTaskListMessage(input: {
   pending: SlackTaskListItem[];
   completed: SlackTaskListItem[];
   appUrl?: string;
+  ownerName?: string;
 }): string {
   const pendingShown = input.pending.slice(0, 20);
   const completedShown = input.completed.slice(0, 20);
   const linkFor = (id: string) =>
     input.appUrl ? `${input.appUrl.replace(/\/$/, "")}/work/${id}` : "";
+  const heading = input.ownerName
+    ? `${escapeSlackMrkdwn(input.ownerName)}'s tasks by due date`
+    : "Your tasks by due date";
 
   const lines = [
-    `*Your tasks by due date · ${escapeSlackMrkdwn(input.range.label)}*`,
+    `*${heading} · ${escapeSlackMrkdwn(input.range.label)}*`,
     "",
     `*Pending (${input.pending.length})*`
   ];

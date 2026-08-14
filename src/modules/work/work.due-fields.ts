@@ -1,3 +1,35 @@
+import { env } from "../../config/env";
+import { getZonedDateParts, wallClockToUtc } from "../../utils/timezone";
+import { WORK_DEADLINE_HOUR } from "./work.constants";
+
+export function workDeadlineAtEndOfDay(
+  instant: Date,
+  timeZone: string = env.appTimezone
+): Date {
+  const { year, month, day } = getZonedDateParts(instant, timeZone);
+  return wallClockToUtc(
+    { year, month, day, hour: WORK_DEADLINE_HOUR, minute: 0, second: 0, ms: 0 },
+    timeZone
+  );
+}
+
+export function implicitWorkDeadline(
+  deadline: Date | null | undefined,
+  fallbackDay: Date,
+  timeZone: string = env.appTimezone
+): Date {
+  return deadline ?? workDeadlineAtEndOfDay(fallbackDay, timeZone);
+}
+
+export function isWorkDeadlineOverdue(
+  deadline: Date | null | undefined,
+  now: Date = new Date(),
+  timeZone: string = env.appTimezone
+): boolean {
+  if (!deadline) return false;
+  return workDeadlineAtEndOfDay(deadline, timeZone).getTime() < now.getTime();
+}
+
 export type StepForDueFields = {
   deadline: Date | null;
   done: boolean;

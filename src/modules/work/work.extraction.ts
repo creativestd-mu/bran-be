@@ -5,6 +5,7 @@ import { z } from "zod";
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
 import { previewWorkText, WORK_STATUSES } from "./work.constants";
+import { workDeadlineAtEndOfDay } from "./work.due-fields";
 
 export type ExtractedStep = {
   description: string;
@@ -112,12 +113,13 @@ export function parseDeadlineToIso(value: string | null | undefined): string | n
   if (!trimmed) return null;
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return `${trimmed}T00:00:00.000Z`;
+    const noonUtc = new Date(`${trimmed}T12:00:00.000Z`);
+    return workDeadlineAtEndOfDay(noonUtc).toISOString();
   }
 
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
+  return workDeadlineAtEndOfDay(parsed).toISOString();
 }
 
 async function callLlm(systemPrompt: string, userPrompt: string): Promise<string> {
@@ -203,12 +205,20 @@ function buildExtractionSystemPrompt(options: {
     slackMentionHint +
     "assigneeName at the work unit level means the whole task is for that person; assigneeName on a step means only that step is for them; set to null if unclear; only use exact names from the team members list; " +
     "sourceExcerpt must be a verbatim quote from the source that this work unit or step was derived from; use null only if no specific phrase can be identified; " +
-    "deadline must be ISO-8601 resolved relative to the provided current date-time: use full datetime when a time is mentioned, otherwise date-only, or null if none mentioned; " +
+    "deadline must be ISO-8601 resolved relative to the provided current date-time: date-only is fine when no clock time is mentioned (the system treats it as 20:00 Asia/Kolkata that day); " +
+    "if no deadline is mentioned, use the current date — assume the work is due that same day; do not leave deadline null; " +
     "the first step should capture the action already taken when relevant, and follow-up actions become subsequent steps."
   );
 }
 
-async function parseExtractedWorkUnits(raw: string): Promise<ExtractedWorkUnit[]> {
+export function deadlineOrSameDay(
+  value: string | null | undefined,
+  now: Date = new Date()
+): string {
+  return parseDeadlineToIso(value) ?? workDeadlineAtEndOfDay(now).toISOString();
+}
+
+async function parseExtractedWorkUnits(raw: string, now: Date): Promise<ExtractedWorkUnit[]> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripCodeFences(raw));
@@ -230,22 +240,38 @@ async function parseExtractedWorkUnits(raw: string): Promise<ExtractedWorkUnit[]
     throw new HttpError(502, "Could not extract work units from source text");
   }
 
-  return validated.data.workUnits.map((unit) => ({
-    title: unit.title,
-    context: unit.context.trim().length > 0 ? unit.context : unit.title,
-    status: unit.status ?? "OPEN",
-    projectName: unit.projectName ?? null,
-    assigneeName: unit.assigneeName ?? null,
-    sourceExcerpt: unit.sourceExcerpt ?? null,
-    steps: (unit.steps ?? [])
+  const sameDayDeadline = workDeadlineAtEndOfDay(now).toISOString();
+
+  return validated.data.workUnits.map((unit) => {
+    const steps = (unit.steps ?? [])
       .filter((step) => step.description.trim().length > 0)
       .map((step) => ({
         description: step.description.trim(),
-        deadline: parseDeadlineToIso(step.deadline ?? null),
+        deadline: deadlineOrSameDay(step.deadline ?? null, now),
         assigneeName: step.assigneeName ?? null,
         sourceExcerpt: step.sourceExcerpt ?? null
-      }))
-  }));
+      }));
+
+    return {
+      title: unit.title,
+      context: unit.context.trim().length > 0 ? unit.context : unit.title,
+      status: unit.status ?? "OPEN",
+      projectName: unit.projectName ?? null,
+      assigneeName: unit.assigneeName ?? null,
+      sourceExcerpt: unit.sourceExcerpt ?? null,
+      steps:
+        steps.length > 0
+          ? steps
+          : [
+              {
+                description: unit.title,
+                deadline: sameDayDeadline,
+                assigneeName: unit.assigneeName ?? null,
+                sourceExcerpt: unit.sourceExcerpt ?? null
+              }
+            ]
+    };
+  });
 }
 
 export async function extractWorkUnitsFromText(
@@ -302,7 +328,7 @@ export async function extractWorkUnitsFromText(
     rawPreview: previewWorkText(raw, 400)
   });
 
-  const units = await parseExtractedWorkUnits(raw);
+  const units = await parseExtractedWorkUnits(raw, now);
   console.log("[work.extraction] parsed", {
     kind: options.kind,
     count: units.length,

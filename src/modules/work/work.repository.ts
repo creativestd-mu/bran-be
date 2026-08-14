@@ -266,13 +266,20 @@ export async function findWorkUnitsForSlackTaskList(input: {
   const dueOr: Prisma.WorkUnitWhereInput[] = [
     { nextDueAt: inRange },
     { firstDueAt: inRange },
-    { steps: { some: { deadline: inRange } } }
+    { steps: { some: { deadline: inRange } } },
+    // No deadline mentioned → treat as due the day the unit was created.
+    { createdAt: inRange }
   ];
 
   if (input.includeOverdue) {
     dueOr.push({
       status: "OPEN",
       nextDueAt: { lt: input.from }
+    });
+    dueOr.push({
+      status: "OPEN",
+      createdAt: { lt: input.from },
+      OR: [{ nextDueAt: null }, { steps: { some: { deadline: null, done: false } } }]
     });
   }
 

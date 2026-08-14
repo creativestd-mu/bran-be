@@ -10,6 +10,8 @@ export const DEFAULT_WORK_INGEST_LOOKBACK_DAYS = 7;
 export const DEFAULT_WORK_INGEST_MAX_PER_SOURCE = 40;
 export const DEFAULT_WORK_INGEST_CONCURRENCY = 3;
 export const WORK_DEDUP_TITLE_LOOKBACK_DAYS = 30;
+/** Date-only / EOD work deadlines land at this hour in the app timezone (IST). */
+export const WORK_DEADLINE_HOUR = 20;
 
 export function previewWorkText(value: string, max = 220): string {
   return value.replace(/\s+/g, " ").trim().slice(0, max);

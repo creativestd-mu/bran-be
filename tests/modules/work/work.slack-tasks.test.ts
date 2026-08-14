@@ -1,7 +1,9 @@
 import {
   classifyWorkUnitsForTaskList,
+  formatSlackTaskListMessage,
   looksLikeTaskListQuery,
-  parseTaskListDateRangeHeuristic
+  parseTaskListDateRangeHeuristic,
+  resolveTaskListSubject
 } from "../../../src/modules/work/work.slack-tasks";
 
 describe("Slack task list query", () => {
@@ -56,6 +58,7 @@ describe("Slack task list query", () => {
           status: "OPEN",
           userId,
           closedAt: null,
+          createdAt: from,
           nextDueAt: from,
           firstDueAt: from,
           steps: [
@@ -73,6 +76,7 @@ describe("Slack task list query", () => {
           status: "OPEN",
           userId,
           closedAt: null,
+          createdAt: from,
           nextDueAt: new Date("2026-06-09T00:00:00.000+05:30"),
           firstDueAt: new Date("2026-06-09T00:00:00.000+05:30"),
           steps: [
@@ -90,6 +94,7 @@ describe("Slack task list query", () => {
           status: "CLOSED",
           userId,
           closedAt: from,
+          createdAt: from,
           nextDueAt: null,
           firstDueAt: from,
           steps: [
@@ -107,6 +112,7 @@ describe("Slack task list query", () => {
           status: "CLOSED",
           userId,
           closedAt: from,
+          createdAt: from,
           nextDueAt: null,
           firstDueAt: new Date("2026-08-01T00:00:00.000+05:30"),
           steps: [
@@ -123,5 +129,125 @@ describe("Slack task list query", () => {
 
     expect(pending.map((item) => item.title)).toEqual(["Complete xyzabc task"]);
     expect(completed.map((item) => item.title)).toEqual(["Ship notes"]);
+  });
+
+  it("treats a task with no deadline as due the day it was created", () => {
+    const from = new Date("2026-08-14T00:00:00.000+05:30");
+    const to = new Date("2026-08-14T23:59:59.999+05:30");
+    const userId = "user-1";
+
+    const { pending } = classifyWorkUnitsForTaskList({
+      userId,
+      from,
+      to,
+      includeOverdue: false,
+      units: [
+        {
+          id: "undated-today",
+          title: "Follow up with vendor",
+          status: "OPEN",
+          userId,
+          closedAt: null,
+          createdAt: new Date("2026-08-14T09:00:00.000+05:30"),
+          nextDueAt: null,
+          firstDueAt: null,
+          steps: [
+            {
+              description: "Follow up with vendor",
+              done: false,
+              deadline: null,
+              assigneeId: userId
+            }
+          ]
+        },
+        {
+          id: "undated-yesterday",
+          title: "Old undated task",
+          status: "OPEN",
+          userId,
+          closedAt: null,
+          createdAt: new Date("2026-08-13T09:00:00.000+05:30"),
+          nextDueAt: null,
+          firstDueAt: null,
+          steps: [
+            {
+              description: "Old undated task",
+              done: false,
+              deadline: null,
+              assigneeId: userId
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(pending.map((item) => item.title)).toEqual(["Follow up with vendor"]);
+    expect(pending[0]?.dueAt?.toISOString()).toBe("2026-08-14T14:30:00.000Z");
+  });
+
+  it("uses a tagged teammate and asks for a tag when only a name is typed", () => {
+    const bot = "UBOT";
+    const requester = "USUDEEP";
+
+    expect(
+      resolveTaskListSubject("<@UBOT> Dhananjay's tasks for today", {
+        requesterSlackId: requester,
+        botUserId: bot
+      })
+    ).toEqual({ kind: "named_untagged", name: "Dhananjay" });
+
+    expect(
+      resolveTaskListSubject("<@UBOT> tasks for Dhananjay", {
+        requesterSlackId: requester,
+        botUserId: bot
+      })
+    ).toEqual({ kind: "named_untagged", name: "Dhananjay" });
+
+    expect(
+      resolveTaskListSubject("<@UBOT> <@UDHAN> tasks for today", {
+        requesterSlackId: requester,
+        botUserId: bot
+      })
+    ).toEqual({ kind: "tagged", slackUserIds: ["UDHAN"] });
+
+    expect(
+      resolveTaskListSubject("<@UBOT> my tasks for today", {
+        requesterSlackId: requester,
+        botUserId: bot
+      })
+    ).toEqual({ kind: "self" });
+
+    expect(
+      resolveTaskListSubject("<@UBOT> tasks for today", {
+        requesterSlackId: requester,
+        botUserId: bot
+      })
+    ).toEqual({ kind: "self" });
+
+    expect(
+      resolveTaskListSubject("<@UBOT> today's tasks", {
+        requesterSlackId: requester,
+        botUserId: bot
+      })
+    ).toEqual({ kind: "self" });
+  });
+
+  it("labels someone else's list with their name", () => {
+    const from = new Date("2026-08-14T00:00:00.000+05:30");
+    const to = new Date("2026-08-14T23:59:59.999+05:30");
+    const yours = formatSlackTaskListMessage({
+      range: { from, to, label: "today (14 Aug 2026, IST)" },
+      pending: [],
+      completed: []
+    });
+    const theirs = formatSlackTaskListMessage({
+      range: { from, to, label: "today (14 Aug 2026, IST)" },
+      pending: [],
+      completed: [],
+      ownerName: "Dhananjay Jain"
+    });
+
+    expect(yours).toContain("*Your tasks by due date · today (14 Aug 2026, IST)*");
+    expect(theirs).toContain("*Dhananjay Jain's tasks by due date · today (14 Aug 2026, IST)*");
   });
 });

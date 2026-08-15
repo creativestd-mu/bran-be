@@ -425,7 +425,7 @@ export function parseTaskListDateRangeHeuristic(
     }
   }
 
-  if (/\b(by the end of this week|end of (this|the) week|this week)\b/.test(lower)) {
+  if (/\b(by the end of this week|end of (this|the) week|th(?:is|si|s|ihs) week)\b/.test(lower)) {
     const { start, end } = thisWeekBounds(now);
     const from = /\b(by the end of this week|end of (this|the) week)\b/.test(lower)
       ? today

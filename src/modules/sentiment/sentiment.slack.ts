@@ -16,7 +16,11 @@ import { getSentimentDashboard } from "./sentiment.service";
 import type { SentimentDashboard } from "./sentiment.types";
 
 const SENTIMENT_RE =
-  /\b(sentiment|earned media|meltwater|brand mentions?|press mentions?|media mentions?|mention volume|news coverage|media coverage|brand coverage|press coverage|brand health|how (are|is) (we|the brand) (doing|perceived)|how (have|has) we|masters?\s*['’]?s?\s*union|mastersunion|our (brand|coverage|mentions|sentiment))\b/i;
+  /\b(sentiment|earned media|meltwater|brand mentions?|press mentions?|media mentions?|mention volume|news coverage|media coverage|brand coverage|press coverage|brand health|how (are|is|have|has|did) (we|mu|the brand)(\s+\w+){0,3}\s+(done|doing|performed|fared|been|perceived)|masters?\s*['’]?s?\s*union|mastersunion|our (brand|coverage|mentions|sentiment))\b/i;
+
+const MU_ALIAS_RE = /\bmu\b/i;
+const MU_ASK_RE =
+  /\b(done|doing|sentiment|coverage|mentions?|perceived|performed|fared|health|week|month|today|yesterday)\b/i;
 
 const SENTIMENT_DEDUP_TTL_MS = 60 * 1000;
 const recentSentimentEvents = new Map<string, number>();
@@ -41,7 +45,10 @@ export function looksLikeSentimentQuery(text: string): boolean {
   if (!trimmed) {
     return false;
   }
-  return SENTIMENT_RE.test(trimmed);
+  if (SENTIMENT_RE.test(trimmed)) {
+    return true;
+  }
+  return MU_ALIAS_RE.test(trimmed) && MU_ASK_RE.test(trimmed);
 }
 
 function defaultLastSevenDays(now = new Date()): SlackTaskDateRange {

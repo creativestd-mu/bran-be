@@ -100,7 +100,9 @@ app.get("/", (_req, res) => {
       workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)",
       slackTaskList: "DM or @Bran to list tasks as a checklist; check a box to mark done",
       slackSentiment: "DM or @Bran: sentiment / brand mentions (onboarded users)",
-      slackCompetitors: "DM or @Bran: competitor coverage / impactful content (onboarded users)"
+      slackCompetitors: "DM or @Bran: competitor coverage / impactful content (onboarded users)",
+      slackIdeas: "DM only: add ideas by text/voice and list your own ideas",
+      slackSafety: "Blocks inappropriate Slack prompts to Bran (text + voice)"
     }
   });
 });

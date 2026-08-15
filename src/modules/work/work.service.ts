@@ -77,6 +77,15 @@ import {
   isSlackDmChannel,
   slackVoiceMessageIsAddressedToBot
 } from "./work.slack-voice";
+import {
+  createIdeaFromSlackText,
+  ideaFieldsFromText,
+  looksLikeAddIdeaQuery
+} from "../ideation/ideation.slack";
+import {
+  guardSlackDirectedText,
+  shouldSkipUnsafeWorkIngest
+} from "../slack-safety/slack-safety.slack";
 import { findWorkUnitSource, recordWorkUnitSource } from "./work.source-ledger";
 import type { WorkIngestCandidate } from "./work.sources";
 import type { SlackFile } from "../escalation/escalation.slack";
@@ -615,6 +624,16 @@ export async function processSlackWorkMessage(input: {
     return { handled: false, reason: "empty_text" };
   }
 
+  const unsafe = shouldSkipUnsafeWorkIngest(text);
+  if (!unsafe.allowed) {
+    console.warn("[work.slack-event] skip", {
+      reason: "blocked_unsafe",
+      category: unsafe.category,
+      ...eventMeta
+    });
+    return { handled: true, reason: "blocked_unsafe" };
+  }
+
   const candidate = await loadSlackWorkIngestCandidateFromEvent({
     channelId: input.channelId,
     userId: input.userId,
@@ -679,6 +698,17 @@ export async function processSlackDmWorkCreateMessage(input: {
   const text = input.text?.trim() ?? "";
   if (!text || !looksLikeSlackDmTaskCreate(text)) {
     return { handled: false, reason: "not_create" };
+  }
+
+  const safety = await guardSlackDirectedText({
+    channelId: input.channelId,
+    userId: input.userId,
+    text,
+    ts: input.ts,
+    threadTs: input.threadTs
+  });
+  if (safety.blocked) {
+    return { handled: true, reason: safety.reason };
   }
 
   if (!isWorkExtractionAiConfigured()) {
@@ -1256,6 +1286,40 @@ export async function processSlackVoiceWorkMessage(input: {
     return { handled: false, reason: "empty_transcript" };
   }
 
+  const safetyText = [input.text, transcript].filter((part) => part?.trim()).join("\n");
+  const safety = await guardSlackDirectedText({
+    channelId: input.channelId,
+    userId: input.userId,
+    text: safetyText,
+    ts: input.ts,
+    threadTs: input.ts
+  });
+  if (safety.blocked) {
+    return { handled: true, reason: safety.reason };
+  }
+
+  if (
+    isDm &&
+    (looksLikeAddIdeaQuery(input.text ?? "") || looksLikeAddIdeaQuery(transcript))
+  ) {
+    try {
+      const caption = (input.text ?? "").trim();
+      const source = ideaFieldsFromText(caption) ? caption : `idea: ${transcript}`;
+      const created = await createIdeaFromSlackText(branUserId, source);
+      await postSlackMessage(
+        input.channelId,
+        created
+          ? `Saved to *your* ideas: *${created.title}*\nAsk \`my ideas\` anytime to see only yours.`
+          : "I heard the voice note but couldn’t turn it into an idea. Try `idea: …` as text, or start the note with “I have an idea”.",
+        { threadTs: input.ts }
+      );
+      return { handled: true, reason: created ? "idea_created" : "idea_missing_body" };
+    } catch (error) {
+      console.error("[work.slack-voice] idea create from voice failed:", error);
+      return { handled: false, reason: "idea_create_failed" };
+    }
+  }
+
   let draft: { id: string; branUserId: string; voiceRecordingId: string; transcript: string };
   try {
     draft = await prisma.slackVoiceWorkDraft.create({
@@ -1403,6 +1467,17 @@ export async function processSlackVoiceWorkConfirm(input: {
   const finalText = isAcceptAsIsConfirmReply(text) ? draft.transcript : text;
   if (!finalText.trim()) {
     return { handled: false, reason: "empty_final_text" };
+  }
+
+  const safety = await guardSlackDirectedText({
+    channelId: input.channelId,
+    userId: input.userId,
+    text: finalText,
+    ts: input.ts,
+    threadTs
+  });
+  if (safety.blocked) {
+    return { handled: true, reason: safety.reason };
   }
 
   if (!isWorkExtractionAiConfigured()) {

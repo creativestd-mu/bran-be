@@ -163,6 +163,29 @@ export async function createIdeaAndRecommendations(params: {
   };
 }
 
+/** Persist an idea for the author only — no shared embeddings or collaborator pings. */
+export async function createPrivateIdea(params: {
+  userId: string;
+  title: string;
+  description: string;
+  tags?: string[];
+}) {
+  const created = await createIdea({
+    authorId: params.userId,
+    title: params.title,
+    description: params.description,
+    tags: params.tags
+  });
+
+  return {
+    id: created.id,
+    title: created.title,
+    description: created.description,
+    tags: created.tagsList,
+    createdAt: created.createdAt
+  };
+}
+
 export async function listMyIdeas(params: { userId: string; take?: number; skip?: number }) {
   const ideas = await listIdeasByAuthor(params.userId, { take: params.take, skip: params.skip });
   return ideas.map((idea) => ({

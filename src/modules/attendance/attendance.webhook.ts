@@ -18,6 +18,8 @@ import {
 } from "./attendance.slack";
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
 import { processSlackCompetitorMessage } from "../competitor-content/competitor-content.slack";
+import { processSlackIdeaMessage } from "../ideation/ideation.slack";
+import { processSlackSafetyGuard } from "../slack-safety/slack-safety.slack";
 import { processSlackSentimentMessage } from "../sentiment/sentiment.slack";
 import {
   processSlackDmWorkCreateMessage,
@@ -39,7 +41,12 @@ async function processSlackInteractiveQuery(input: {
   subtype?: string;
   threadTs?: string;
   channelType?: string;
+  eventType?: string;
 }): Promise<{ handled: boolean; reason?: string }> {
+  const safety = await processSlackSafetyGuard(input);
+  if (safety.handled) {
+    return safety;
+  }
   const competitor = await processSlackCompetitorMessage(input);
   if (competitor.handled) {
     return competitor;
@@ -47,6 +54,10 @@ async function processSlackInteractiveQuery(input: {
   const sentiment = await processSlackSentimentMessage(input);
   if (sentiment.handled) {
     return sentiment;
+  }
+  const idea = await processSlackIdeaMessage(input);
+  if (idea.handled) {
+    return idea;
   }
   return processSlackTaskListMessage(input);
 }
@@ -207,7 +218,8 @@ export async function slackEventsHandler(
             botId: event.bot_id,
             subtype: event.subtype,
             threadTs: event.thread_ts,
-            channelType: event.channel_type
+            channelType: event.channel_type,
+            eventType: event.type
           }).then((taskResult) => {
             if (taskResult.handled) return;
             return processSlackChannelMessage({
@@ -246,7 +258,8 @@ export async function slackEventsHandler(
         botId: event.bot_id,
         subtype: event.subtype,
         threadTs: event.thread_ts,
-        channelType: event.channel_type
+        channelType: event.channel_type,
+        eventType: event.type
       })
         .then((result) => {
           if (result.handled) return;
@@ -285,7 +298,8 @@ export async function slackEventsHandler(
         botId: event.bot_id,
         subtype: event.subtype,
         threadTs: event.thread_ts,
-        channelType: event.channel_type
+        channelType: event.channel_type,
+        eventType: event.type
       })
         .then((result) => {
           if (result.handled) return;
@@ -330,7 +344,8 @@ export async function slackEventsHandler(
         botId: event.bot_id,
         subtype: event.subtype,
         threadTs: event.thread_ts,
-        channelType: event.channel_type
+        channelType: event.channel_type,
+        eventType: event.type
       })
         .then((result) => {
           if (result.handled) return;

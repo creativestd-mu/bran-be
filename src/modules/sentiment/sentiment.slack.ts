@@ -9,10 +9,13 @@ import {
 } from "../work/work.slack-tasks";
 import { isSlackDmChannel } from "../work/work.slack-voice";
 import { resolveBranUserIdForSlackUser } from "../work/work.slack";
-import { formatCompetitorSlackMessage } from "../competitor-content/competitor-content.slack";
 import { getBrandContentImpact } from "../competitor-content/competitor-content.service";
-import type { CompetitorContentImpact } from "../competitor-content/competitor-content.types";
 import { getSentimentDashboard } from "./sentiment.service";
+import {
+  formatBrandContentSummary,
+  summarizeBrandContent,
+  type BrandContentSummary
+} from "./sentiment.summary";
 import type { SentimentDashboard } from "./sentiment.types";
 
 const SENTIMENT_RE =
@@ -93,17 +96,12 @@ function formatNet(score: number): string {
 export function formatSentimentSlackMessage(
   dashboard: SentimentDashboard,
   rangeLabel: string,
-  impact?: CompetitorContentImpact | null
+  summary?: BrandContentSummary | null
 ): string {
   const appUrl = env.appUrl.replace(/\/$/, "");
   const link = appUrl ? `${appUrl}/sentiment` : "";
   const { totals } = dashboard;
-  const pieces = impact
-    ? formatCompetitorSlackMessage(impact, rangeLabel, {
-        heading: `Masters' Union impactful content — ${rangeLabel}`,
-        hint: ""
-      })
-    : null;
+  const pieces = summary ? formatBrandContentSummary(summary, rangeLabel) : null;
 
   if (totals.mentionCount === 0 && !pieces) {
     return [
@@ -209,7 +207,8 @@ export async function processSlackSentimentMessage(input: {
       return null;
     })
   ]);
-  const message = formatSentimentSlackMessage(dashboard, range.label, impact);
+  const summary = impact ? await summarizeBrandContent(impact) : null;
+  const message = formatSentimentSlackMessage(dashboard, range.label, summary);
 
   await postSlackMessage(
     input.channelId,

@@ -46,6 +46,19 @@ describe("formatSentimentSlackMessage", () => {
     expect(text).toContain("Positive  40  (28.2%)");
   });
 
+  it("renders a content performance summary instead of raw captions", () => {
+    const text = formatSentimentSlackMessage(dashboard, "this week (IST)", {
+      positive: "Campus Reels around student life and events drove the week's engagement.",
+      negative: "Educational investing posts were tagged negative and barely engaged.",
+      positiveExampleUrl: "https://www.instagram.com/reel/example-pos/",
+      negativeExampleUrl: "https://www.instagram.com/p/example-neg/"
+    });
+    expect(text).toContain("What worked for MU — this week (IST)");
+    expect(text).toContain("Campus Reels around student life");
+    expect(text).toContain("Educational investing posts");
+    expect(text).not.toContain("#mastersunion #sectiond");
+  });
+
   it("explains an empty window", () => {
     const empty: SentimentDashboard = {
       ...dashboard,

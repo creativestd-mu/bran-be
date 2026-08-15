@@ -38,9 +38,12 @@ export function nextCompetitorContentSyncAt(from: Date = new Date()): Date {
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 async function runScheduledSync(): Promise<void> {
-  if (!env.meltwaterApiKey || env.meltwaterCompetitorSearchIds.length === 0) {
+  if (
+    !env.meltwaterApiKey ||
+    (env.meltwaterCompetitorSearchIds.length === 0 && env.meltwaterSearchIds.length === 0)
+  ) {
     console.warn(
-      "[competitor-content-cron] Skipping — API key or MELTWATER_COMPETITOR_SEARCH_IDS missing"
+      "[competitor-content-cron] Skipping — API key or Meltwater search IDs missing"
     );
     return;
   }

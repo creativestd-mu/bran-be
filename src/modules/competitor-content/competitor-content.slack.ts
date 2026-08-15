@@ -163,7 +163,8 @@ function formatPiece(piece: CompetitorContentRecord, index: number): string {
 
 export function formatCompetitorSlackMessage(
   impact: CompetitorContentImpact,
-  rangeLabel: string
+  rangeLabel: string,
+  options?: { heading?: string; hint?: string }
 ): string | null {
   const hasPositive = impact.positive.length > 0;
   const hasNegative = impact.negative.length > 0;
@@ -173,7 +174,8 @@ export function formatCompetitorSlackMessage(
     return null;
   }
 
-  const lines = [`*Competitor impactful content — ${rangeLabel}*`, ""];
+  const heading = options?.heading ?? `Competitor impactful content — ${rangeLabel}`;
+  const lines = [`*${heading}*`, ""];
 
   if (hasPositive) {
     lines.push("*Positive (highest engagement)*");
@@ -191,9 +193,12 @@ export function formatCompetitorSlackMessage(
     lines.push("");
   }
 
-  lines.push(
-    "_Ask `competitor coverage this week` or `Newton sentiment last month`._"
-  );
+  const hint =
+    options?.hint ??
+    "_Ask `competitor coverage this week` or `Newton sentiment last month`._";
+  if (hint) {
+    lines.push(hint);
+  }
   return lines.join("\n");
 }
 

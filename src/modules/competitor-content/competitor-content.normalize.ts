@@ -137,8 +137,30 @@ function normalizeSentiment(
   return fallback;
 }
 
+export type ContentRelevance = "competitor" | "brand";
+
 const RELEVANT_COMPETITOR_RE =
   /\b(newton\s+school(?:\s+of\s+(?:technology|coding))?|newtonschool|scaler\s+(?:academy|school(?:\s+of\s+(?:business|technology))?)|scaler\.com|ashoka\s+university|ashoka\.edu|upgrad\s+(?:education|campus|abroad)|upgrad\.com|mesa\s+school\s+of\s+business|mesaschool)\b|@(?:newtonschool|scaler_official|ashokauniv|upgrad_edu|mesaschoolofbusiness)\b/i;
+
+const RELEVANT_BRAND_RE =
+  /\b(masters?\s*['’]?\s*union|mastersunion|mastersunion\.org)\b|#mastersunion|@mastersunion/i;
+
+function normalizeForRelevance(value: string): string {
+  return value.replace(/[_-]+/g, " ");
+}
+
+function relevanceCorpus(input: {
+  title?: string;
+  snippet?: string;
+  url?: string;
+  sourceName?: string;
+  author?: string;
+}): string {
+  return [input.title, input.snippet, input.url, input.sourceName, input.author]
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeForRelevance)
+    .join(" ");
+}
 
 export function isRelevantCompetitorContent(input: {
   title?: string;
@@ -147,18 +169,25 @@ export function isRelevantCompetitorContent(input: {
   sourceName?: string;
   author?: string;
 }): boolean {
-  return RELEVANT_COMPETITOR_RE.test(
-    [input.title, input.snippet, input.url, input.sourceName, input.author]
-      .filter((value): value is string => Boolean(value))
-      .join(" ")
-  );
+  return RELEVANT_COMPETITOR_RE.test(relevanceCorpus(input));
 }
 
-function isRelevantCompetitorDocument(
+export function isRelevantBrandContent(input: {
+  title?: string;
+  snippet?: string;
+  url?: string;
+  sourceName?: string;
+  author?: string;
+}): boolean {
+  return RELEVANT_BRAND_RE.test(relevanceCorpus(input));
+}
+
+function isRelevantDocument(
   doc: Record<string, unknown>,
   content: Record<string, unknown>,
   source: Record<string, unknown>,
-  author: Record<string, unknown>
+  author: Record<string, unknown>,
+  relevance: ContentRelevance
 ): boolean {
   const matched = asRecord(doc.matched) ?? {};
   const keywords = Array.isArray(matched.keywords)
@@ -180,8 +209,9 @@ function isRelevantCompetitorDocument(
   ]
     .map(asString)
     .filter((value): value is string => Boolean(value))
+    .map(normalizeForRelevance)
     .join(" ");
-  return RELEVANT_COMPETITOR_RE.test(corpus);
+  return relevance === "brand" ? RELEVANT_BRAND_RE.test(corpus) : RELEVANT_COMPETITOR_RE.test(corpus);
 }
 
 export function normalizeCompetitorDocuments(
@@ -191,6 +221,7 @@ export function normalizeCompetitorDocuments(
     searchName?: string;
     timezone: string;
     sentiment: CompetitorSentiment;
+    relevance?: ContentRelevance;
   }
 ): CompetitorContentRecord[] {
   const root = asRecord(payload) ?? {};
@@ -220,8 +251,7 @@ export function normalizeCompetitorDocuments(
     const metrics = extractMetrics(doc);
 
     // Saved-search definitions can still produce stemming/substring false positives.
-    // Keep only documents with an explicit direct-competitor identifier.
-    if (!isRelevantCompetitorDocument(doc, content, source, author)) {
+    if (!isRelevantDocument(doc, content, source, author, meta.relevance ?? "competitor")) {
       continue;
     }
 

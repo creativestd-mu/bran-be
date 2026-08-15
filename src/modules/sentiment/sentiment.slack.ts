@@ -9,11 +9,14 @@ import {
 } from "../work/work.slack-tasks";
 import { isSlackDmChannel } from "../work/work.slack-voice";
 import { resolveBranUserIdForSlackUser } from "../work/work.slack";
+import { formatCompetitorSlackMessage } from "../competitor-content/competitor-content.slack";
+import { getBrandContentImpact } from "../competitor-content/competitor-content.service";
+import type { CompetitorContentImpact } from "../competitor-content/competitor-content.types";
 import { getSentimentDashboard } from "./sentiment.service";
 import type { SentimentDashboard } from "./sentiment.types";
 
 const SENTIMENT_RE =
-  /\b(sentiment|earned media|meltwater|brand mentions?|press mentions?|media mentions?|mention volume|news coverage|media coverage|brand coverage|press coverage|brand health|how (are|is) (we|the brand) (doing|perceived))\b/i;
+  /\b(sentiment|earned media|meltwater|brand mentions?|press mentions?|media mentions?|mention volume|news coverage|media coverage|brand coverage|press coverage|brand health|how (are|is) (we|the brand) (doing|perceived)|how (have|has) we|masters?\s*['’]?s?\s*union|mastersunion|our (brand|coverage|mentions|sentiment))\b/i;
 
 const SENTIMENT_DEDUP_TTL_MS = 60 * 1000;
 const recentSentimentEvents = new Map<string, number>();
@@ -82,13 +85,20 @@ function formatNet(score: number): string {
 
 export function formatSentimentSlackMessage(
   dashboard: SentimentDashboard,
-  rangeLabel: string
+  rangeLabel: string,
+  impact?: CompetitorContentImpact | null
 ): string {
   const appUrl = env.appUrl.replace(/\/$/, "");
   const link = appUrl ? `${appUrl}/sentiment` : "";
   const { totals } = dashboard;
+  const pieces = impact
+    ? formatCompetitorSlackMessage(impact, rangeLabel, {
+        heading: `Masters' Union impactful content — ${rangeLabel}`,
+        hint: ""
+      })
+    : null;
 
-  if (totals.mentionCount === 0) {
+  if (totals.mentionCount === 0 && !pieces) {
     return [
       `*Brand sentiment — ${rangeLabel}*`,
       "",
@@ -120,7 +130,11 @@ export function formatSentimentSlackMessage(
     lines.push("", `<${link}|Open Sentiment in Bran>`);
   }
 
-  lines.push("", "_Try `sentiment this week` or `brand mentions last month`._");
+  if (pieces) {
+    lines.push("", pieces);
+  }
+
+  lines.push("", "_Try `sentiment this week` or `Masters Union last month`._");
   return lines.join("\n");
 }
 
@@ -173,11 +187,22 @@ export async function processSlackSentimentMessage(input: {
   }
 
   const range = resolveSentimentSlackRange(text);
-  const dashboard = await getSentimentDashboard({
-    from: range.from.toISOString(),
-    to: range.to.toISOString()
-  });
-  const message = formatSentimentSlackMessage(dashboard, range.label);
+  const [dashboard, impact] = await Promise.all([
+    getSentimentDashboard({
+      from: range.from.toISOString(),
+      to: range.to.toISOString()
+    }),
+    getBrandContentImpact({
+      from: range.from.toISOString(),
+      to: range.to.toISOString()
+    }).catch((error) => {
+      console.warn("[sentiment.slack] brand content lookup failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    })
+  ]);
+  const message = formatSentimentSlackMessage(dashboard, range.label, impact);
 
   await postSlackMessage(
     input.channelId,

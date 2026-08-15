@@ -1,4 +1,5 @@
 import {
+  isRelevantBrandContent,
   isRelevantCompetitorContent,
   normalizeCompetitorDocuments
 } from "../../../src/modules/competitor-content/competitor-content.normalize";
@@ -144,5 +145,25 @@ describe("normalizeCompetitorDocuments", () => {
         title: "upGrad Campus launches a new programme"
       })
     ).toBe(true);
+    expect(
+      isRelevantCompetitorContent({
+        url: "https://www.reddit.com/r/Btechtards/comments/1vgc3xe/newton_school_of_technologys_placement_stats_as/"
+      })
+    ).toBe(true);
+    expect(
+      isRelevantBrandContent({
+        title: "Masters' Union launches a new programme"
+      })
+    ).toBe(true);
+    expect(
+      isRelevantBrandContent({
+        url: "https://www.reddit.com/r/MBA/comments/abc/masters_union_placements/"
+      })
+    ).toBe(true);
+    expect(
+      isRelevantBrandContent({
+        title: "Scaler School of Technology scholarship"
+      })
+    ).toBe(false);
   });
 });

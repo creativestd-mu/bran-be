@@ -12,8 +12,10 @@ import {
   COMPETITOR_CONTENT_WINDOW_DAYS
 } from "./competitor-content.constants";
 import {
+  isRelevantBrandContent,
   isRelevantCompetitorContent,
-  normalizeCompetitorDocuments
+  normalizeCompetitorDocuments,
+  type ContentRelevance
 } from "./competitor-content.normalize";
 import {
   listCompetitorContentSearches,
@@ -56,12 +58,20 @@ function chunkWindows(
   return windows;
 }
 
+function documentSearchIds(): string[] {
+  return [...new Set([...env.meltwaterSearchIds, ...env.meltwaterCompetitorSearchIds])];
+}
+
+function relevanceForSearch(searchId: string): ContentRelevance {
+  return env.meltwaterSearchIds.includes(searchId) ? "brand" : "competitor";
+}
+
 function resolveSearchIds(requested?: string[]): string[] {
   const fromRequest = (requested ?? []).map((id) => id.trim()).filter(Boolean);
   if (fromRequest.length > 0) {
     return [...new Set(fromRequest)];
   }
-  return [...new Set(env.meltwaterCompetitorSearchIds)];
+  return documentSearchIds();
 }
 
 async function resolveSearches(requested?: string[]): Promise<MeltwaterSearch[]> {
@@ -69,7 +79,7 @@ async function resolveSearches(requested?: string[]): Promise<MeltwaterSearch[]>
   if (configured.length === 0) {
     throw new HttpError(
       422,
-      "No competitor searches configured. Set MELTWATER_COMPETITOR_SEARCH_IDS."
+      "No Meltwater document searches configured. Set MELTWATER_SEARCH_IDS or MELTWATER_COMPETITOR_SEARCH_IDS."
     );
   }
 
@@ -100,7 +110,8 @@ async function fetchSentimentWindow(
     searchId: search.id,
     searchName: search.name,
     timezone,
-    sentiment
+    sentiment,
+    relevance: relevanceForSearch(search.id)
   });
 }
 
@@ -184,6 +195,7 @@ export async function getCompetitorContentImpact(input: {
   to?: string;
   searchId?: string;
   topN?: number;
+  relevance?: ContentRelevance;
 }): Promise<CompetitorContentImpact> {
   const timezone = env.meltwaterEarnedTimezone;
   const toKey = toDateKey(input.to);
@@ -193,11 +205,16 @@ export async function getCompetitorContentImpact(input: {
   const from = new Date(`${fromKey}T00:00:00.000Z`);
   const to = new Date(`${toKey}T23:59:59.999Z`);
   const topN = input.topN ?? env.meltwaterCompetitorTopN;
+  const relevance = input.relevance ?? "competitor";
   const searchIds = input.searchId
     ? [input.searchId]
-    : env.meltwaterCompetitorSearchIds.length > 0
-      ? env.meltwaterCompetitorSearchIds
-      : undefined;
+    : relevance === "brand"
+      ? env.meltwaterSearchIds
+      : env.meltwaterCompetitorSearchIds.length > 0
+        ? env.meltwaterCompetitorSearchIds
+        : undefined;
+  const isRelevant =
+    relevance === "brand" ? isRelevantBrandContent : isRelevantCompetitorContent;
 
   const candidateLimit = Math.max(topN * 20, 100);
   const [positiveCandidates, negativeCandidates, searches] = await Promise.all([
@@ -217,8 +234,8 @@ export async function getCompetitorContentImpact(input: {
     }),
     listCompetitorContentSearches(searchIds)
   ]);
-  const positive = positiveCandidates.filter(isRelevantCompetitorContent).slice(0, topN);
-  const negative = negativeCandidates.filter(isRelevantCompetitorContent).slice(0, topN);
+  const positive = positiveCandidates.filter(isRelevant).slice(0, topN);
+  const negative = negativeCandidates.filter(isRelevant).slice(0, topN);
 
   return {
     timezone,
@@ -228,4 +245,17 @@ export async function getCompetitorContentImpact(input: {
     negative,
     searches
   };
+}
+
+export async function getBrandContentImpact(input: {
+  from?: string;
+  to?: string;
+  topN?: number;
+}): Promise<CompetitorContentImpact> {
+  return getCompetitorContentImpact({
+    from: input.from,
+    to: input.to,
+    topN: input.topN,
+    relevance: "brand"
+  });
 }

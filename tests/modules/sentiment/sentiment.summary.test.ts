@@ -21,7 +21,7 @@ describe("heuristicBrandContentSummary", () => {
       topN: 5,
       positive: [
         {
-          searchId: "27811562",
+          searchId: "27811195",
           documentId: "p1",
           title: "Hyrox Delhi",
           snippet: "Masters’ Union presents Hyrox Delhi",
@@ -37,7 +37,7 @@ describe("heuristicBrandContentSummary", () => {
       ],
       negative: [
         {
-          searchId: "27811562",
+          searchId: "27811195",
           documentId: "n1",
           snippet: "High-risk investing only works when you understand the downside",
           url: "https://www.instagram.com/p/neg/",

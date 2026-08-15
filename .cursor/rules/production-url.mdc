@@ -12,6 +12,7 @@ alwaysApply: true
 
 - Request URL: `https://bran-be-production-3549.up.railway.app/api/slack/events`
 - Slash command URL: `https://bran-be-production-3549.up.railway.app/api/slack/commands`
+- Interactivity Request URL: `https://bran-be-production-3549.up.railway.app/api/slack/interactions`
 - Cron check: `https://bran-be-production-3549.up.railway.app/api/cron/eta-check`
 
 ## Deploy verification

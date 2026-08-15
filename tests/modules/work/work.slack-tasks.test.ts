@@ -1,11 +1,15 @@
 import {
   classifyWorkUnitsForTaskList,
+  encodeSlackTaskListMeta,
+  formatSlackTaskListBlocks,
   formatSlackTaskListMessage,
   looksLikeCreateWorkQuery,
   looksLikeSlackDmTaskCreate,
   looksLikeTaskListQuery,
+  parseSlackTaskListMeta,
   parseTaskListDateRangeHeuristic,
-  resolveTaskListSubject
+  resolveTaskListSubject,
+  SLACK_WORK_COMPLETE_ACTION
 } from "../../../src/modules/work/work.slack-tasks";
 
 describe("Slack task list query", () => {
@@ -267,5 +271,39 @@ describe("Slack task list query", () => {
 
     expect(yours).toContain("*Your tasks by due date · today (14 Aug 2026, IST)*");
     expect(theirs).toContain("*Dhananjay Jain's tasks by due date · today (14 Aug 2026, IST)*");
+  });
+
+  it("builds a Slack checklist and round-trips list metadata", () => {
+    const from = new Date("2026-08-14T00:00:00.000+05:30");
+    const to = new Date("2026-08-14T23:59:59.999+05:30");
+    const { blocks } = formatSlackTaskListBlocks({
+      range: { from, to, label: "today (14 Aug 2026, IST)" },
+      pending: [
+        {
+          id: "unit-1",
+          title: "Follow up with vendor",
+          status: "pending",
+          dueAt: from,
+          closedAt: null,
+          overdue: false,
+          steps: []
+        }
+      ],
+      completed: [],
+      listUserId: "user-1",
+      includeOverdue: false
+    });
+
+    const meta = parseSlackTaskListMeta(blocks[0]?.block_id as string);
+    expect(meta).toEqual({
+      fromMs: from.getTime(),
+      toMs: to.getTime(),
+      userId: "user-1",
+      includeOverdue: false
+    });
+    expect(encodeSlackTaskListMeta(meta!)).toBe(blocks[0]?.block_id);
+    expect(JSON.stringify(blocks)).toContain(SLACK_WORK_COMPLETE_ACTION);
+    expect(JSON.stringify(blocks)).toContain("unit-1");
+    expect(JSON.stringify(blocks)).toContain("checkboxes");
   });
 });

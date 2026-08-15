@@ -11,7 +11,8 @@ import { attendanceRouter } from "./modules/attendance/attendance.routes";
 import {
   etaCronHandler,
   slackCommandsHandler,
-  slackEventsHandler
+  slackEventsHandler,
+  slackInteractionsHandler
 } from "./modules/attendance/attendance.webhook";
 import { escalationCronHandler } from "./modules/escalation/escalation.cron";
 import { meltwaterEarnedCronHandler } from "./modules/meltwater-earned/meltwater-earned.cron";
@@ -48,6 +49,7 @@ app.post(
 const slackRaw = express.raw({ type: () => true, limit: "2mb" });
 app.post("/api/slack/events", slackRaw, slackEventsHandler);
 app.post("/api/slack/commands", slackRaw, slackCommandsHandler);
+app.post("/api/slack/interactions", slackRaw, slackInteractionsHandler);
 app.get("/api/slack/events", (_req, res) => {
   res.status(200).json({
     success: true,
@@ -90,12 +92,13 @@ app.get("/", (_req, res) => {
       attendance: true,
       slackEvents: "/api/slack/events",
       slackCommands: "/api/slack/commands",
+      slackInteractions: "/api/slack/interactions",
       etaCron: "/api/cron/eta-check",
       escalationCron: "/api/cron/escalation-check",
       meltwaterEarnedCron: "/api/cron/meltwater-earned",
       meltwaterCompetitorsCron: "/api/cron/meltwater-competitors",
       workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)",
-      slackTaskList: "DM or @Bran in a channel to list pending/completed tasks",
+      slackTaskList: "DM or @Bran to list tasks as a checklist; check a box to mark done",
       slackSentiment: "DM or @Bran: sentiment / brand mentions (onboarded users)",
       slackCompetitors: "DM or @Bran: competitor coverage / impactful content (onboarded users)"
     }

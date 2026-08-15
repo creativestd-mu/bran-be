@@ -212,17 +212,46 @@ export async function openDmChannel(userId: string): Promise<string> {
 export async function postSlackMessage(
   channel: string,
   text: string,
-  options?: { threadTs?: string }
+  options?: { threadTs?: string; blocks?: unknown[] }
 ): Promise<{ channel: string; ts: string }> {
   const data = await slackApi<{ ok: boolean; channel?: string; ts?: string }>("chat.postMessage", {
     channel,
     text,
-    thread_ts: options?.threadTs
+    thread_ts: options?.threadTs,
+    blocks: options?.blocks ? JSON.stringify(options.blocks) : undefined
   });
   if (!data.ts) {
     throw new HttpError(502, "Slack chat.postMessage did not return a message ts");
   }
   return { channel: data.channel ?? channel, ts: data.ts };
+}
+
+export async function updateSlackMessage(
+  channel: string,
+  ts: string,
+  text: string,
+  blocks?: unknown[]
+): Promise<void> {
+  await slackApi("chat.update", {
+    channel,
+    ts,
+    text,
+    blocks: blocks ? JSON.stringify(blocks) : undefined
+  });
+}
+
+export async function respondToSlackResponseUrl(
+  responseUrl: string,
+  body: Record<string, unknown>
+): Promise<void> {
+  const response = await fetch(responseUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new HttpError(502, `Slack response_url failed: ${response.status}`);
+  }
 }
 
 export async function sendDm(

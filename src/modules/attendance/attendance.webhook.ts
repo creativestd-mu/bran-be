@@ -24,8 +24,10 @@ import {
   processSlackTaskListMessage,
   processSlackVoiceWorkConfirm,
   processSlackVoiceWorkMessage,
+  processSlackWorkChecklistAction,
   processSlackWorkMessage
 } from "../work/work.service";
+import { SLACK_WORK_COMPLETE_ACTION } from "../work/work.slack-tasks";
 import { hasSlackAudioFiles, isSlackDmChannel } from "../work/work.slack-voice";
 
 async function processSlackInteractiveQuery(input: {
@@ -469,6 +471,62 @@ export async function etaCronHandler(
     res.status(200).json({
       success: true,
       data: { ...result, autoRemindersEnabled: AUTO_REMINDERS_ENABLED }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/slack/interactions — Block Kit actions (task checklist).
+ */
+export async function slackInteractionsHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const rawBody = readRawBodyBuffer(req);
+    assertSlackSignature(req, rawBody);
+
+    const params = new URLSearchParams(rawBody.toString("utf8"));
+    const rawPayload = params.get("payload");
+    if (!rawPayload) {
+      res.status(400).json({ ok: false, error: "missing_payload" });
+      return;
+    }
+
+    const payload = JSON.parse(rawPayload) as {
+      type?: string;
+      user?: { id?: string };
+      response_url?: string;
+      message?: { blocks?: Array<{ block_id?: string }> };
+      actions?: Array<{
+        action_id?: string;
+        value?: string;
+        selected_options?: Array<{ value?: string }>;
+      }>;
+    };
+
+    res.status(200).json({ ok: true });
+
+    if (payload.type !== "block_actions") return;
+
+    const action = payload.actions?.[0];
+    if (!action || action.action_id !== SLACK_WORK_COMPLETE_ACTION) return;
+
+    const checked = Boolean(action.selected_options?.some((option) => option.value));
+    const workUnitId = action.selected_options?.[0]?.value ?? "";
+    if (!checked || !payload.user?.id || !workUnitId) return;
+
+    void processSlackWorkChecklistAction({
+      slackUserId: payload.user.id,
+      workUnitId,
+      checked,
+      responseUrl: payload.response_url,
+      messageBlocks: payload.message?.blocks
+    }).catch((error) => {
+      console.error("Slack work checklist action failed:", error);
     });
   } catch (error) {
     next(error);

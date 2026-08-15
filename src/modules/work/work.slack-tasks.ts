@@ -789,3 +789,140 @@ export function formatSlackTaskListMessage(input: {
   if (text.length <= 3500) return text;
   return `${text.slice(0, 3400)}\n_…truncated._`;
 }
+
+export const SLACK_WORK_COMPLETE_ACTION = "work_complete";
+const SLACK_TASK_LIST_META_PREFIX = "tl:";
+const SLACK_CHECKLIST_PENDING_CAP = 18;
+const SLACK_CHECKLIST_COMPLETED_CAP = 12;
+
+export type SlackTaskListMeta = {
+  fromMs: number;
+  toMs: number;
+  userId: string;
+  includeOverdue: boolean;
+};
+
+export function encodeSlackTaskListMeta(meta: SlackTaskListMeta): string {
+  return `${SLACK_TASK_LIST_META_PREFIX}${meta.fromMs}:${meta.toMs}:${meta.userId}:${meta.includeOverdue ? 1 : 0}`;
+}
+
+export function parseSlackTaskListMeta(blockId: string | undefined): SlackTaskListMeta | null {
+  if (!blockId?.startsWith(SLACK_TASK_LIST_META_PREFIX)) return null;
+  const parts = blockId.slice(SLACK_TASK_LIST_META_PREFIX.length).split(":");
+  if (parts.length < 4) return null;
+  const fromMs = Number(parts[0]);
+  const toMs = Number(parts[1]);
+  const userId = parts[2];
+  const includeOverdue = parts[3] === "1";
+  if (!userId || Number.isNaN(fromMs) || Number.isNaN(toMs)) return null;
+  return { fromMs, toMs, userId, includeOverdue };
+}
+
+function checkboxLabel(item: SlackTaskListItem): string {
+  const due = item.overdue ? `overdue · ${formatDue(item.dueAt)}` : `due ${formatDue(item.dueAt)}`;
+  const raw = `${item.title} — ${due}`;
+  return raw.length <= 75 ? raw : `${raw.slice(0, 72)}...`;
+}
+
+export function formatSlackTaskListBlocks(input: {
+  range: SlackTaskDateRange;
+  pending: SlackTaskListItem[];
+  completed: SlackTaskListItem[];
+  appUrl?: string;
+  ownerName?: string;
+  listUserId: string;
+  includeOverdue: boolean;
+}): { text: string; blocks: Array<Record<string, unknown>> } {
+  const text = formatSlackTaskListMessage(input);
+  const heading = input.ownerName
+    ? `${input.ownerName}'s tasks by due date`
+    : "Your tasks by due date";
+  const pendingShown = input.pending.slice(0, SLACK_CHECKLIST_PENDING_CAP);
+  const completedShown = input.completed.slice(0, SLACK_CHECKLIST_COMPLETED_CAP);
+  const blocks: Array<Record<string, unknown>> = [
+    {
+      type: "section",
+      block_id: encodeSlackTaskListMeta({
+        fromMs: input.range.from.getTime(),
+        toMs: input.range.to.getTime(),
+        userId: input.listUserId,
+        includeOverdue: input.includeOverdue
+      }),
+      text: {
+        type: "mrkdwn",
+        text: `*${escapeSlackMrkdwn(heading)} · ${escapeSlackMrkdwn(input.range.label)}*`
+      }
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: "Check a box to mark that task done in Bran." }]
+    },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `*Pending (${input.pending.length})*` }
+    }
+  ];
+
+  if (pendingShown.length === 0) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: "_None._" }
+    });
+  } else {
+    for (const item of pendingShown) {
+      blocks.push({
+        type: "actions",
+        block_id: `wu:${item.id}`,
+        elements: [
+          {
+            type: "checkboxes",
+            action_id: SLACK_WORK_COMPLETE_ACTION,
+            options: [
+              {
+                text: { type: "plain_text", text: checkboxLabel(item), emoji: true },
+                value: item.id
+              }
+            ]
+          }
+        ]
+      });
+    }
+    if (input.pending.length > pendingShown.length) {
+      blocks.push({
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `_…and ${input.pending.length - pendingShown.length} more pending. Ask for a narrower date._`
+          }
+        ]
+      });
+    }
+  }
+
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: `*Completed (${input.completed.length})*` }
+  });
+
+  if (completedShown.length === 0) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: "_None._" }
+    });
+  } else {
+    const lines = completedShown.map((item) => {
+      const due = `due ${formatDue(item.dueAt)}`;
+      return `• ~${escapeSlackMrkdwn(item.title)}~ — ${due}`;
+    });
+    if (input.completed.length > completedShown.length) {
+      lines.push(`_…and ${input.completed.length - completedShown.length} more completed._`);
+    }
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: lines.join("\n") }
+    });
+  }
+
+  return { text, blocks };
+}

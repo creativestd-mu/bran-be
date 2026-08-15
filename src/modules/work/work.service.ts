@@ -49,7 +49,8 @@ import { loadGmailWorkIngestCandidates } from "./work.sources";
 import {
   getSlackBotUserId,
   getSlackUserInfo,
-  postSlackMessage
+  postSlackMessage,
+  respondToSlackResponseUrl
 } from "../attendance/attendance.slack";
 import {
   isAllowedSlackWorkChannel,
@@ -59,11 +60,12 @@ import {
 } from "./work.slack";
 import {
   classifyWorkUnitsForTaskList,
-  formatSlackTaskListMessage,
   collectSlackUserMentions,
+  formatSlackTaskListBlocks,
   looksLikeOverdueTaskQuery,
   looksLikeSlackDmTaskCreate,
   looksLikeTaskListQuery,
+  parseSlackTaskListMeta,
   resolveSlackTaskListQuery,
   resolveTaskListSubject,
   textMentionsSlackUser
@@ -834,15 +836,20 @@ export async function processSlackTaskListMessage(input: {
   });
 
   const ownerName = viewingOther ? await slackTaskListOwnerName(targetSlackUserId) : undefined;
-  const message = formatSlackTaskListMessage({
+  const listMessage = formatSlackTaskListBlocks({
     range: query.range,
     pending,
     completed,
     appUrl: env.appUrl,
-    ownerName
+    ownerName,
+    listUserId: branUserId,
+    includeOverdue
   });
 
-  await postSlackMessage(input.channelId, message, threadOpts);
+  await postSlackMessage(input.channelId, listMessage.text, {
+    ...threadOpts,
+    blocks: listMessage.blocks
+  });
   console.log("[work.slack-tasks] listed", {
     slackUserId: input.userId,
     targetSlackUserId,
@@ -856,6 +863,184 @@ export async function processSlackTaskListMessage(input: {
     completed: completed.length
   });
   return { handled: true, reason: "listed" };
+}
+
+async function loadBranUserRoleName(userId: string): Promise<string> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: { select: { name: true } } }
+  });
+  return user?.role?.name ?? "";
+}
+
+function canCompleteWorkUnitFromSlack(
+  unit: {
+    userId: string;
+    createdById?: string | null;
+    isPrivate: boolean;
+    steps: Array<{ assigneeId?: string | null }>;
+  },
+  viewerUserId: string,
+  roleName: string
+): boolean {
+  if (unit.userId === viewerUserId || unit.createdById === viewerUserId) return true;
+  if (unit.steps.some((step) => step.assigneeId === viewerUserId)) return true;
+  try {
+    assertCanModify(unit, viewerUserId, roleName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function completeWorkUnitFromSlack(
+  workUnitId: string,
+  viewerUserId: string
+): Promise<{ status: "completed" | "already_done" | "forbidden" | "missing" }> {
+  const existing = await findWorkUnitById(workUnitId);
+  if (!existing) return { status: "missing" };
+
+  const roleName = await loadBranUserRoleName(viewerUserId);
+  if (!canCompleteWorkUnitFromSlack(existing, viewerUserId, roleName)) {
+    return { status: "forbidden" };
+  }
+  if (existing.status === "CLOSED") return { status: "already_done" };
+
+  await updateWorkUnit(workUnitId, viewerUserId, roleName, {
+    status: "CLOSED",
+    steps: existing.steps.map((step) => ({
+      description: step.description,
+      deadline: step.deadline ? step.deadline.toISOString() : null,
+      done: true,
+      assigneeId: (step as { assigneeId?: string | null }).assigneeId ?? null,
+      assigneeSpokenName: (step as { assigneeSpokenName?: string | null }).assigneeSpokenName ?? null,
+      sourceExcerpt: (step as { sourceExcerpt?: string | null }).sourceExcerpt ?? null
+    }))
+  });
+  return { status: "completed" };
+}
+
+export async function processSlackWorkChecklistAction(input: {
+  slackUserId: string;
+  workUnitId: string;
+  checked: boolean;
+  responseUrl?: string;
+  messageBlocks?: Array<{ block_id?: string }>;
+}): Promise<{ handled: boolean; reason?: string }> {
+  if (!input.checked) {
+    return { handled: true, reason: "unchecked_ignored" };
+  }
+
+  const branUserId = await resolveBranUserIdForSlackUser(input.slackUserId);
+  if (!branUserId) {
+    if (input.responseUrl) {
+      await respondToSlackResponseUrl(input.responseUrl, {
+        response_type: "ephemeral",
+        replace_original: false,
+        text: "I couldn’t match your Slack account to a Bran user, so I can’t mark that done."
+      });
+    }
+    return { handled: true, reason: "unmapped_user" };
+  }
+
+  let result: Awaited<ReturnType<typeof completeWorkUnitFromSlack>>;
+  try {
+    result = await completeWorkUnitFromSlack(input.workUnitId, branUserId);
+  } catch (error) {
+    console.error("[work.slack-checklist] complete failed", error);
+    if (input.responseUrl) {
+      await respondToSlackResponseUrl(input.responseUrl, {
+        response_type: "ephemeral",
+        replace_original: false,
+        text: "Sorry — I couldn’t mark that task done. Try again, or close it in Bran."
+      });
+    }
+    return { handled: true, reason: "complete_failed" };
+  }
+  if (result.status === "forbidden") {
+    if (input.responseUrl) {
+      await respondToSlackResponseUrl(input.responseUrl, {
+        response_type: "ephemeral",
+        replace_original: false,
+        text: "You can only check off tasks assigned to you (or that you created)."
+      });
+    }
+    return { handled: true, reason: "forbidden" };
+  }
+  if (result.status === "missing") {
+    if (input.responseUrl) {
+      await respondToSlackResponseUrl(input.responseUrl, {
+        response_type: "ephemeral",
+        replace_original: false,
+        text: "I couldn’t find that work unit in Bran."
+      });
+    }
+    return { handled: true, reason: "missing" };
+  }
+
+  const meta = (input.messageBlocks ?? [])
+    .map((block) => parseSlackTaskListMeta(block.block_id))
+    .find((value): value is NonNullable<typeof value> => Boolean(value));
+
+  if (meta && input.responseUrl) {
+    const units = await findWorkUnitsForSlackTaskList({
+      userId: meta.userId,
+      from: new Date(meta.fromMs),
+      to: new Date(meta.toMs),
+      includeOverdue: meta.includeOverdue
+    });
+    const { pending, completed } = classifyWorkUnitsForTaskList({
+      userId: meta.userId,
+      from: new Date(meta.fromMs),
+      to: new Date(meta.toMs),
+      includeOverdue: meta.includeOverdue,
+      units
+    });
+    const owner =
+      meta.userId === branUserId
+        ? undefined
+        : (await prisma.user.findUnique({ where: { id: meta.userId }, select: { name: true } }))
+            ?.name;
+    const { text, blocks } = formatSlackTaskListBlocks({
+      range: {
+        from: new Date(meta.fromMs),
+        to: new Date(meta.toMs),
+        label: ""
+      },
+      pending,
+      completed,
+      appUrl: env.appUrl,
+      ownerName: owner,
+      listUserId: meta.userId,
+      includeOverdue: meta.includeOverdue
+    });
+    // Keep the original heading/label from the posted message when we can.
+    const headingBlock = input.messageBlocks?.find((block) => parseSlackTaskListMeta(block.block_id));
+    const headingText =
+      headingBlock &&
+      typeof (headingBlock as { text?: { text?: string } }).text?.text === "string"
+        ? (headingBlock as { text: { text: string } }).text.text
+        : null;
+    if (headingText && blocks[0] && typeof blocks[0] === "object") {
+      (blocks[0] as { text: { type: string; text: string } }).text = {
+        type: "mrkdwn",
+        text: headingText
+      };
+    }
+    await respondToSlackResponseUrl(input.responseUrl, {
+      replace_original: true,
+      text,
+      blocks
+    });
+  }
+
+  console.log("[work.slack-checklist] completed", {
+    slackUserId: input.slackUserId,
+    branUserId,
+    workUnitId: input.workUnitId,
+    status: result.status
+  });
+  return { handled: true, reason: result.status };
 }
 
 async function slackTaskListOwnerName(slackUserId: string): Promise<string> {

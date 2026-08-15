@@ -130,6 +130,40 @@ export async function createMeltwaterSearch(
   };
 }
 
+export async function updateMeltwaterSearch(
+  searchId: string,
+  name: string,
+  booleanQuery: string,
+  caseSensitivity: "no" | "yes" | "hybrid" = "no"
+): Promise<MeltwaterSearch> {
+  const { baseUrl } = requireApiConfig();
+  const url = new URL(`/v3/searches/${encodeURIComponent(searchId)}`, baseUrl).toString();
+  devLog("searches.update", { url, searchId, name });
+
+  const json = (await meltwaterFetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      search: {
+        name,
+        query: {
+          type: "boolean",
+          boolean: booleanQuery,
+          case_sensitivity: caseSensitivity
+        }
+      }
+    })
+  })) as { search?: { id?: unknown; name?: unknown; updated?: unknown } };
+
+  const search = json.search ?? {};
+  const id = String(search.id ?? searchId).trim();
+  return {
+    id,
+    name: String(search.name ?? name).trim(),
+    updated: search.updated ? String(search.updated) : undefined
+  };
+}
+
 export async function fetchMeltwaterCustomAnalytics(
   searchId: string,
   body: MeltwaterCustomAnalyticsRequest

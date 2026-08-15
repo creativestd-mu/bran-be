@@ -138,7 +138,10 @@ function formatCompact(value: number): string {
 }
 
 function formatPiece(piece: CompetitorContentRecord, index: number): string {
-  const headline = piece.title?.trim() || piece.snippet?.trim() || "Untitled mention";
+  const headline =
+    piece.title?.trim() ||
+    piece.snippet?.trim() ||
+    (piece.author ? `Post by ${piece.author}` : `${piece.sourceName || piece.source || "Social"} post`);
   const outlet = piece.sourceName || piece.source || "Unknown source";
   const when = piece.publishedAt
     ? new Intl.DateTimeFormat("en-IN", {

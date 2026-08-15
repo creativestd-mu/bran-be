@@ -1,4 +1,7 @@
-import { normalizeCompetitorDocuments } from "../../../src/modules/competitor-content/competitor-content.normalize";
+import {
+  isRelevantCompetitorContent,
+  normalizeCompetitorDocuments
+} from "../../../src/modules/competitor-content/competitor-content.normalize";
 
 describe("normalizeCompetitorDocuments", () => {
   it("extracts impactful positive documents and skips zero-engagement rows", () => {
@@ -9,16 +12,20 @@ describe("normalizeCompetitorDocuments", () => {
           {
             id: "doc-1",
             title: "Scaler raises funding",
+            url: "https://example.com/scaler-funding",
             content: {
               title: "Scaler raises funding",
-              body: "Scaler School of Business announced a new round…",
-              url: "https://example.com/scaler-funding"
+              body: "Scaler School of Business announced a new round…"
             },
-            source: { name: "Economic Times", type: "news" },
+            source: {
+              name: "Economic Times",
+              type: "news",
+              metrics: { reach: 800000 }
+            },
             author: { name: "Reporter A" },
             published_date: "2026-08-10T08:00:00Z",
-            sentiment: "positive",
-            metrics: { engagement: 12500, reach: 800000, estimated_views: 400000 }
+            enrichments: { sentiment: "positive" },
+            metrics: { engagement: { total: 12500 }, estimated_views: 400000 }
           },
           {
             id: "doc-2",
@@ -75,7 +82,10 @@ describe("normalizeCompetitorDocuments", () => {
       documents: [
         {
           id: "neg-1",
-          content: { title: "Complaint thread", body: "Users unhappy with Newton…" },
+          content: {
+            title: "Complaint thread",
+            body: "Users unhappy with Newton School of Technology…"
+          },
           metrics: { engagement: 50, reach: 1000 }
         }
       ]
@@ -90,5 +100,49 @@ describe("normalizeCompetitorDocuments", () => {
     expect(records).toHaveLength(1);
     expect(records[0].sentiment).toBe("negative");
     expect(records[0].snippet).toContain("Users unhappy");
+  });
+
+  it("rejects stemming and substring false positives from the saved search", () => {
+    const payload = {
+      result: {
+        documents: [
+          {
+            id: "false-scaler",
+            content: {
+              body: "Custom RC mini truck #scalerc #scaler #customrc"
+            },
+            metrics: { engagement: { total: 900 } },
+            source: { name: "Pinterest" }
+          },
+          {
+            id: "false-upgrad",
+            content: {
+              body: "Every pet deserves an upgraded luxury dog bed"
+            },
+            metrics: { engagement: { total: 500 } },
+            source: { name: "Pinterest" }
+          }
+        ]
+      }
+    };
+
+    const records = normalizeCompetitorDocuments(payload, {
+      searchId: "28994734",
+      timezone: "Asia/Kolkata",
+      sentiment: "positive"
+    });
+
+    expect(records).toEqual([]);
+    expect(
+      isRelevantCompetitorContent({
+        title: "Luxury dog bed",
+        snippet: "Every pet deserves an upgrad"
+      })
+    ).toBe(false);
+    expect(
+      isRelevantCompetitorContent({
+        title: "upGrad Campus launches a new programme"
+      })
+    ).toBe(true);
   });
 });

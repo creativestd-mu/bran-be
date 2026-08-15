@@ -11,7 +11,10 @@ import {
   COMPETITOR_CONTENT_PAGE_SIZE,
   COMPETITOR_CONTENT_WINDOW_DAYS
 } from "./competitor-content.constants";
-import { normalizeCompetitorDocuments } from "./competitor-content.normalize";
+import {
+  isRelevantCompetitorContent,
+  normalizeCompetitorDocuments
+} from "./competitor-content.normalize";
 import {
   listCompetitorContentSearches,
   listTopCompetitorContent,
@@ -196,11 +199,26 @@ export async function getCompetitorContentImpact(input: {
       ? env.meltwaterCompetitorSearchIds
       : undefined;
 
-  const [positive, negative, searches] = await Promise.all([
-    listTopCompetitorContent({ from, to, sentiment: "positive", searchIds, limit: topN }),
-    listTopCompetitorContent({ from, to, sentiment: "negative", searchIds, limit: topN }),
+  const candidateLimit = Math.max(topN * 20, 100);
+  const [positiveCandidates, negativeCandidates, searches] = await Promise.all([
+    listTopCompetitorContent({
+      from,
+      to,
+      sentiment: "positive",
+      searchIds,
+      limit: candidateLimit
+    }),
+    listTopCompetitorContent({
+      from,
+      to,
+      sentiment: "negative",
+      searchIds,
+      limit: candidateLimit
+    }),
     listCompetitorContentSearches(searchIds)
   ]);
+  const positive = positiveCandidates.filter(isRelevantCompetitorContent).slice(0, topN);
+  const negative = negativeCandidates.filter(isRelevantCompetitorContent).slice(0, topN);
 
   return {
     timezone,

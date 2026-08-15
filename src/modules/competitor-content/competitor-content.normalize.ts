@@ -95,17 +95,26 @@ function extractMetrics(doc: Record<string, unknown>): {
   reach: number;
   estimatedViews: number;
 } {
-  const metrics = asRecord(doc.metrics) ?? asRecord(doc.enrichment) ?? {};
+  const metrics = asRecord(doc.metrics) ?? {};
+  const sourceMetrics = asRecord(asRecord(doc.source)?.metrics) ?? {};
+  const engagementMetrics = asRecord(metrics.engagement);
+  const socialEchoMetrics = asRecord(metrics.social_echo);
   const engagement = asNumber(
-    firstString(
-      metrics.engagement,
-      metrics.social_echo,
-      doc.engagement,
-      doc.social_echo
-    ) ?? metrics.engagement ?? doc.engagement ?? 0
+    engagementMetrics?.total ??
+      metrics.engagement ??
+      socialEchoMetrics?.total ??
+      metrics.social_echo ??
+      doc.engagement ??
+      doc.social_echo ??
+      0
   );
   const reach = asNumber(
-    metrics.reach ?? doc.reach ?? metrics.estimated_reach ?? 0
+    sourceMetrics.reach ??
+      sourceMetrics.global_reach ??
+      metrics.reach ??
+      doc.reach ??
+      metrics.estimated_reach ??
+      0
   );
   const estimatedViews = asNumber(
     metrics.estimated_views ??
@@ -126,6 +135,53 @@ function normalizeSentiment(
     return text;
   }
   return fallback;
+}
+
+const RELEVANT_COMPETITOR_RE =
+  /\b(newton\s+school(?:\s+of\s+(?:technology|coding))?|newtonschool|scaler\s+(?:academy|school(?:\s+of\s+(?:business|technology))?)|scaler\.com|ashoka\s+university|ashoka\.edu|upgrad\s+(?:education|campus|abroad)|upgrad\.com|mesa\s+school\s+of\s+business|mesaschool)\b|@(?:newtonschool|scaler_official|ashokauniv|upgrad_edu|mesaschoolofbusiness)\b/i;
+
+export function isRelevantCompetitorContent(input: {
+  title?: string;
+  snippet?: string;
+  url?: string;
+  sourceName?: string;
+  author?: string;
+}): boolean {
+  return RELEVANT_COMPETITOR_RE.test(
+    [input.title, input.snippet, input.url, input.sourceName, input.author]
+      .filter((value): value is string => Boolean(value))
+      .join(" ")
+  );
+}
+
+function isRelevantCompetitorDocument(
+  doc: Record<string, unknown>,
+  content: Record<string, unknown>,
+  source: Record<string, unknown>,
+  author: Record<string, unknown>
+): boolean {
+  const matched = asRecord(doc.matched) ?? {};
+  const keywords = Array.isArray(matched.keywords)
+    ? matched.keywords.map(asString).filter((value): value is string => Boolean(value))
+    : [];
+  const corpus = [
+    content.title,
+    content.headline,
+    content.opening_text,
+    content.body,
+    doc.title,
+    doc.url,
+    source.domain,
+    source.url,
+    author.name,
+    author.handle,
+    matched.hit_sentence,
+    ...keywords
+  ]
+    .map(asString)
+    .filter((value): value is string => Boolean(value))
+    .join(" ");
+  return RELEVANT_COMPETITOR_RE.test(corpus);
 }
 
 export function normalizeCompetitorDocuments(
@@ -163,6 +219,12 @@ export function normalizeCompetitorDocuments(
     const author = asRecord(doc.author) ?? {};
     const metrics = extractMetrics(doc);
 
+    // Saved-search definitions can still produce stemming/substring false positives.
+    // Keep only documents with an explicit direct-competitor identifier.
+    if (!isRelevantCompetitorDocument(doc, content, source, author)) {
+      continue;
+    }
+
     // Skip zero-impact pieces — "don't force it"
     if (metrics.engagement <= 0 && metrics.reach <= 0 && metrics.estimatedViews <= 0) {
       continue;
@@ -170,7 +232,8 @@ export function normalizeCompetitorDocuments(
 
     const title = firstString(content.title, doc.title, content.headline);
     const body = firstString(content.body, content.opening_text, content.snippet, doc.body);
-    const url = firstString(content.url, doc.url, source.url, content.matched_url);
+    const matched = asRecord(doc.matched) ?? {};
+    const url = firstString(doc.url, content.url, source.url, content.matched_url);
     const sourceName = firstString(
       source.name,
       source.title,
@@ -197,14 +260,22 @@ export function normalizeCompetitorDocuments(
       author: authorName,
       publishedAt: extractPublishedAt(doc),
       sentiment: normalizeSentiment(
-        firstString(doc.sentiment, content.sentiment, asRecord(doc.enrichment)?.sentiment),
+        firstString(
+          asRecord(doc.enrichments)?.sentiment,
+          doc.sentiment,
+          content.sentiment,
+          asRecord(doc.enrichment)?.sentiment
+        ),
         meta.sentiment
       ),
       engagement: metrics.engagement,
       reach: metrics.reach,
       estimatedViews: metrics.estimatedViews,
       timezone: meta.timezone,
-      rawPayload: doc
+      rawPayload: {
+        ...doc,
+        matchedKeywords: matched.keywords
+      }
     });
   }
 

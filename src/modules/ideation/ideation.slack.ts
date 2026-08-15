@@ -140,6 +140,10 @@ export async function processSlackIdeaMessage(input: {
     return { handled: false, reason: "not_idea" };
   }
 
+  if (!markIdeaEvent(input.channelId, input.ts)) {
+    return { handled: true, reason: "duplicate" };
+  }
+
   const isDm = isSlackDmChannel(input.channelId, input.channelType);
   if (!isDm) {
     await postSlackMessage(
@@ -148,10 +152,6 @@ export async function processSlackIdeaMessage(input: {
       { threadTs: input.threadTs ?? input.ts }
     );
     return { handled: true, reason: "channel_privacy" };
-  }
-
-  if (!markIdeaEvent(input.channelId, input.ts)) {
-    return { handled: true, reason: "duplicate" };
   }
 
   const branUserId = await resolveBranUserIdForSlackUser(input.userId);

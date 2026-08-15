@@ -62,6 +62,24 @@ async function processSlackInteractiveQuery(input: {
   return processSlackTaskListMessage(input);
 }
 
+const INBOUND_DEDUP_TTL_MS = 60 * 1000;
+const recentInboundEvents = new Map<string, number>();
+
+function markSlackInboundEvent(channelId: string, ts: string): boolean {
+  const now = Date.now();
+  for (const [key, seenAt] of recentInboundEvents) {
+    if (now - seenAt > INBOUND_DEDUP_TTL_MS) {
+      recentInboundEvents.delete(key);
+    }
+  }
+  const key = `${channelId}:${ts}`;
+  if (recentInboundEvents.has(key)) {
+    return false;
+  }
+  recentInboundEvents.set(key, now);
+  return true;
+}
+
 function readRawBodyBuffer(req: Request): Buffer {
   if (Buffer.isBuffer(req.body)) {
     return req.body;
@@ -169,6 +187,11 @@ export async function slackEventsHandler(
       return;
     }
 
+    // Slack often sends both `message` and `app_mention` for the same @Bran post.
+    if (!markSlackInboundEvent(event.channel, event.ts)) {
+      return;
+    }
+
     const hasText = Boolean(event.text?.trim());
     const hasFiles = Boolean(event.files?.length);
     const isDm = isSlackDmChannel(event.channel, event.channel_type);
@@ -233,15 +256,26 @@ export async function slackEventsHandler(
               channelType: event.channel_type
             }).then((attendance) => {
               if (attendance.recorded) return;
-              return processSlackDmWorkCreateMessage({
+              if (isDm) {
+                return processSlackDmWorkCreateMessage({
+                  channelId: event.channel!,
+                  userId: event.user!,
+                  text: event.text,
+                  ts: event.ts!,
+                  botId: event.bot_id,
+                  subtype: event.subtype,
+                  threadTs: event.thread_ts,
+                  channelType: event.channel_type
+                });
+              }
+              return processSlackWorkMessage({
                 channelId: event.channel!,
                 userId: event.user!,
                 text: event.text,
                 ts: event.ts!,
                 botId: event.bot_id,
                 subtype: event.subtype,
-                threadTs: event.thread_ts,
-                channelType: event.channel_type
+                threadTs: event.thread_ts
               });
             });
           });
@@ -312,6 +346,17 @@ export async function slackEventsHandler(
             subtype: event.subtype,
             threadTs: event.thread_ts,
             channelType: event.channel_type
+          }).then((attendance) => {
+            if (attendance.recorded) return;
+            return processSlackWorkMessage({
+              channelId: event.channel!,
+              userId: event.user!,
+              text: event.text,
+              ts: event.ts!,
+              botId: event.bot_id,
+              subtype: event.subtype,
+              threadTs: event.thread_ts
+            });
           });
         })
         .catch((error) => {
@@ -332,36 +377,6 @@ export async function slackEventsHandler(
       }).catch((error) => {
         console.error("Slack escalation event processing failed:", error);
       });
-    }
-
-    // Channel text work ingest — skip DMs, voice notes, and @Bran task-list replies.
-    if (hasText && !isDm && !hasAudio) {
-      void processSlackInteractiveQuery({
-        channelId: event.channel,
-        userId: event.user,
-        text: event.text,
-        ts: event.ts,
-        botId: event.bot_id,
-        subtype: event.subtype,
-        threadTs: event.thread_ts,
-        channelType: event.channel_type,
-        eventType: event.type
-      })
-        .then((result) => {
-          if (result.handled) return;
-          return processSlackWorkMessage({
-            channelId: event.channel!,
-            userId: event.user!,
-            text: event.text,
-            ts: event.ts!,
-            botId: event.bot_id,
-            subtype: event.subtype,
-            threadTs: event.thread_ts
-          });
-        })
-        .catch((error) => {
-          console.error("Slack work event processing failed:", error);
-        });
     }
   } catch (error) {
     next(error);

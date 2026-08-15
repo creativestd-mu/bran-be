@@ -8,6 +8,8 @@ describe("looksLikeCompetitorQuery", () => {
   it("detects competitor intent and named-competitor coverage phrasing", () => {
     expect(looksLikeCompetitorQuery("competitor coverage this week")).toBe(true);
     expect(looksLikeCompetitorQuery("<@U123> what are competitors saying")).toBe(true);
+    expect(looksLikeCompetitorQuery("How have my competitors done in the last week")).toBe(true);
+    expect(looksLikeCompetitorQuery("How have my comptetiors done in the last week")).toBe(true);
     expect(looksLikeCompetitorQuery("Newton sentiment last month")).toBe(true);
     expect(looksLikeCompetitorQuery("Scaler press coverage")).toBe(true);
     expect(looksLikeCompetitorQuery("upGrad news")).toBe(true);

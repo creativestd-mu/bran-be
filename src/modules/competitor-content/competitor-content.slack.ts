@@ -17,9 +17,19 @@ const COMPETITOR_INTENT_RE =
   /\b(competitor|competitors|competition|rival|rivals|competitive)\b/i;
 
 const COMPETITOR_COVERAGE_RE =
-  /\b(sentiment|coverage|news|mentions?|press|media|impact|impactful|positive|negative|story|stories|article|articles)\b/i;
+  /\b(sentiment|coverage|news|mentions?|press|media|impact|impactful|positive|negative|story|stories|article|articles|done|doing|performed|performance|fared)\b/i;
 
 const COMPETITOR_NAME_RE = new RegExp(`\\b(${COMPETITOR_NAMES.join("|")})\\b`, "i");
+
+/** Exact stems plus common misspellings we have already seen in Slack. */
+const COMPETITOR_CANONICAL_WORDS = [
+  "competitor",
+  "competitors",
+  "competition",
+  "competitive",
+  "rival",
+  "rivals"
+] as const;
 
 const COMPETITOR_DEDUP_TTL_MS = 60 * 1000;
 const recentCompetitorEvents = new Map<string, number>();
@@ -39,12 +49,58 @@ function markCompetitorEvent(channelId: string, ts: string): boolean {
   return true;
 }
 
+function levenshtein(a: string, b: string): number {
+  if (a === b) {
+    return 0;
+  }
+  if (a.length === 0) {
+    return b.length;
+  }
+  if (b.length === 0) {
+    return a.length;
+  }
+  const prev = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 0; i < a.length; i += 1) {
+    const curr = [i + 1];
+    for (let j = 0; j < b.length; j += 1) {
+      const cost = a[i] === b[j] ? 0 : 1;
+      curr[j + 1] = Math.min(curr[j] + 1, prev[j + 1] + 1, prev[j] + cost);
+    }
+    for (let j = 0; j < prev.length; j += 1) {
+      prev[j] = curr[j] ?? 0;
+    }
+  }
+  return prev[b.length] ?? b.length;
+}
+
+function mentionsCompetitorWord(text: string): boolean {
+  if (COMPETITOR_INTENT_RE.test(text)) {
+    return true;
+  }
+  const words = text.toLowerCase().match(/[a-z']+/g) ?? [];
+  for (const word of words) {
+    if (word.length < 5 || word.length > 14) {
+      continue;
+    }
+    for (const canonical of COMPETITOR_CANONICAL_WORDS) {
+      const maxDistance = canonical.length >= 10 ? 3 : 2;
+      if (Math.abs(word.length - canonical.length) > maxDistance) {
+        continue;
+      }
+      if (levenshtein(word, canonical) <= maxDistance) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function looksLikeCompetitorQuery(text: string): boolean {
   const trimmed = stripSlackUserMentions(text);
   if (!trimmed) {
     return false;
   }
-  if (COMPETITOR_INTENT_RE.test(trimmed)) {
+  if (mentionsCompetitorWord(trimmed)) {
     return true;
   }
   return COMPETITOR_NAME_RE.test(trimmed) && COMPETITOR_COVERAGE_RE.test(trimmed);

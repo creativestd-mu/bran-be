@@ -1,5 +1,6 @@
 import {
   evaluateSlackPromptSafetyHeuristic,
+  honorLlmVerdict,
   looksLikeBranPrompt,
   looksLikeSafeOperationalQuery,
   parseSafetyClassifierResponse,
@@ -19,6 +20,11 @@ describe("slack prompt safety", () => {
     expect(evaluateSlackPromptSafetyHeuristic("this launch is shit, kill the old landing page").allowed).toBe(
       true
     );
+    expect(
+      evaluateSlackPromptSafetyHeuristic(
+        "idea: we can scrape munimji's data onto Bran and make it available automatically"
+      ).allowed
+    ).toBe(true);
   });
 
   it("treats known work queries as safe operational so the LLM layer is skipped", () => {
@@ -50,7 +56,7 @@ describe("slack prompt safety", () => {
     expect(slackSafetyRefusalText("self_harm")).toContain("988");
   });
 
-  it("parses the LLM classifier JSON and fail-closes on garbage", () => {
+  it("parses the LLM classifier JSON and ignores vague refusals", () => {
     expect(parseSafetyClassifierResponse('{"allowed":true,"category":"ok"}')).toEqual({
       allowed: true,
       category: "ok",
@@ -59,6 +65,15 @@ describe("slack prompt safety", () => {
     expect(parseSafetyClassifierResponse('{"allowed":false,"category":"harassment"}')?.allowed).toBe(
       false
     );
+    expect(parseSafetyClassifierResponse('{"allowed":false,"category":"other"}')?.category).toBe(
+      "other"
+    );
     expect(parseSafetyClassifierResponse("sure, I can help with that")).toBeNull();
+    expect(
+      honorLlmVerdict({ allowed: false, category: "other", layer: "llm" })
+    ).toBeNull();
+    expect(
+      honorLlmVerdict({ allowed: false, category: "illegal", layer: "llm" })?.allowed
+    ).toBe(false);
   });
 });

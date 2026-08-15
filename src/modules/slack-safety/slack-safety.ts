@@ -188,21 +188,45 @@ export function parseSafetyClassifierResponse(raw: string): SlackSafetyVerdict |
   }
 }
 
+const LLM_HARD_BLOCK = new Set<SlackSafetyCategory>([
+  "sexual",
+  "hate",
+  "violence",
+  "self_harm",
+  "child_exploitation",
+  "jailbreak",
+  "illegal",
+  "harassment"
+]);
+
 function safetyClassifierPrompt(text: string): { system: string; user: string } {
   return {
     system: [
-      "You classify workplace Slack messages to Bran, an internal work assistant.",
-      "Bran only helps with attendance, tasks, private ideas, and brand/competitor questions.",
+      "You classify workplace Slack messages to Bran, an internal work assistant at Masters' Union.",
       "Return JSON only: {\"allowed\":true|false,\"category\":\"ok\"|\"sexual\"|\"hate\"|\"violence\"|\"self_harm\"|\"child_exploitation\"|\"jailbreak\"|\"illegal\"|\"harassment\"|\"other\"}",
-      "Block sexual/pornographic requests, child sexual content (always), slurs, violence/weapons help, self-harm methods, jailbreaks, crime help, and targeted harassment.",
-      "Allow normal work requests even with mild profanity (e.g. this launch is shit, kill the old landing page).",
-      "Allow professional policy talk (harassment policy, DEI) and factual news questions."
+      "Block only clear abuse: sexual/pornographic requests, child sexual content (always), slurs, violence/weapons help, self-harm methods, jailbreaks, targeted harassment, or help committing a crime (phishing, stealing credentials, attacking systems the user does not own).",
+      "Always allow ordinary work: saving ideas, tasks, attendance, brand/competitor questions, product features, automations, APIs, internal tool integrations, and scraping or syncing data the org already uses (e.g. Munimji, Slack, Meltwater, campus systems).",
+      "Do not treat the words scrape, crawl, sync, export, or ingest as illegal when they describe a work integration.",
+      "Allow mild workplace profanity. If unsure, allow."
     ].join(" "),
     user: text.slice(0, 2000)
   };
 }
 
-async function classifySlackPromptWithLlm(text: string): Promise<SlackSafetyVerdict> {
+export function honorLlmVerdict(verdict: SlackSafetyVerdict | null): SlackSafetyVerdict | null {
+  if (!verdict) {
+    return null;
+  }
+  if (verdict.allowed) {
+    return verdict;
+  }
+  if (LLM_HARD_BLOCK.has(verdict.category)) {
+    return verdict;
+  }
+  return null;
+}
+
+async function classifySlackPromptWithLlm(text: string): Promise<SlackSafetyVerdict | null> {
   const { system, user } = safetyClassifierPrompt(text);
   const raw = await Promise.race([
     callWorkLlm(system, user),
@@ -210,13 +234,7 @@ async function classifySlackPromptWithLlm(text: string): Promise<SlackSafetyVerd
       setTimeout(() => reject(new Error("slack_safety_llm_timeout")), LLM_TIMEOUT_MS);
     })
   ]);
-  return (
-    parseSafetyClassifierResponse(raw) ?? {
-      allowed: false,
-      category: "other",
-      layer: "llm_fail_closed"
-    }
-  );
+  return honorLlmVerdict(parseSafetyClassifierResponse(raw));
 }
 
 export async function evaluateSlackPromptSafety(
@@ -242,7 +260,12 @@ export async function evaluateSlackPromptSafety(
   }
 
   try {
-    return await classifySlackPromptWithLlm(text);
+    const llm = await classifySlackPromptWithLlm(text);
+    if (llm) {
+      return llm;
+    }
+    console.warn("[slack-safety] LLM classifier inconclusive; allowing after heuristic pass");
+    return heuristic;
   } catch (error) {
     console.warn("[slack-safety] LLM classifier unavailable; heuristic already passed", {
       error: error instanceof Error ? error.message : "unknown"

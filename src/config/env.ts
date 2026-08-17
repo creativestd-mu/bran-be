@@ -88,7 +88,7 @@ export const env = {
   googleOAuthRedirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI ?? "",
   googleCalendarScopes: parseCsv(
     process.env.GOOGLE_CALENDAR_SCOPES ??
-      "https://www.googleapis.com/auth/calendar.events.readonly,openid,email,profile"
+      "https://www.googleapis.com/auth/calendar.events,https://www.googleapis.com/auth/calendar.freebusy,openid,email,profile"
   ),
   googleGmailOAuthRedirectUri:
     process.env.GOOGLE_GMAIL_OAUTH_REDIRECT_URI ??
@@ -141,6 +141,18 @@ export const env = {
   appTimezone: process.env.APP_TIMEZONE ?? "Asia/Kolkata",
   apifyToken: process.env.APIFY_TOKEN ?? "",
   apifyInstagramActorId: process.env.APIFY_INSTAGRAM_ACTOR_ID ?? "apify/instagram-post-scraper",
+  apifyPodInstagramActorId:
+    process.env.APIFY_POD_INSTAGRAM_ACTOR_ID ??
+    process.env.APIFY_INSTAGRAM_ACTOR_ID ??
+    "apify/instagram-scraper",
+  apifyPodYoutubeActorId:
+    process.env.APIFY_POD_YOUTUBE_ACTOR_ID ?? "streamers/youtube-scraper",
+  apifyPodXActorId: process.env.APIFY_POD_X_ACTOR_ID ?? "apidojo/tweet-scraper",
+  apifyPodLinkedinActorId:
+    process.env.APIFY_POD_LINKEDIN_ACTOR_ID ?? "curious_coder/linkedin-post-search-scraper",
+  apifyPodResultsLimit: parsePositiveNumber(process.env.APIFY_POD_RESULTS_LIMIT, 25),
+  podsSocialCronEnabled:
+    (process.env.PODS_SOCIAL_CRON_ENABLED ?? "true").toLowerCase() !== "false",
   youtubeApiKey: process.env.YOUTUBE_API_KEY ?? "",
   instagramAccessToken: process.env.INSTAGRAM_ACCESS_TOKEN ?? "",
   appUrl: process.env.APP_URL ?? "",

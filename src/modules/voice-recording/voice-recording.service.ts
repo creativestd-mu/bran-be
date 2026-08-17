@@ -1,5 +1,6 @@
 import { HttpError } from "../../utils/httpError";
 import { translateAudioWithSarvam, type SarvamTranslateResult } from "../ai/ai.sarvam";
+import { buildTranscriptionPrompt } from "../ai/ai.transcription-context";
 import type { VoiceRecordingSource } from "./voice-recording.constants";
 import {
   createVoiceRecording,
@@ -84,11 +85,16 @@ export async function transcribeAndArchiveVoiceRecording(params: {
   });
 
   try {
+    const prompt =
+      params.prompt !== undefined
+        ? await buildTranscriptionPrompt(params.prompt)
+        : await buildTranscriptionPrompt();
+
     const sarvam = await translateAudioWithSarvam({
       fileBuffer: params.fileBuffer,
       originalname: params.originalname,
       mimetype: params.mimetype,
-      prompt: params.prompt
+      prompt
     });
 
     const updated = await updateVoiceRecording(recording.id, {

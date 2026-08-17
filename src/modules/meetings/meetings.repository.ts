@@ -19,6 +19,7 @@ export async function upsertCalendarConnection(data: {
   userId: string;
   recallCalendarId: string;
   oauthEmail?: string | null;
+  refreshToken?: string | null;
   status?: string;
 }) {
   return prisma.calendarConnection.upsert({
@@ -27,6 +28,7 @@ export async function upsertCalendarConnection(data: {
       userId: data.userId,
       recallCalendarId: data.recallCalendarId,
       oauthEmail: data.oauthEmail ?? null,
+      refreshToken: data.refreshToken ?? null,
       status: data.status ?? "CONNECTED",
       connectedAt: new Date(),
       disconnectedAt: null
@@ -34,6 +36,7 @@ export async function upsertCalendarConnection(data: {
     update: {
       recallCalendarId: data.recallCalendarId,
       oauthEmail: data.oauthEmail ?? null,
+      ...(data.refreshToken !== undefined ? { refreshToken: data.refreshToken } : {}),
       status: data.status ?? "CONNECTED",
       connectedAt: new Date(),
       disconnectedAt: null
@@ -47,6 +50,7 @@ export async function updateCalendarConnection(
     status?: string;
     disconnectedAt?: Date | null;
     oauthEmail?: string | null;
+    refreshToken?: string | null;
   }
 ) {
   return prisma.calendarConnection.update({

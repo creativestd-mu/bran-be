@@ -19,18 +19,28 @@ import {
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
 import { processSlackCompetitorMessage } from "../competitor-content/competitor-content.slack";
 import { processSlackIdeaMessage } from "../ideation/ideation.slack";
+import {
+  processSlackCalendarBookSlotAction,
+  processSlackCalendarMessage,
+  processSlackCalendarPickPersonAction,
+  SLACK_CALENDAR_BOOK_SLOT_ACTION,
+  SLACK_CALENDAR_PICK_PERSON_ACTION
+} from "../meetings/meetings.booking.slack";
+import { processSlackPodMessage } from "../pods/pods.slack";
 import { processSlackSafetyGuard } from "../slack-safety/slack-safety.slack";
 import { processSlackSentimentMessage } from "../sentiment/sentiment.slack";
 import {
-  processSlackDmWorkCreateMessage,
+  processSlackDirectedWorkCreateMessage,
   processSlackTaskListMessage,
   processSlackVoiceWorkConfirm,
   processSlackVoiceWorkMessage,
   processSlackWorkChecklistAction,
   processSlackWorkMessage
 } from "../work/work.service";
-import { SLACK_WORK_COMPLETE_ACTION } from "../work/work.slack-tasks";
+import { SLACK_WORK_COMPLETE_ACTION, looksLikeSlackDmTaskCreate } from "../work/work.slack-tasks";
 import { hasSlackAudioFiles, isSlackDmChannel } from "../work/work.slack-voice";
+import { processSlackUnsupportedDirectedQuery } from "../slack-unsupported/slack-unsupported.service";
+import { isSlackMessageAddressedToBran } from "../slack-safety/slack-safety.slack";
 
 async function processSlackInteractiveQuery(input: {
   channelId: string;
@@ -51,6 +61,10 @@ async function processSlackInteractiveQuery(input: {
   if (competitor.handled) {
     return competitor;
   }
+  const pods = await processSlackPodMessage(input);
+  if (pods.handled) {
+    return pods;
+  }
   const sentiment = await processSlackSentimentMessage(input);
   if (sentiment.handled) {
     return sentiment;
@@ -59,7 +73,79 @@ async function processSlackInteractiveQuery(input: {
   if (idea.handled) {
     return idea;
   }
+  const calendar = await processSlackCalendarMessage(input);
+  if (calendar.handled) {
+    return calendar;
+  }
+  // Create dumps ("add these tasks…") must not be stolen by the checklist handler.
+  if (looksLikeSlackDmTaskCreate(input.text ?? "")) {
+    return { handled: false, reason: "defer_create" };
+  }
   return processSlackTaskListMessage(input);
+}
+
+/**
+ * After interactive + attendance: directed create (DM/@Bran), optional channel ingest,
+ * then unsupported reply for addressed misses.
+ */
+async function processSlackWorkFollowups(input: {
+  channelId: string;
+  userId: string;
+  text?: string;
+  ts: string;
+  botId?: string;
+  subtype?: string;
+  threadTs?: string;
+  channelType?: string;
+  eventType?: string;
+  isDm: boolean;
+}): Promise<void> {
+  const create = await processSlackDirectedWorkCreateMessage({
+    channelId: input.channelId,
+    userId: input.userId,
+    text: input.text,
+    ts: input.ts,
+    botId: input.botId,
+    subtype: input.subtype,
+    threadTs: input.threadTs,
+    channelType: input.channelType,
+    eventType: input.eventType
+  });
+  if (create.handled) return;
+
+  if (!input.isDm && !looksLikeSlackDmTaskCreate(input.text ?? "")) {
+    const ingest = await processSlackWorkMessage({
+      channelId: input.channelId,
+      userId: input.userId,
+      text: input.text,
+      ts: input.ts,
+      botId: input.botId,
+      subtype: input.subtype,
+      threadTs: input.threadTs
+    });
+    if (ingest.handled && (ingest.created ?? 0) > 0) return;
+  }
+
+  const addressed = await isSlackMessageAddressedToBran({
+    channelId: input.channelId,
+    text: input.text,
+    channelType: input.channelType,
+    eventType: input.eventType
+  });
+  if (!addressed) return;
+
+  await processSlackUnsupportedDirectedQuery({
+    channelId: input.channelId,
+    userId: input.userId,
+    text: input.text,
+    ts: input.ts,
+    botId: input.botId,
+    subtype: input.subtype,
+    threadTs: input.threadTs,
+    channelType: input.channelType,
+    eventType: input.eventType,
+    reason: "no_handler"
+  });
 }
 
 const INBOUND_DEDUP_TTL_MS = 60 * 1000;
@@ -256,26 +342,17 @@ export async function slackEventsHandler(
               channelType: event.channel_type
             }).then((attendance) => {
               if (attendance.recorded) return;
-              if (isDm) {
-                return processSlackDmWorkCreateMessage({
-                  channelId: event.channel!,
-                  userId: event.user!,
-                  text: event.text,
-                  ts: event.ts!,
-                  botId: event.bot_id,
-                  subtype: event.subtype,
-                  threadTs: event.thread_ts,
-                  channelType: event.channel_type
-                });
-              }
-              return processSlackWorkMessage({
+              return processSlackWorkFollowups({
                 channelId: event.channel!,
                 userId: event.user!,
                 text: event.text,
                 ts: event.ts!,
                 botId: event.bot_id,
                 subtype: event.subtype,
-                threadTs: event.thread_ts
+                threadTs: event.thread_ts,
+                channelType: event.channel_type,
+                eventType: event.type,
+                isDm
               });
             });
           });
@@ -308,7 +385,7 @@ export async function slackEventsHandler(
             channelType: event.channel_type
           }).then((attendance) => {
             if (attendance.recorded) return;
-            return processSlackDmWorkCreateMessage({
+            return processSlackWorkFollowups({
               channelId: event.channel!,
               userId: event.user!,
               text: event.text,
@@ -316,7 +393,9 @@ export async function slackEventsHandler(
               botId: event.bot_id,
               subtype: event.subtype,
               threadTs: event.thread_ts,
-              channelType: event.channel_type
+              channelType: event.channel_type,
+              eventType: event.type,
+              isDm: true
             });
           });
         })
@@ -348,14 +427,17 @@ export async function slackEventsHandler(
             channelType: event.channel_type
           }).then((attendance) => {
             if (attendance.recorded) return;
-            return processSlackWorkMessage({
+            return processSlackWorkFollowups({
               channelId: event.channel!,
               userId: event.user!,
               text: event.text,
               ts: event.ts!,
               botId: event.bot_id,
               subtype: event.subtype,
-              threadTs: event.thread_ts
+              threadTs: event.thread_ts,
+              channelType: event.channel_type,
+              eventType: event.type,
+              isDm: false
             });
           });
         })
@@ -508,7 +590,7 @@ export async function etaCronHandler(
 }
 
 /**
- * POST /api/slack/interactions — Block Kit actions (task checklist).
+ * POST /api/slack/interactions — Block Kit actions (task checklist + calendar booking).
  */
 export async function slackInteractionsHandler(
   req: Request,
@@ -529,6 +611,7 @@ export async function slackInteractionsHandler(
     const payload = JSON.parse(rawPayload) as {
       type?: string;
       user?: { id?: string };
+      channel?: { id?: string };
       response_url?: string;
       message?: { blocks?: Array<{ block_id?: string }> };
       actions?: Array<{
@@ -543,11 +626,38 @@ export async function slackInteractionsHandler(
     if (payload.type !== "block_actions") return;
 
     const action = payload.actions?.[0];
-    if (!action || action.action_id !== SLACK_WORK_COMPLETE_ACTION) return;
+    if (!action?.action_id || !payload.user?.id) return;
+
+    if (action.action_id === SLACK_CALENDAR_BOOK_SLOT_ACTION) {
+      if (!action.value) return;
+      void processSlackCalendarBookSlotAction({
+        slackUserId: payload.user.id,
+        token: action.value,
+        responseUrl: payload.response_url
+      }).catch((error) => {
+        console.error("Slack calendar book slot action failed:", error);
+      });
+      return;
+    }
+
+    if (action.action_id === SLACK_CALENDAR_PICK_PERSON_ACTION) {
+      if (!action.value) return;
+      void processSlackCalendarPickPersonAction({
+        slackUserId: payload.user.id,
+        token: action.value,
+        channelId: payload.channel?.id,
+        responseUrl: payload.response_url
+      }).catch((error) => {
+        console.error("Slack calendar pick person action failed:", error);
+      });
+      return;
+    }
+
+    if (action.action_id !== SLACK_WORK_COMPLETE_ACTION) return;
 
     const checked = Boolean(action.selected_options?.some((option) => option.value));
     const workUnitId = action.selected_options?.[0]?.value ?? "";
-    if (!checked || !payload.user?.id || !workUnitId) return;
+    if (!checked || !workUnitId) return;
 
     void processSlackWorkChecklistAction({
       slackUserId: payload.user.id,

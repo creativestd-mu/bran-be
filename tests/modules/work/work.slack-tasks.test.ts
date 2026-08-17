@@ -3,6 +3,7 @@ import {
   encodeSlackTaskListMeta,
   formatSlackTaskListBlocks,
   formatSlackTaskListMessage,
+  looksLikeChannelMassAssignQuery,
   looksLikeCreateWorkQuery,
   looksLikeSlackDmTaskCreate,
   looksLikeTaskListQuery,
@@ -39,6 +40,41 @@ describe("Slack task list query", () => {
     );
     expect(looksLikeSlackDmTaskCreate("thanks")).toBe(false);
     expect(looksLikeSlackDmTaskCreate("wfh")).toBe(false);
+  });
+
+  it("treats add-these / numbered assignee dumps as create, not list", () => {
+    const dump = [
+      "Add these for tasks today",
+      "1. Pratham - Muneem Ji x Bran",
+      "2. Abhishek - Work on Perf Dashboard",
+      "3. Take contact from Pragya for Scratch Magazine"
+    ].join("\n");
+
+    expect(looksLikeCreateWorkQuery(dump)).toBe(true);
+    expect(looksLikeSlackDmTaskCreate(dump)).toBe(true);
+    expect(looksLikeTaskListQuery(dump)).toBe(false);
+
+    expect(looksLikeCreateWorkQuery("Add these tasks for today\n1. A - do x\n2. B - do y")).toBe(
+      true
+    );
+    expect(looksLikeTaskListQuery("Add these tasks for today\n1. A - do x\n2. B - do y")).toBe(
+      false
+    );
+    expect(looksLikeTaskListQuery("tasks for today")).toBe(true);
+  });
+
+  it("detects channel mass-assign phrasing", () => {
+    expect(
+      looksLikeChannelMassAssignQuery(
+        "Add a task for everyone in this group to read the quoted article"
+      )
+    ).toBe(true);
+    expect(looksLikeChannelMassAssignQuery("create a task for everybody here: review the deck")).toBe(
+      true
+    );
+    expect(looksLikeChannelMassAssignQuery("assign this to the whole channel")).toBe(true);
+    expect(looksLikeChannelMassAssignQuery("add a task for Dhananjay to follow up")).toBe(false);
+    expect(looksLikeChannelMassAssignQuery("everyone is going to lunch")).toBe(false);
   });
 
   it("defaults relative phrases to IST calendar ranges", () => {

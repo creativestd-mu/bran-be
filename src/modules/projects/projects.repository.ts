@@ -1,11 +1,22 @@
 import { prisma } from "../../lib/prisma";
 
+const podPreview = {
+  select: {
+    id: true,
+    name: true,
+    verticalId: true,
+    isActive: true,
+    vertical: { select: { id: true, name: true, slug: true } },
+    head: { select: { id: true, name: true, email: true } }
+  }
+} as const;
+
 export async function createProject(data: {
   name: string;
   description?: string;
   objectives?: string;
   finalLink?: string;
-  verticalId: string;
+  podId: string;
   createdById?: string;
   startsAt?: Date;
   endsAt?: Date;
@@ -14,7 +25,7 @@ export async function createProject(data: {
   return prisma.project.create({
     data,
     include: {
-      vertical: { select: { id: true, name: true, slug: true } },
+      pod: podPreview,
       phases: { orderBy: { orderIndex: "asc" } },
       members: { include: { user: true, reportsTo: true } }
     }
@@ -32,7 +43,7 @@ export async function listProjectsForUser(userId: string) {
     include: {
       _count: { select: { members: true } },
       createdBy: { select: { id: true, name: true, email: true } },
-      vertical: { select: { id: true, name: true, slug: true } },
+      pod: podPreview,
       phases: { orderBy: { orderIndex: "asc" } },
       members: {
         include: {
@@ -91,7 +102,7 @@ export async function listProjects() {
     include: {
       _count: { select: { members: true } },
       createdBy: { select: { id: true, name: true, email: true } },
-      vertical: { select: { id: true, name: true, slug: true } },
+      pod: podPreview,
       phases: { orderBy: { orderIndex: "asc" } },
       members: {
         include: {
@@ -109,7 +120,7 @@ export async function getProjectById(id: string) {
     where: { id },
     include: {
       createdBy: { select: { id: true, name: true, email: true } },
-      vertical: { select: { id: true, name: true, slug: true } },
+      pod: podPreview,
       phases: { orderBy: { orderIndex: "asc" } },
       members: {
         include: {
@@ -128,7 +139,7 @@ export async function updateProject(
     description?: string;
     objectives?: string | null;
     finalLink?: string | null;
-    verticalId?: string;
+    podId?: string;
     startsAt?: Date | null;
     endsAt?: Date | null;
     status?: string;
@@ -139,7 +150,7 @@ export async function updateProject(
     data,
     include: {
       createdBy: { select: { id: true, name: true, email: true } },
-      vertical: { select: { id: true, name: true, slug: true } },
+      pod: podPreview,
       phases: { orderBy: { orderIndex: "asc" } },
       members: {
         include: {

@@ -17,8 +17,11 @@ import {
 import { escalationCronHandler } from "./modules/escalation/escalation.cron";
 import { meltwaterEarnedCronHandler } from "./modules/meltwater-earned/meltwater-earned.cron";
 import { competitorContentCronHandler } from "./modules/competitor-content/competitor-content.cron";
+import { podsSocialCronHandler } from "./modules/pods/pods.cron";
 import { competitorContentRouter } from "./modules/competitor-content/competitor-content.routes";
 import { sentimentRouter } from "./modules/sentiment/sentiment.routes";
+import { unsupportedSlackRouter } from "./modules/slack-unsupported/slack-unsupported.routes";
+import { transcriptionKeywordsRouter } from "./modules/transcription-keywords/transcription-keywords.routes";
 import { handleCalendarOAuthCallback } from "./modules/meetings/meetings.service";
 import { recallWebhookHandler } from "./modules/meetings/meetings.webhook";
 import { handleGmailOAuthCallback } from "./modules/gmail/gmail.service";
@@ -62,6 +65,7 @@ app.get("/api/cron/eta-check", etaCronHandler);
 app.get("/api/cron/escalation-check", escalationCronHandler);
 app.get("/api/cron/meltwater-earned", meltwaterEarnedCronHandler);
 app.get("/api/cron/meltwater-competitors", competitorContentCronHandler);
+app.get("/api/cron/pods-social", podsSocialCronHandler);
 
 app.get("/oauth/google/calendar/callback", (req, res) => {
   void handleCalendarOAuthCallback(req, res);
@@ -82,6 +86,8 @@ if (env.nodeEnv !== "test") {
 app.use("/api/eta", attendanceRouter);
 app.use("/api/sentiment", sentimentRouter);
 app.use("/api/competitors", competitorContentRouter);
+app.use("/api/unsupported-slack-queries", unsupportedSlackRouter);
+app.use("/api/transcription-keywords", transcriptionKeywordsRouter);
 
 app.get("/", (_req, res) => {
   res.status(200).json({
@@ -97,10 +103,19 @@ app.get("/", (_req, res) => {
       escalationCron: "/api/cron/escalation-check",
       meltwaterEarnedCron: "/api/cron/meltwater-earned",
       meltwaterCompetitorsCron: "/api/cron/meltwater-competitors",
+      podsSocialCron: "/api/cron/pods-social",
       workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)",
       slackTaskList: "DM or @Bran to list tasks as a checklist; check a box to mark done",
       slackSentiment: "DM or @Bran: sentiment / brand mentions (onboarded users)",
       slackCompetitors: "DM or @Bran: competitor coverage / impactful content (onboarded users)",
+      slackPods: "DM or @Bran: pod IP / inspiration posts (onboarded users)",
+      slackTaskCreate:
+        "DM or @Bran: add/create task; @Bran in channel: assign to everyone in this group/channel",
+      unsupportedSlackQueries: "/api/unsupported-slack-queries (admin/CoS review)",
+      transcriptionKeywords:
+        "/api/transcription-keywords (admin/CoS) — STT spelling hints for Sarvam",
+      slackCalendarBook:
+        "DM or @Bran: book a call (Gmail+Calendar connected) / what's on my calendar today",
       slackIdeas: "DM only: add ideas by text/voice and list your own ideas",
       slackSafety: "Blocks inappropriate Slack prompts to Bran (text + voice)"
     }

@@ -12,14 +12,21 @@ function dateKeyFromValue(value: Date): string {
 
 type DailyQuery = {
   searchId?: string;
+  searchIds?: string[];
   from?: string;
   to?: string;
   timezone?: string;
 };
 
 function buildWhere(query: DailyQuery) {
+  const searchIds = query.searchIds?.filter(Boolean) ?? [];
+  const searchFilter = query.searchId
+    ? { searchId: query.searchId }
+    : searchIds.length > 0
+      ? { searchId: { in: searchIds } }
+      : { searchId: { in: [] } };
   return {
-    ...(query.searchId ? { searchId: query.searchId } : {}),
+    ...searchFilter,
     ...(query.timezone ? { timezone: query.timezone } : {}),
     ...(query.from || query.to
       ? {

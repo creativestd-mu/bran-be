@@ -68,6 +68,7 @@ model User {
   projectMemberships        ProjectMember[]
   projectLeadMemberships    ProjectMember[]         @relation("ProjectMemberReportsTo")
   createdProjects           Project[]               @relation("ProjectCreatedBy")
+  headedPods                Pod[]                   @relation("PodHead")
   ownedVerticals            Vertical[]              @relation("VerticalOwner")
   createdContents           Content[]               @relation("ContentCreatedBy")
   contentNodeAssignments    ContentNodeTeamMember[] @relation("ContentNodeTeamUser")
@@ -107,6 +108,8 @@ model User {
   prereadComments           PrereadComment[]        @relation("PrereadCommentAuthor")
   prereadMediaUploads       PrereadMedia[]          @relation("PrereadMediaUploader")
   slackVoiceWorkDrafts      SlackVoiceWorkDraft[]   @relation("SlackVoiceWorkDraftOwner")
+  unsupportedSlackQueries   UnsupportedSlackQuery[] @relation("UnsupportedSlackQueryUser")
+  transcriptionKeywordsCreated TranscriptionKeyword[] @relation("TranscriptionKeywordCreatedBy")
 
   @@index([roleId])
   @@index([managerUserId])
@@ -127,10 +130,82 @@ model Vertical {
 
   owner    User?     @relation("VerticalOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   teams    Team[]
-  projects Project[]
+  pods     Pod[]
 
   @@index([ownerUserId])
   @@index([slug])
+}
+
+// ── Pods (content units with owned IPs + inspirations) ────
+
+model Pod {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  verticalId  String
+  headUserId  String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  vertical       Vertical          @relation(fields: [verticalId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  head           User              @relation("PodHead", fields: [headUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  projects       Project[]
+  socialAccounts PodSocialAccount[]
+
+  @@index([verticalId])
+  @@index([headUserId])
+  @@index([name])
+  @@index([isActive])
+}
+
+model PodSocialAccount {
+  id                String    @id @default(uuid())
+  podId             String
+  kind              String // OWNED_IP | INSPIRATION
+  platform          String // YOUTUBE | X | INSTAGRAM | LINKEDIN
+  handle            String
+  url               String
+  platformAccountId String?
+  isActive          Boolean   @default(true)
+  lastSyncedAt      DateTime?
+  lastSyncStatus    String? // SUCCESS | ERROR | SKIPPED
+  lastSyncError     String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  pod   Pod            @relation(fields: [podId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  posts PodSocialPost[]
+
+  @@unique([podId, kind, platform, handle])
+  @@index([podId])
+  @@index([kind])
+  @@index([platform])
+  @@index([isActive])
+  @@index([lastSyncedAt])
+}
+
+model PodSocialPost {
+  id             String    @id @default(uuid())
+  accountId      String
+  platformPostId String
+  url            String?
+  title          String?
+  caption        String?
+  author         String?
+  publishedAt    DateTime?
+  metrics        Json?
+  rawPayload     String
+  syncedAt       DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  account PodSocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([accountId, platformPostId])
+  @@index([accountId])
+  @@index([publishedAt])
+  @@index([syncedAt])
 }
 
 model Team {
@@ -180,7 +255,7 @@ model Project {
   description String?
   objectives  String?
   finalLink   String?
-  verticalId  String
+  podId       String
   createdById String?
   status      String    @default("ACTIVE")
   startsAt    DateTime?
@@ -188,7 +263,7 @@ model Project {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  vertical  Vertical        @relation(fields: [verticalId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  pod       Pod             @relation(fields: [podId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   createdBy User?           @relation("ProjectCreatedBy", fields: [createdById], references: [id])
   members   ProjectMember[]
   phases    ProjectPhase[]
@@ -196,7 +271,7 @@ model Project {
   workUnits WorkUnit[]
 
   @@index([createdById])
-  @@index([verticalId])
+  @@index([podId])
   @@index([status])
   @@index([name])
 }
@@ -418,6 +493,8 @@ model CalendarConnection {
   provider         String   @default("google")
   recallCalendarId String   @unique @db.VarChar(200)
   oauthEmail       String?  @db.VarChar(320)
+  /** Encrypted Google refresh token for freebusy + Meet event create. Null until re-connect after booking scopes. */
+  refreshToken     String?  @db.Text
   status           String   @default("CONNECTED") // CONNECTED | DISCONNECTED | ERROR
   connectedAt      DateTime @default(now())
   disconnectedAt   DateTime?
@@ -987,6 +1064,48 @@ model UserPageVisit {
   @@unique([userId, path])
   @@index([userId, visitCount])
   @@index([userId, lastVisitedAt])
+}
+
+// Admin-managed spellings/terms fed into Sarvam STT prompts.
+model TranscriptionKeyword {
+  id          String   @id @default(uuid())
+  phrase      String   @db.VarChar(200)
+  normalized  String   @unique @db.VarChar(200)
+  notes       String?  @db.VarChar(500)
+  isActive    Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User? @relation("TranscriptionKeywordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([isActive])
+  @@index([createdAt])
+}
+
+// Directed @Bran / DM asks we could not fulfill — for product review.
+model UnsupportedSlackQuery {
+  id          String   @id @default(uuid())
+  slackUserId String
+  branUserId  String?
+  channelId   String
+  channelType String?
+  threadTs    String?
+  messageTs   String
+  text        String   @db.Text
+  eventType   String?
+  isDm        Boolean  @default(false)
+  reason      String? // e.g. no_handler, mass_assign_dm, over_cap
+  status      String   @default("NEW") // NEW | REVIEWED | DISMISSED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  branUser User? @relation("UnsupportedSlackQueryUser", fields: [branUserId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([channelId, messageTs])
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([branUserId])
 }
 
 // ── Attendance / ETA Tracker (Slack #cs-day-off) ─────────────

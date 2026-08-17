@@ -49,10 +49,12 @@ import { loadGmailWorkIngestCandidates } from "./work.sources";
 import {
   getSlackBotUserId,
   getSlackUserInfo,
+  listChannelMemberIds,
   postSlackMessage,
   respondToSlackResponseUrl
 } from "../attendance/attendance.slack";
 import {
+  fetchSlackThreadContextText,
   isAllowedSlackWorkChannel,
   loadSlackWorkIngestCandidateFromEvent,
   loadSlackWorkIngestCandidates,
@@ -62,6 +64,7 @@ import {
   classifyWorkUnitsForTaskList,
   collectSlackUserMentions,
   formatSlackTaskListBlocks,
+  looksLikeChannelMassAssignQuery,
   looksLikeOverdueTaskQuery,
   looksLikeSlackDmTaskCreate,
   looksLikeTaskListQuery,
@@ -70,6 +73,7 @@ import {
   resolveTaskListSubject,
   textMentionsSlackUser
 } from "./work.slack-tasks";
+import { processSlackUnsupportedDirectedQuery } from "../slack-unsupported/slack-unsupported.service";
 import {
   downloadSlackAudio,
   extractSlackAudioAttachments,
@@ -92,7 +96,9 @@ import type { SlackFile } from "../escalation/escalation.slack";
 
 const SLACK_VOICE_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 const TASK_LIST_DEDUP_TTL_MS = 60 * 1000;
+const MASS_ASSIGN_MAX_MEMBERS = 40;
 const recentTaskListEvents = new Map<string, number>();
+const recentDirectedCreateEvents = new Map<string, number>();
 
 function markTaskListEvent(channelId: string, ts: string): boolean {
   const now = Date.now();
@@ -102,6 +108,17 @@ function markTaskListEvent(channelId: string, ts: string): boolean {
   const key = `${channelId}:${ts}`;
   if (recentTaskListEvents.has(key)) return false;
   recentTaskListEvents.set(key, now);
+  return true;
+}
+
+function markDirectedCreateEvent(channelId: string, ts: string): boolean {
+  const now = Date.now();
+  for (const [key, seenAt] of recentDirectedCreateEvents) {
+    if (now - seenAt > TASK_LIST_DEDUP_TTL_MS) recentDirectedCreateEvents.delete(key);
+  }
+  const key = `${channelId}:${ts}`;
+  if (recentDirectedCreateEvents.has(key)) return false;
+  recentDirectedCreateEvents.set(key, now);
   return true;
 }
 
@@ -285,14 +302,24 @@ async function resolveProjectIdForUser(
 }
 
 async function buildAssignmentContext(userId: string) {
-  const [availableProjects, availableUsers, preferenceMap] = await Promise.all([
-    listAllProjectSummaries(),
-    prisma.user.findMany({
-      where: { isActive: true, id: { not: userId } },
-      select: { id: true, name: true, managerUserId: true }
-    }),
-    loadNameAssignmentPreferences(userId)
-  ]);
+  const [availableProjects, availableUsers, availablePods, availableVerticals, preferenceMap] =
+    await Promise.all([
+      listAllProjectSummaries(),
+      prisma.user.findMany({
+        where: { isActive: true, id: { not: userId } },
+        select: { id: true, name: true, managerUserId: true }
+      }),
+      prisma.pod.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" }
+      }),
+      prisma.vertical.findMany({
+        select: { id: true, name: true },
+        orderBy: { name: "asc" }
+      }),
+      loadNameAssignmentPreferences(userId)
+    ]);
 
   const directReportIds = new Set(
     availableUsers
@@ -303,6 +330,8 @@ async function buildAssignmentContext(userId: string) {
   return {
     availableProjects,
     availableUsers,
+    availablePods,
+    availableVerticals,
     resolutionContext: {
       uploaderId: userId,
       directReportIds,
@@ -463,7 +492,9 @@ async function ingestWorkFromText(input: {
     extracted = await extractWorkUnitsFromText(input.text, {
       kind: input.extractionKind,
       availableProjects: assignmentContext.availableProjects,
-      availableUsers: assignmentContext.availableUsers
+      availableUsers: assignmentContext.availableUsers,
+      availablePods: assignmentContext.availablePods,
+      availableVerticals: assignmentContext.availableVerticals
     });
   } catch (error) {
     const extractError = error instanceof Error ? error.message : String(error);
@@ -677,7 +708,11 @@ export async function processSlackWorkMessage(input: {
 /**
  * DM text → extract and create work units (same pipeline as voice / FE audio).
  */
-export async function processSlackDmWorkCreateMessage(input: {
+/**
+ * DM, or @Bran in a channel: create work unit(s) from an explicit ask.
+ * Supports “add a task for everyone in this channel/group”.
+ */
+export async function processSlackDirectedWorkCreateMessage(input: {
   channelId: string;
   userId: string;
   text?: string;
@@ -686,18 +721,31 @@ export async function processSlackDmWorkCreateMessage(input: {
   subtype?: string;
   threadTs?: string;
   channelType?: string;
+  eventType?: string;
 }): Promise<{ handled: boolean; reason?: string; created?: number }> {
   if (input.botId) return { handled: false, reason: "ignored_bot" };
   if (input.subtype && input.subtype !== "thread_broadcast") {
     return { handled: false, reason: "ignored_subtype" };
   }
-  if (!isSlackDmChannel(input.channelId, input.channelType)) {
-    return { handled: false, reason: "not_dm" };
-  }
 
   const text = input.text?.trim() ?? "";
   if (!text || !looksLikeSlackDmTaskCreate(text)) {
     return { handled: false, reason: "not_create" };
+  }
+
+  const isDm = isSlackDmChannel(input.channelId, input.channelType);
+  if (!isDm) {
+    const botUserId = await getSlackBotUserId();
+    const mentionedBot =
+      input.eventType === "app_mention" ||
+      Boolean(botUserId && textMentionsSlackUser(text, botUserId));
+    if (!mentionedBot) {
+      return { handled: false, reason: "channel_requires_mention" };
+    }
+  }
+
+  if (!markDirectedCreateEvent(input.channelId, input.ts)) {
+    return { handled: true, reason: "deduped" };
   }
 
   const safety = await guardSlackDirectedText({
@@ -714,7 +762,8 @@ export async function processSlackDmWorkCreateMessage(input: {
   if (!isWorkExtractionAiConfigured()) {
     await postSlackMessage(
       input.channelId,
-      "Work extraction isn’t configured right now, so I can’t create work units from this yet."
+      "Work extraction isn’t configured right now, so I can’t create work units from this yet.",
+      { threadTs: input.threadTs ?? input.ts }
     );
     return { handled: true, reason: "ai_not_configured" };
   }
@@ -723,12 +772,90 @@ export async function processSlackDmWorkCreateMessage(input: {
   if (!branUserId) {
     await postSlackMessage(
       input.channelId,
-      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can create tasks from this DM."
+      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can create tasks from Slack.",
+      { threadTs: input.threadTs ?? input.ts }
     );
     return { handled: true, reason: "unmapped_user" };
   }
 
+  const massAssign = looksLikeChannelMassAssignQuery(text);
+  if (massAssign && isDm) {
+    return processSlackUnsupportedDirectedQuery({
+      ...input,
+      reason: "mass_assign_dm"
+    });
+  }
+
+  let createText = text;
+  if (input.threadTs && input.threadTs !== input.ts) {
+    const threadContext = await fetchSlackThreadContextText(input.channelId, input.threadTs);
+    if (threadContext.trim()) {
+      createText = `${threadContext}\n\n---\nRequest: ${text}`;
+    }
+  }
+
   const botUserId = await getSlackBotUserId();
+  const replyOpts = { threadTs: input.threadTs ?? input.ts };
+
+  if (massAssign) {
+    const memberIds = await listChannelMemberIds(input.channelId);
+    const assigneeIds: string[] = [];
+    for (const slackId of memberIds) {
+      if (botUserId && slackId.toUpperCase() === botUserId.toUpperCase()) continue;
+      const mapped = await resolveBranUserIdForSlackUser(slackId);
+      if (mapped) assigneeIds.push(mapped);
+    }
+    const uniqueAssignees = [...new Set(assigneeIds)];
+
+    if (uniqueAssignees.length === 0) {
+      await postSlackMessage(
+        input.channelId,
+        "I couldn’t map anyone in this channel to an active Bran user, so I didn’t create tasks.",
+        replyOpts
+      );
+      return { handled: true, reason: "no_mapped_members", created: 0 };
+    }
+
+    if (uniqueAssignees.length > MASS_ASSIGN_MAX_MEMBERS) {
+      return processSlackUnsupportedDirectedQuery({
+        ...input,
+        reason: "mass_assign_over_cap"
+      });
+    }
+
+    const createdUnits = [];
+    for (const assigneeId of uniqueAssignees) {
+      const result = await ingestWorkFromText({
+        defaultOwnerUserId: branUserId,
+        text: createText,
+        extractionKind: "slack",
+        sourceType: "SLACK",
+        sourceId: `channel-mass:${input.channelId}:${input.ts}:${assigneeId}`,
+        preferredAssigneeUserId: assigneeId,
+        useLedger: true,
+        throwOnExtractError: false
+      });
+      createdUnits.push(...result.workUnits);
+    }
+
+    const count = createdUnits.length;
+    const titles = formatSlackVoiceCreatedUnits(createdUnits, branUserId);
+    const reply =
+      count === 0
+        ? `I tried to assign this to ${uniqueAssignees.length} channel members mapped in Bran, but didn’t create new work units (they may already exist, or it didn’t look like a concrete task).`
+        : `Created ${count} work unit${count === 1 ? "" : "s"} for ${uniqueAssignees.length} channel member${uniqueAssignees.length === 1 ? "" : "s"}:\n${titles}`;
+
+    await postSlackMessage(input.channelId, reply, replyOpts);
+    console.log("[work.slack-create] mass-assign", {
+      slackUserId: input.userId,
+      branUserId,
+      channelId: input.channelId,
+      mappedMembers: uniqueAssignees.length,
+      created: count
+    });
+    return { handled: true, created: count, reason: count > 0 ? "created_mass" : "none_created" };
+  }
+
   const mentioned = collectSlackUserMentions(text).filter((id) => {
     if (botUserId && id.toUpperCase() === botUserId.toUpperCase()) return false;
     return id.toUpperCase() !== input.userId.toUpperCase();
@@ -739,10 +866,13 @@ export async function processSlackDmWorkCreateMessage(input: {
     preferredAssigneeUserId = await resolveBranUserIdForSlackUser(mentioned[0]);
   }
 
-  const sourceId = `dm-text:${input.channelId}:${input.ts}`;
+  const sourceId = isDm
+    ? `dm-text:${input.channelId}:${input.ts}`
+    : `channel-text:${input.channelId}:${input.ts}`;
+
   const result = await ingestWorkFromText({
     defaultOwnerUserId: branUserId,
-    text,
+    text: createText,
     extractionKind: "slack",
     sourceType: "SLACK",
     sourceId,
@@ -758,16 +888,24 @@ export async function processSlackDmWorkCreateMessage(input: {
       ? "I didn’t find any new work units to create from that (they may already exist, or it didn’t look like a task). Try “add task: …” or say who it’s for."
       : `Created ${count} work unit${count === 1 ? "" : "s"}:\n${titles}`;
 
-  await postSlackMessage(input.channelId, reply, { threadTs: input.ts });
-  console.log("[work.slack-dm] created", {
+  await postSlackMessage(input.channelId, reply, replyOpts);
+  console.log("[work.slack-create] created", {
     slackUserId: input.userId,
     branUserId,
     preferredAssigneeUserId,
     sourceId,
+    isDm,
     created: count,
     skipReason: result.skipReason ?? null
   });
   return { handled: true, created: count, reason: count > 0 ? "created" : result.skipReason };
+}
+
+/** @deprecated Prefer processSlackDirectedWorkCreateMessage — kept for existing imports. */
+export async function processSlackDmWorkCreateMessage(
+  input: Parameters<typeof processSlackDirectedWorkCreateMessage>[0]
+) {
+  return processSlackDirectedWorkCreateMessage(input);
 }
 
 /**

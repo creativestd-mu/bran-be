@@ -84,12 +84,13 @@ function parseOptionalDate(value?: string | null): Date | null | undefined {
   return date;
 }
 
-async function ensureVerticalExists(verticalId: string) {
-  const vertical = await prisma.vertical.findUnique({
-    where: { id: verticalId },
-    select: { id: true }
+async function ensurePodExists(podId: string) {
+  const pod = await prisma.pod.findUnique({
+    where: { id: podId },
+    select: { id: true, isActive: true }
   });
-  if (!vertical) throw new HttpError(404, `Vertical not found: ${verticalId}`);
+  if (!pod) throw new HttpError(404, `Pod not found: ${podId}`);
+  if (!pod.isActive) throw new HttpError(400, "Pod is not active");
 }
 
 async function userCanManageProjects(roleId: string): Promise<boolean> {
@@ -139,19 +140,19 @@ export async function createTemporaryProject(input: {
   description?: string;
   objectives?: string;
   finalLink?: string;
-  verticalId: string;
+  podId: string;
   createdById?: string;
   startsAt?: string;
   endsAt?: string;
   status?: string;
 }) {
-  await ensureVerticalExists(input.verticalId);
+  await ensurePodExists(input.podId);
   return createProject({
     name: input.name,
     description: input.description,
     objectives: input.objectives,
     finalLink: input.finalLink,
-    verticalId: input.verticalId,
+    podId: input.podId,
     createdById: input.createdById,
     startsAt: parseOptionalDate(input.startsAt) ?? undefined,
     endsAt: parseOptionalDate(input.endsAt) ?? undefined,
@@ -174,22 +175,22 @@ export async function updateTemporaryProject(
     description?: string;
     objectives?: string | null;
     finalLink?: string | null;
-    verticalId?: string;
+    podId?: string;
     startsAt?: string | null;
     endsAt?: string | null;
     status?: string;
   }
 ) {
   await ensureProjectExists(id);
-  if (input.verticalId) {
-    await ensureVerticalExists(input.verticalId);
+  if (input.podId) {
+    await ensurePodExists(input.podId);
   }
   return updateProject(id, {
     name: input.name,
     description: input.description,
     objectives: input.objectives,
     finalLink: input.finalLink,
-    verticalId: input.verticalId,
+    podId: input.podId,
     startsAt: parseOptionalDate(input.startsAt),
     endsAt: parseOptionalDate(input.endsAt),
     status: input.status

@@ -60,9 +60,16 @@ const contentInclude = {
     select: {
       id: true,
       name: true,
-      verticalId: true,
+      podId: true,
       status: true,
-      vertical: verticalPreview
+      pod: {
+        select: {
+          id: true,
+          name: true,
+          verticalId: true,
+          vertical: verticalPreview
+        }
+      }
     }
   },
   nodes: {
@@ -103,7 +110,9 @@ export async function listContents(filters: {
       ...(filters.createdById ? { createdById: filters.createdById } : {}),
       ...(filters.teamId ? { teamId: filters.teamId } : {}),
       ...(filters.projectId ? { projectId: filters.projectId } : {}),
-      ...(filters.verticalId ? { project: { verticalId: filters.verticalId } } : {})
+      ...(filters.verticalId
+        ? { project: { pod: { verticalId: filters.verticalId } } }
+        : {})
     },
     include: contentInclude,
     orderBy: { createdAt: "desc" }
@@ -410,13 +419,19 @@ export async function getTeamForContentLink(teamId: string) {
 export async function getProjectForContentLink(projectId: string) {
   return prisma.project.findUnique({
     where: { id: projectId },
-    select: { id: true, name: true, verticalId: true, status: true }
+    select: {
+      id: true,
+      name: true,
+      podId: true,
+      status: true,
+      pod: { select: { id: true, verticalId: true, isActive: true } }
+    }
   });
 }
 
 /**
  * Resolve the vertical owner ("head of Fiction" / "head of Non Fiction")
- * for a piece of content. Walks Content -> Project -> Vertical -> ownerUserId.
+ * for a piece of content. Walks Content -> Project -> Pod -> Vertical -> ownerUserId.
  *
  * Returns null when the vertical has no assigned owner yet (notifications
  * gracefully no-op in that case).
@@ -431,13 +446,19 @@ export async function getVerticalOwnerForContent(contentId: string) {
         select: {
           id: true,
           name: true,
-          vertical: {
+          pod: {
             select: {
               id: true,
               name: true,
-              slug: true,
-              ownerUserId: true,
-              owner: { select: { id: true, name: true, email: true, isActive: true } }
+              vertical: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  ownerUserId: true,
+                  owner: { select: { id: true, name: true, email: true, isActive: true } }
+                }
+              }
             }
           }
         }
@@ -445,5 +466,13 @@ export async function getVerticalOwnerForContent(contentId: string) {
     }
   });
   if (!content) return null;
-  return content;
+  return {
+    id: content.id,
+    title: content.title,
+    project: {
+      id: content.project.id,
+      name: content.project.name,
+      vertical: content.project.pod.vertical
+    }
+  };
 }

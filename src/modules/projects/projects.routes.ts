@@ -27,7 +27,7 @@ const createProjectSchema = z.object({
   description: z.string().optional(),
   objectives: z.string().optional(),
   finalLink: z.string().url().optional(),
-  verticalId: z.string().uuid(),
+  podId: z.string().uuid(),
   startsAt: z.string().datetime().optional(),
   endsAt: z.string().datetime().optional(),
   status: z.string().optional()
@@ -66,7 +66,7 @@ const updateProjectSchema = z.object({
   description: z.string().optional(),
   objectives: z.string().nullable().optional(),
   finalLink: z.string().url().nullable().optional(),
-  verticalId: z.string().uuid().optional(),
+  podId: z.string().uuid().optional(),
   startsAt: z.string().datetime().nullable().optional(),
   endsAt: z.string().datetime().nullable().optional(),
   status: z.string().optional()

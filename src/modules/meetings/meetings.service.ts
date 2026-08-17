@@ -6,8 +6,10 @@ import { HttpError } from "../../utils/httpError";
 import { createWorkUnitsFromRecording } from "../work/work.service";
 import { archiveVoiceRecording } from "../voice-recording/voice-recording.service";
 import { translateAudioWithSarvam } from "../ai/ai.sarvam";
+import { buildTranscriptionPrompt } from "../ai/ai.transcription-context";
 import { updateVoiceRecording } from "../voice-recording/voice-recording.repository";
 import { invalidateBrainGraphCache } from "../graph/graph.service";
+import { encryptSecret } from "../gmail/gmail.crypto";
 import {
   buildCalendarAuthorizationUrl,
   buildCalendarOAuthState,
@@ -92,6 +94,7 @@ export async function handleCalendarOAuthCallback(req: Request, res: Response): 
       userId,
       recallCalendarId: recallCalendar.id,
       oauthEmail: email ?? recallCalendar.oauth_email ?? null,
+      refreshToken: encryptSecret(refreshToken),
       status: "CONNECTED"
     });
 
@@ -117,7 +120,8 @@ export async function getCalendarStatus(userId: string) {
     connected: connection.status === "CONNECTED",
     status: connection.status,
     oauthEmail: connection.oauthEmail,
-    connectedAt: connection.connectedAt
+    connectedAt: connection.connectedAt,
+    bookingReady: Boolean(connection.refreshToken && connection.status === "CONNECTED")
   };
 }
 
@@ -135,7 +139,8 @@ export async function disconnectCalendar(userId: string) {
 
   await updateCalendarConnection(userId, {
     status: "DISCONNECTED",
-    disconnectedAt: new Date()
+    disconnectedAt: new Date(),
+    refreshToken: null
   });
 
   return { disconnected: true };
@@ -542,11 +547,14 @@ export async function processMeetingRecording(recallBotId: string) {
   });
 
   try {
+    const prompt = await buildTranscriptionPrompt(
+      "Meeting transcript with speaker names when available."
+    );
     const sarvam = await translateAudioWithSarvam({
       fileBuffer: audio.buffer,
       originalname: audio.filename,
       mimetype: audio.mimeType,
-      prompt: "Meeting transcript with speaker names when available."
+      prompt
     });
 
     const updatedRecording = await updateVoiceRecording(recording.id, {

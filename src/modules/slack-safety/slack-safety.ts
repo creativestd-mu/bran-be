@@ -1,9 +1,16 @@
 import { parseAttendanceMessage } from "../attendance/attendance.parser";
 import { looksLikeCompetitorQuery } from "../competitor-content/competitor-content.slack";
 import { looksLikeAddIdeaQuery, looksLikeListIdeasQuery } from "../ideation/ideation.slack";
+import { looksLikeCalendarQuery } from "../meetings/meetings.booking.slack";
+import { looksLikePodQuery } from "../pods/pods.slack";
 import { looksLikeSentimentQuery } from "../sentiment/sentiment.slack";
 import { callWorkLlm, isWorkExtractionAiConfigured } from "../work/work.extraction";
-import { looksLikeTaskListQuery, stripSlackUserMentions } from "../work/work.slack-tasks";
+import {
+  looksLikeCreateWorkQuery,
+  looksLikeChannelMassAssignQuery,
+  looksLikeTaskListQuery,
+  stripSlackUserMentions
+} from "../work/work.slack-tasks";
 import { isAcceptAsIsConfirmReply } from "../work/work.slack-voice";
 
 export type SlackSafetyCategory =
@@ -97,6 +104,18 @@ export function looksLikeSafeOperationalQuery(text: string): boolean {
     return true;
   }
   if (looksLikeCompetitorQuery(trimmed) && trimmed.length <= SAFE_OPERATIONAL_MAX_CHARS) {
+    return true;
+  }
+  if (looksLikePodQuery(trimmed) && trimmed.length <= SAFE_OPERATIONAL_MAX_CHARS) {
+    return true;
+  }
+  if (looksLikeCalendarQuery(trimmed) && trimmed.length <= SAFE_OPERATIONAL_MAX_CHARS) {
+    return true;
+  }
+  if (
+    (looksLikeCreateWorkQuery(trimmed) || looksLikeChannelMassAssignQuery(trimmed)) &&
+    trimmed.length <= SAFE_OPERATIONAL_MAX_CHARS
+  ) {
     return true;
   }
   if (looksLikeTaskListQuery(trimmed) && trimmed.length <= SAFE_OPERATIONAL_MAX_CHARS) {

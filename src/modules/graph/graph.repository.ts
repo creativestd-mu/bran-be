@@ -26,9 +26,28 @@ export async function loadProjects() {
       id: true,
       name: true,
       status: true,
+      podId: true,
       members: {
         where: { isActive: true },
         select: { userId: true }
+      }
+    },
+    orderBy: { name: "asc" },
+    take: 100
+  });
+}
+
+export async function loadPods() {
+  return prisma.pod.findMany({
+    where: { isActive: true },
+    select: {
+      id: true,
+      name: true,
+      headUserId: true,
+      verticalId: true,
+      socialAccounts: {
+        where: { isActive: true },
+        select: { id: true, kind: true, platform: true, handle: true }
       }
     },
     orderBy: { name: "asc" },

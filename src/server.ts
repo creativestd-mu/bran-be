@@ -8,6 +8,7 @@ import { startEventsDetectCron } from "./modules/events/events.cron";
 import { startWorkIngestCron } from "./modules/work/work.ingest.cron";
 import { startMeltwaterEarnedCron } from "./modules/meltwater-earned/meltwater-earned.cron";
 import { startCompetitorContentCron } from "./modules/competitor-content/competitor-content.cron";
+import { startPodsSocialCron } from "./modules/pods/pods.cron";
 
 app.listen(env.port, () => {
   console.log(`Server running on http://localhost:${env.port}`);
@@ -19,4 +20,5 @@ app.listen(env.port, () => {
   startWorkIngestCron();
   startMeltwaterEarnedCron();
   startCompetitorContentCron();
+  startPodsSocialCron();
 });

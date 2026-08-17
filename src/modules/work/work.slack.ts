@@ -163,6 +163,20 @@ async function fetchThreadReplies(channelId: string, threadTs: string): Promise<
   return data.messages ?? [];
 }
 
+/** Parent + replies for directed @Bran create ("read the quoted article"). */
+export async function fetchSlackThreadContextText(
+  channelId: string,
+  threadTs: string
+): Promise<string> {
+  try {
+    const messages = await fetchThreadReplies(channelId, threadTs);
+    return buildThreadText(messages);
+  } catch (error) {
+    console.warn("[work.slack] failed to load thread context", { channelId, threadTs, error });
+    return "";
+  }
+}
+
 function shouldSkipSlackMessage(message: SlackMessage): string | null {
   if (message.bot_id) return "bot_message";
   if (message.subtype && message.subtype !== "thread_broadcast") return `subtype_${message.subtype}`;

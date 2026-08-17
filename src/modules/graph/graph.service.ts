@@ -12,6 +12,7 @@ import {
   loadGraphEscalations,
   loadGraphMeetings,
   loadGraphWorkUnits,
+  loadPods,
   loadProjects,
   loadViewerIdeas
 } from "./graph.repository";
@@ -46,9 +47,10 @@ async function buildBrainGraph(
   const to = parseOptionalDate(query.to);
   const includeEscalations = ATTENDANCE_ADMIN_ROLES.has(roleName);
 
-  const [users, projects, workUnits, { ideas, matches }, escalations] = await Promise.all([
+  const [users, projects, pods, workUnits, { ideas, matches }, escalations] = await Promise.all([
     loadActiveUsers(),
     loadProjects(),
+    loadPods(),
     loadGraphWorkUnits({
       viewerUserId,
       roleName,
@@ -78,6 +80,7 @@ async function buildBrainGraph(
   const structural = buildStructuralGraph({
     users,
     projects,
+    pods,
     meetings,
     workUnits,
     ideas,

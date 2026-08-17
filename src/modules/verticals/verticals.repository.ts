@@ -27,7 +27,7 @@ const teamInclude = {
 const projectInclude = {
   _count: { select: { members: true } },
   createdBy: { select: userMiniSelect },
-  phases: { orderBy: { orderIndex: "asc" } },
+  phases: { orderBy: { orderIndex: "asc" as const } },
   members: {
     include: {
       user: { select: userMiniSelect },
@@ -36,12 +36,31 @@ const projectInclude = {
   }
 } as const;
 
+const podInclude = {
+  head: { select: userMiniSelect },
+  projects: { include: projectInclude, orderBy: { name: "asc" as const } },
+  socialAccounts: {
+    select: {
+      id: true,
+      kind: true,
+      platform: true,
+      handle: true,
+      url: true,
+      isActive: true,
+      lastSyncedAt: true,
+      lastSyncStatus: true
+    },
+    orderBy: [{ platform: "asc" as const }, { handle: "asc" as const }]
+  },
+  _count: { select: { projects: true, socialAccounts: true } }
+};
+
 const verticalInclude = {
   owner: { select: ownerSelect },
-  teams: { include: teamInclude, orderBy: { createdAt: "desc" } },
-  projects: { include: projectInclude, orderBy: { createdAt: "desc" } },
-  _count: { select: { teams: true, projects: true } }
-} as const;
+  teams: { include: teamInclude, orderBy: { createdAt: "desc" as const } },
+  pods: { include: podInclude, orderBy: { name: "asc" as const } },
+  _count: { select: { teams: true, pods: true } }
+};
 
 export async function listVerticals() {
   return prisma.vertical.findMany({

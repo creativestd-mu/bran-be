@@ -17,6 +17,7 @@ import { aiRouter } from "../../../modules/ai/ai.routes";
 import { socialApiRouter } from "../../../modules/social-api/social-api.routes";
 import { teamsRouter } from "../../../modules/teams/teams.routes";
 import { projectsRouter } from "../../../modules/projects/projects.routes";
+import { podsRouter } from "../../../modules/pods/pods.routes";
 import { verticalsRouter } from "../../../modules/verticals/verticals.routes";
 import { contentRouter } from "../../../modules/content/content.routes";
 import { notificationsRouter } from "../../../modules/notifications/notifications.routes";
@@ -35,6 +36,8 @@ import { eventsRouter } from "../../../modules/events/events.routes";
 import { attendanceRouter } from "../../../modules/attendance/attendance.routes";
 import { graphRouter } from "../../../modules/graph/graph.routes";
 import { prereadRouter } from "../../../modules/preread/preread.routes";
+import { unsupportedSlackRouter } from "../../../modules/slack-unsupported/slack-unsupported.routes";
+import { transcriptionKeywordsRouter } from "../../../modules/transcription-keywords/transcription-keywords.routes";
 
 const v1Router = Router();
 
@@ -51,6 +54,7 @@ v1Router.use("/ai", aiRouter);
 v1Router.use("/social-api", socialApiRouter);
 v1Router.use("/verticals", verticalsRouter);
 v1Router.use("/teams", teamsRouter);
+v1Router.use("/pods", podsRouter);
 v1Router.use("/projects", projectsRouter);
 v1Router.use("/contents", contentRouter);
 v1Router.use("/notifications", notificationsRouter);
@@ -70,6 +74,8 @@ v1Router.use("/events", eventsRouter);
 v1Router.use("/attendance", attendanceRouter);
 v1Router.use("/graph", graphRouter);
 v1Router.use("/prereads", prereadRouter);
+v1Router.use("/unsupported-slack-queries", unsupportedSlackRouter);
+v1Router.use("/transcription-keywords", transcriptionKeywordsRouter);
 
 // Existing Meltwater-based routes
 v1Router.use("/instagram", instagramRouter);

@@ -102,6 +102,46 @@ Sentiment module (JWT, all onboarded roles — frontend `/sentiment`):
 - `POST /en/v1/sentiment/sync` — refresh from Meltwater
 - Slack: DM Bran or `@Bran sentiment this week` / `brand mentions last month` (Slack email must match an active Bran user)
 
+Pods (JWT — owned IPs + inspirations; Projects require a Pod):
+
+> **Migration warning:** `20260816120000_pods_and_social_ingestion` **deletes all existing Content and Project rows** (dummy data reset), then introduces Pods and makes `Project.podId` required.
+
+- `POST /en/v1/pods` — create pod (`name`, `verticalId`, `headUserId`) — requires `manage_pods`
+- `GET /en/v1/pods` — list pods (optional `verticalId`, `isActive`)
+- `GET /en/v1/pods/:id` — pod detail with accounts + projects
+- `PUT /en/v1/pods/:id` / `DELETE /en/v1/pods/:id` — update / deactivate
+- `POST /en/v1/pods/:id/accounts` — add owned IP or inspiration (`kind`, `platform`, `handle`, optional `url`)
+  - `kind`: `OWNED_IP` | `INSPIRATION`
+  - `platform`: `YOUTUBE` | `X` | `INSTAGRAM` | `LINKEDIN`
+- `GET /en/v1/pods/:id/accounts` / `GET /en/v1/pods/:id/posts`
+- `PUT|DELETE /en/v1/pods/accounts/:accountId`
+- `POST /en/v1/pods/accounts/:accountId/sync` — Apify scrape for that account
+- `POST /en/v1/projects` now requires `podId` (not `verticalId`; vertical is derived via the pod)
+- `GET /api/cron/pods-social` (Bearer `CRON_SECRET`) — sync all active pod accounts
+- Slack: DM Bran or `@Bran pod "Growth" top IP posts this week` / `what is inspiring pod Fiction on Instagram`
+
+Slack task create + unsupported asks:
+- DM Bran or `@Bran add task: …` / `@Bran assign <@U…>: …` creates work units
+- In a channel: `@Bran add a task for everyone here: …` assigns one unit per mapped channel member (cap 40)
+- Thread replies include parent thread text (e.g. “read the quoted article”)
+- Directed asks Bran cannot handle get a clear Slack reply and are stored for review:
+  - `GET /api/unsupported-slack-queries` / `GET /:lang/v1/unsupported-slack-queries` (admin / CoS)
+  - `PATCH …/:id/status` with `{ "status": "REVIEWED" | "DISMISSED" | "NEW" }`
+
+Slack calendar booking (requires Gmail + Calendar connected; reconnect Calendar after deploy for write/freebusy scopes):
+- `@Bran book a call with Dhananjay` / `schedule a meeting with @Name about X`
+  - Offers a few free weekday slots 12:00–19:00 IST; click a button to book
+  - Always creates a Google Meet link and invites the other person
+  - Title defaults to `Your Name <> Their Name`, or uses topic context when present
+- `@Bran what's on my calendar today` / `my meetings today` — agenda from Google Calendar
+
+Transcription keywords (admin / CoS — improves Sarvam voice spelling):
+- Every STT call now prompts Sarvam with active people, vertical, pod, and project names, plus admin keywords
+- `GET /api/transcription-keywords` / `GET /:lang/v1/transcription-keywords` — list (`?isActive=true|false`)
+- `POST /api/transcription-keywords` — `{ "phrase": "Masters' Union", "notes": "optional" }`
+- `PATCH /api/transcription-keywords/:id` — update phrase/notes/`isActive`
+- `DELETE /api/transcription-keywords/:id` — hard delete
+
 ## Environment Variables
 
 Copy and configure:
@@ -122,6 +162,13 @@ Required:
 - `MELTWATER_ACCOUNT_IDS_FACEBOOK` - owned Facebook account IDs (comma-separated)
 - `MELTWATER_SEARCH_IDS` - saved Explore/Listening search IDs for earned analytics
 - `MELTWATER_EARNED_TIMEZONE` - timezone for daily buckets (default `Asia/Kolkata`)
+
+Pod social ingestion (Apify):
+
+- `APIFY_TOKEN` - Apify API token
+- `APIFY_POD_INSTAGRAM_ACTOR_ID` / `APIFY_POD_YOUTUBE_ACTOR_ID` / `APIFY_POD_X_ACTOR_ID` / `APIFY_POD_LINKEDIN_ACTOR_ID`
+- `APIFY_POD_RESULTS_LIMIT` - posts per account sync (default `25`)
+- `PODS_SOCIAL_CRON_ENABLED` - in-process daily 08:00 IST sync (default `true`)
 
 ## Local Setup
 
@@ -163,5 +210,5 @@ npm run dev
 
 ## Notes
 
-- No authentication/authorization is enabled by design (per current requirement).
+- JWT auth + RBAC permissions gate most write APIs.
 - Language validation is enforced via `SUPPORTED_LANGUAGES`.

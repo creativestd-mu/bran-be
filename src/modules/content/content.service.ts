@@ -224,7 +224,7 @@ async function assertTeamProjectPair(teamId: string, projectId: string) {
   if (team.isActive === false) {
     throw new HttpError(400, "Team is not active");
   }
-  if (team.verticalId !== project.verticalId) {
+  if (team.verticalId !== project.pod?.verticalId) {
     throw new HttpError(
       400,
       "Team and Project must belong to the same vertical"

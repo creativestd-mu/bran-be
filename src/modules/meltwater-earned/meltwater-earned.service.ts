@@ -163,20 +163,28 @@ export async function syncEarnedMentions(input: {
   };
 }
 
+function readSearchFilter(searchId?: string): { searchId?: string; searchIds?: string[] } {
+  if (searchId) {
+    return { searchId };
+  }
+  return { searchIds: env.meltwaterSearchIds };
+}
+
 export async function getEarnedDaily(input: {
   from?: string;
   to?: string;
   searchId?: string;
 }) {
   const timezone = env.meltwaterEarnedTimezone;
+  const searchFilter = readSearchFilter(input.searchId);
   const items = await listEarnedDaily({
-    searchId: input.searchId,
+    ...searchFilter,
     from: input.from ? toDateKey(input.from) : undefined,
     to: input.to ? toDateKey(input.to) : undefined,
     timezone
   });
   const totals = await aggregateEarnedDaily({
-    searchId: input.searchId,
+    ...searchFilter,
     from: input.from ? toDateKey(input.from) : undefined,
     to: input.to ? toDateKey(input.to) : undefined,
     timezone
@@ -197,7 +205,7 @@ export async function getEarnedAggregate(input: {
 }) {
   const timezone = env.meltwaterEarnedTimezone;
   const totals = await aggregateEarnedDaily({
-    searchId: input.searchId,
+    ...readSearchFilter(input.searchId),
     from: input.from ? toDateKey(input.from) : undefined,
     to: input.to ? toDateKey(input.to) : undefined,
     timezone

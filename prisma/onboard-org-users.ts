@@ -49,6 +49,7 @@ const MANAGER_PERMISSIONS = [
   "manage_social_accounts",
   "manage_teams",
   "manage_projects",
+  "manage_pods",
   "manage_content",
   "approve_resources",
   "manage_ideation",

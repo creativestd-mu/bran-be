@@ -18,7 +18,16 @@ type ProjectRow = {
   id: string;
   name: string;
   status: string;
+  podId?: string | null;
   members: Array<{ userId: string }>;
+};
+
+type PodRow = {
+  id: string;
+  name: string;
+  headUserId: string;
+  verticalId: string;
+  socialAccounts: Array<{ id: string; kind: string; platform: string; handle: string }>;
 };
 
 type MeetingRow = {
@@ -136,6 +145,7 @@ function pushEdge(
 export function buildStructuralGraph(input: {
   users: UserRow[];
   projects: ProjectRow[];
+  pods?: PodRow[];
   meetings: MeetingRow[];
   workUnits: WorkUnitRow[];
   ideas: IdeaRow[];
@@ -164,8 +174,25 @@ export function buildStructuralGraph(input: {
     pushEdge(edges, seenEdges, nodeId("member", user.id), managerNode, "reports_to");
   }
 
+  for (const pod of input.pods ?? []) {
+    pushNode(nodeMap, "pod", pod.id, pod.name, {
+      verticalId: pod.verticalId,
+      accountCount: pod.socialAccounts.length
+    });
+    const headNode = nodeId("member", pod.headUserId);
+    if (nodeMap.has(headNode)) {
+      pushEdge(edges, seenEdges, nodeId("pod", pod.id), headNode, "headed_by");
+    }
+  }
+
   for (const project of input.projects) {
     pushNode(nodeMap, "project", project.id, project.name, { status: project.status });
+    if (project.podId) {
+      const podNode = nodeId("pod", project.podId);
+      if (nodeMap.has(podNode)) {
+        pushEdge(edges, seenEdges, nodeId("project", project.id), podNode, "belongs_to");
+      }
+    }
     for (const member of project.members) {
       const memberNode = nodeId("member", member.userId);
       if (!nodeMap.has(memberNode)) continue;

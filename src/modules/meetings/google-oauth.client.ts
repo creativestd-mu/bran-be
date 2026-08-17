@@ -88,3 +88,9 @@ export async function exchangeCalendarAuthCode(code: string): Promise<{
     email
   };
 }
+
+export function createCalendarOAuthClient(refreshToken: string): OAuth2Client {
+  const client = getOAuthClient();
+  client.setCredentials({ refresh_token: refreshToken });
+  return client;
+}

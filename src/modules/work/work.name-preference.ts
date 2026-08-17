@@ -76,7 +76,7 @@ export function resolveUserIdFromName(
   return candidates[0].id;
 }
 
-function findNameCandidates(
+export function findNameCandidates(
   normTarget: string,
   users: Array<{ id: string; name: string }>
 ): Array<{ id: string; name: string }> {

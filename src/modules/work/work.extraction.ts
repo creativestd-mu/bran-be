@@ -178,6 +178,7 @@ function buildExtractionSystemPrompt(options: {
   kind: WorkExtractionTextKind;
   projectHint: string;
   teamHint: string;
+  orgNameHint: string;
 }): string {
   const kindLabel =
     options.kind === "email"
@@ -201,6 +202,7 @@ function buildExtractionSystemPrompt(options: {
     "Rules: one input may contain MULTIPLE work units; status must be OPEN unless clearly finished; " +
     options.projectHint +
     "projectName must be null unless clearly mentioned; never invent a project name; " +
+    options.orgNameHint +
     options.teamHint +
     slackMentionHint +
     "assigneeName at the work unit level means the whole task is for that person; assigneeName on a step means only that step is for them; set to null if unclear; only use exact names from the team members list; " +
@@ -281,11 +283,15 @@ export async function extractWorkUnitsFromText(
     now?: Date;
     availableProjects?: Array<{ id: string; name: string }>;
     availableUsers?: Array<{ id: string; name: string }>;
+    availablePods?: Array<{ id: string; name: string }>;
+    availableVerticals?: Array<{ id: string; name: string }>;
   }
 ): Promise<ExtractedWorkUnit[]> {
   const now = options.now ?? new Date();
   const availableProjects = options.availableProjects ?? [];
   const availableUsers = options.availableUsers ?? [];
+  const availablePods = options.availablePods ?? [];
+  const availableVerticals = options.availableVerticals ?? [];
 
   const projectHint =
     availableProjects.length > 0
@@ -301,10 +307,23 @@ export async function extractWorkUnitsFromText(
           .join(", ")}. `
       : "";
 
+  const orgParts: string[] = [];
+  if (availableVerticals.length > 0) {
+    orgParts.push(`verticals: ${availableVerticals.map((v) => v.name).join(", ")}`);
+  }
+  if (availablePods.length > 0) {
+    orgParts.push(`pods: ${availablePods.map((p) => p.name).join(", ")}`);
+  }
+  const orgNameHint =
+    orgParts.length > 0
+      ? `Prefer these exact org spellings in title/context when mentioned (${orgParts.join("; ")}). `
+      : "";
+
   const systemPrompt = buildExtractionSystemPrompt({
     kind: options.kind,
     projectHint,
-    teamHint
+    teamHint,
+    orgNameHint
   });
 
   const label =
@@ -318,7 +337,9 @@ export async function extractWorkUnitsFromText(
     textChars: text.length,
     textPreview: previewWorkText(text),
     teamCount: availableUsers.length,
-    projectCount: availableProjects.length
+    projectCount: availableProjects.length,
+    podCount: availablePods.length,
+    verticalCount: availableVerticals.length
   });
 
   const raw = await callLlm(systemPrompt, userPrompt);
@@ -343,12 +364,16 @@ export async function extractWorkUnitsFromTranscript(
     now?: Date;
     availableProjects?: Array<{ id: string; name: string }>;
     availableUsers?: Array<{ id: string; name: string }>;
+    availablePods?: Array<{ id: string; name: string }>;
+    availableVerticals?: Array<{ id: string; name: string }>;
   }
 ): Promise<ExtractedWorkUnit[]> {
   return extractWorkUnitsFromText(transcript, {
     kind: "transcript",
     now: options?.now,
     availableProjects: options?.availableProjects,
-    availableUsers: options?.availableUsers
+    availableUsers: options?.availableUsers,
+    availablePods: options?.availablePods,
+    availableVerticals: options?.availableVerticals
   });
 }

@@ -14,7 +14,7 @@ const UNSUPPORTED_DEDUP_TTL_MS = 60 * 1000;
 const recentUnsupportedEvents = new Map<string, number>();
 
 const CAPABILITIES_HINT =
-  "I can help with: listing/creating tasks (DM or @Bran), assigning a task to everyone in a channel, booking a call (calendar + Gmail connected), today’s calendar, attendance, sentiment, competitors, pods, and private ideas (DM).";
+  "I can help with: listing/creating tasks (DM or @Bran), assigning a task to everyone in a channel, booking a call (Calendar connected), today’s calendar, attendance, sentiment, competitors, pods, and private ideas (DM).";
 
 function markUnsupportedEvent(channelId: string, ts: string): boolean {
   const now = Date.now();

@@ -628,7 +628,7 @@ export async function slackInteractionsHandler(
     const action = payload.actions?.[0];
     if (!action?.action_id || !payload.user?.id) return;
 
-    if (action.action_id === SLACK_CALENDAR_BOOK_SLOT_ACTION) {
+    if (action.action_id.startsWith(SLACK_CALENDAR_BOOK_SLOT_ACTION)) {
       if (!action.value) return;
       void processSlackCalendarBookSlotAction({
         slackUserId: payload.user.id,
@@ -640,7 +640,7 @@ export async function slackInteractionsHandler(
       return;
     }
 
-    if (action.action_id === SLACK_CALENDAR_PICK_PERSON_ACTION) {
+    if (action.action_id.startsWith(SLACK_CALENDAR_PICK_PERSON_ACTION)) {
       if (!action.value) return;
       void processSlackCalendarPickPersonAction({
         slackUserId: payload.user.id,

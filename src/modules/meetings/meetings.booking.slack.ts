@@ -9,7 +9,6 @@ import {
   respondToSlackResponseUrl
 } from "../attendance/attendance.slack";
 import { decryptSecret } from "../gmail/gmail.crypto";
-import { findGmailConnectionByUserId } from "../gmail/gmail.repository";
 import {
   findNameCandidates,
   loadNameAssignmentPreferences,
@@ -135,28 +134,15 @@ async function assertRequesterBookingReady(userId: string): Promise<
   | { ok: true; refreshToken: string; oauthEmail: string | null }
   | { ok: false; message: string }
 > {
-  const [calendar, gmail] = await Promise.all([
-    loadDecryptedCalendarToken(userId),
-    findGmailConnectionByUserId(userId)
-  ]);
-
-  const gmailReady = Boolean(gmail && gmail.status === "CONNECTED");
-  if (!calendar && !gmailReady) {
-    return {
-      ok: false,
-      message: `Connect *Google Calendar* and *Gmail* in Bran first, then reconnect Calendar so booking scopes are granted:\n${meetingsAppUrl()}`
-    };
-  }
+  const calendar = await loadDecryptedCalendarToken(userId);
   if (!calendar) {
     return {
       ok: false,
-      message: `Connect (or reconnect) *Google Calendar* in Bran to book calls — we need write + freebusy access:\n${meetingsAppUrl()}`
-    };
-  }
-  if (!gmailReady) {
-    return {
-      ok: false,
-      message: `Connect *Gmail* in Bran as well, then ask me again:\n${meetingsAppUrl()}`
+      message: [
+        "Connect (or *reconnect*) *Google Calendar* in Bran to book calls.",
+        "We need write + freebusy access — reconnect even if Calendar already looks connected:",
+        meetingsAppUrl()
+      ].join("\n")
     };
   }
   return { ok: true, refreshToken: calendar.refreshToken, oauthEmail: calendar.oauthEmail };
@@ -316,7 +302,8 @@ function buildSlotBlocks(input: {
       block_id: "bran_calendar_slots",
       elements: input.slots.map((slot, index) => ({
         type: "button",
-        action_id: SLACK_CALENDAR_BOOK_SLOT_ACTION,
+        // Slack requires unique action_ids within the same actions block.
+        action_id: `${SLACK_CALENDAR_BOOK_SLOT_ACTION}_${index}`,
         text: { type: "plain_text", text: slot.label.slice(0, 75), emoji: false },
         value: input.tokens[index]
       }))
@@ -364,7 +351,11 @@ async function offerSlotsForTarget(input: {
     console.error("[calendar.booking] freebusy failed:", error);
     await postSlackMessage(
       input.channelId,
-      "I couldn’t check calendars right now. Reconnect Google Calendar in Bran and try again.",
+      [
+        "I couldn’t check calendars right now.",
+        "Reconnect *Google Calendar* in Bran (so freebusy + event create scopes are granted), then try again:",
+        meetingsAppUrl()
+      ].join("\n"),
       { threadTs: input.threadTs ?? input.ts }
     );
     return { handled: true, reason: "freebusy_failed" };
@@ -443,27 +434,57 @@ export async function processSlackCalendarMessage(input: {
   }
 
   const replyOpts = { threadTs: input.threadTs ?? input.ts };
+
+  try {
+    return await processSlackCalendarMessageInner({
+      ...input,
+      text,
+      replyOpts
+    });
+  } catch (error) {
+    console.error("[calendar.booking] unhandled error:", error);
+    try {
+      await postSlackMessage(
+        input.channelId,
+        "Something went wrong while handling that calendar request. Reconnect Google Calendar in Bran if booking keeps failing, then try again.",
+        replyOpts
+      );
+    } catch (postError) {
+      console.error("[calendar.booking] failed to post error reply:", postError);
+    }
+    return { handled: true, reason: "calendar_error" };
+  }
+}
+
+async function processSlackCalendarMessageInner(input: {
+  channelId: string;
+  userId: string;
+  text: string;
+  ts: string;
+  threadTs?: string;
+  replyOpts: { threadTs: string };
+}): Promise<{ handled: boolean; reason?: string }> {
   const branUserId = await resolveBranUserIdForSlackUser(input.userId);
   if (!branUserId) {
     await postSlackMessage(
       input.channelId,
       "I couldn’t match your Slack account to a Bran user.",
-      replyOpts
+      input.replyOpts
     );
     return { handled: true, reason: "unmapped_user" };
   }
 
-  if (looksLikeCalendarAgendaQuery(text)) {
+  if (looksLikeCalendarAgendaQuery(input.text)) {
     return processAgendaToday({
       channelId: input.channelId,
       branUserId,
-      replyOpts
+      replyOpts: input.replyOpts
     });
   }
 
   const ready = await assertRequesterBookingReady(branUserId);
   if (!ready.ok) {
-    await postSlackMessage(input.channelId, ready.message, replyOpts);
+    await postSlackMessage(input.channelId, ready.message, input.replyOpts);
     return { handled: true, reason: "not_connected" };
   }
 
@@ -472,36 +493,36 @@ export async function processSlackCalendarMessage(input: {
     select: { id: true, name: true, email: true }
   });
   if (!requester) {
-    await postSlackMessage(input.channelId, "Your Bran account wasn’t found.", replyOpts);
+    await postSlackMessage(input.channelId, "Your Bran account wasn’t found.", input.replyOpts);
     return { handled: true, reason: "missing_requester" };
   }
 
   const target = await resolveBookingTarget({
-    text,
+    text: input.text,
     requesterUserId: branUserId,
     requesterSlackId: input.userId
   });
 
   if (target.kind === "missing") {
-    await postSlackMessage(input.channelId, target.message, replyOpts);
+    await postSlackMessage(input.channelId, target.message, input.replyOpts);
     return { handled: true, reason: "target_missing" };
   }
 
   if (target.kind === "ambiguous") {
-    const elements = target.users.map((user) => ({
+    const elements = target.users.map((user, index) => ({
       type: "button" as const,
-      action_id: SLACK_CALENDAR_PICK_PERSON_ACTION,
+      action_id: `${SLACK_CALENDAR_PICK_PERSON_ACTION}_${index}`,
       text: { type: "plain_text" as const, text: user.name.slice(0, 75), emoji: false },
       value: signToken({
         purpose: PERSON_TOKEN_PURPOSE,
         requesterUserId: branUserId,
         targetUserId: user.id,
-        sourceText: text
+        sourceText: input.text
       } satisfies PersonTokenPayload)
     }));
 
     await postSlackMessage(input.channelId, "Which person did you mean?", {
-      ...replyOpts,
+      ...input.replyOpts,
       blocks: [
         {
           type: "section",
@@ -521,7 +542,7 @@ export async function processSlackCalendarMessage(input: {
     requesterName: requester.name,
     requesterRefreshToken: ready.refreshToken,
     target: target.user,
-    sourceText: text
+    sourceText: input.text
   });
 }
 

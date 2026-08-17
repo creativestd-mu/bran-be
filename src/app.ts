@@ -115,7 +115,7 @@ app.get("/", (_req, res) => {
       transcriptionKeywords:
         "/api/transcription-keywords (admin/CoS) — STT spelling hints for Sarvam",
       slackCalendarBook:
-        "DM or @Bran: book a call (Gmail+Calendar connected) / what's on my calendar today",
+        "DM or @Bran: book a call (Calendar connected) / what's on my calendar today",
       slackIdeas: "DM only: add ideas by text/voice and list your own ideas",
       slackSafety: "Blocks inappropriate Slack prompts to Bran (text + voice)"
     }

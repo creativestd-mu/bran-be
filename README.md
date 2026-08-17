@@ -128,7 +128,7 @@ Slack task create + unsupported asks:
   - `GET /api/unsupported-slack-queries` / `GET /:lang/v1/unsupported-slack-queries` (admin / CoS)
   - `PATCH …/:id/status` with `{ "status": "REVIEWED" | "DISMISSED" | "NEW" }`
 
-Slack calendar booking (requires Gmail + Calendar connected; reconnect Calendar after deploy for write/freebusy scopes):
+Slack calendar booking (requires Calendar connected with write/freebusy scopes — reconnect Calendar after deploy):
 - `@Bran book a call with Dhananjay` / `schedule a meeting with @Name about X`
   - Offers a few free weekday slots 12:00–19:00 IST; click a button to book
   - Always creates a Google Meet link and invites the other person

@@ -28,7 +28,7 @@ import {
   REVIEW_RESPONSE_CALLBACK_ID
 } from "./review.constants";
 import type { ReviewWithUsers } from "./review.repository";
-import { listPendingIncoming } from "./review.repository";
+import { listPendingIncoming, listReviewsForUser } from "./review.repository";
 
 function truncate(text: string, max: number): string {
   const trimmed = text.trim();
@@ -368,11 +368,130 @@ export async function sendPendingReviewsReminderDm(input: {
 }
 
 const REVIEW_QUERY_RE =
-  /\b(pending reviews?|my reviews?|review requests?|reviews? (for me|waiting|pending)|list (my )?reviews?)\b/i;
+  /\b(pending reviews?|my reviews?|review requests?|reviews? (for me|waiting|pending)|list (my )?reviews?|reviews? i (requested|sent|asked|raised)|status of (my )?reviews?|review status|my review requests?)\b/i;
 
 export function looksLikeReviewQuery(text: string): boolean {
   const trimmed = stripSlackUserMentions(text);
   return Boolean(trimmed && REVIEW_QUERY_RE.test(trimmed));
+}
+
+function statusIcon(status: ReviewWithUsers["status"]): string {
+  if (status === "accepted") return "✅";
+  if (status === "rejected") return "❌";
+  return "⏳";
+}
+
+/** One combined overview: reviews to act on + status of reviews you requested. */
+export function buildMyReviewsOverview(input: {
+  name: string;
+  incoming: ReviewWithUsers[];
+  outgoing: ReviewWithUsers[];
+}): { text: string; blocks: unknown[] } {
+  const { incoming, outgoing } = input;
+  const blocks: unknown[] = [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `Hey ${input.name} 👋 Here's your review overview.` }
+    }
+  ];
+
+  // ── Reviews waiting for your action ──
+  blocks.push({ type: "divider" });
+  blocks.push({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: `*Waiting for your accept/reject* (${incoming.length})`
+    }
+  });
+  if (incoming.length === 0) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: "Nothing to review right now ✨" }]
+    });
+  } else {
+    const shownIn = incoming.slice(0, 6);
+    for (const review of shownIn) {
+      blocks.push(...pendingReviewBlocks(review));
+    }
+    if (incoming.length > 6) {
+      blocks.push({
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `…and ${incoming.length - 6} more. <${appReviewUrl()}|Open all in Bran>`
+          }
+        ]
+      });
+    }
+  }
+
+  // ── Status of reviews you requested ──
+  blocks.push({ type: "divider" });
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: `*Reviews you requested* (${outgoing.length})` }
+  });
+  if (outgoing.length === 0) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: "You haven't requested any reviews yet." }]
+    });
+  } else {
+    const counts = { pending: 0, accepted: 0, rejected: 0 };
+    for (const review of outgoing) counts[review.status] += 1;
+    blocks.push({
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `✅ ${counts.accepted} accepted · ❌ ${counts.rejected} rejected · ⏳ ${counts.pending} pending`
+        }
+      ]
+    });
+
+    const shownOut = outgoing.slice(0, 10);
+    const lines = shownOut.map((review) => {
+      const head = `${statusIcon(review.status)} *${review.requestedTo.name}* — ${review.status}: ${truncate(
+        review.context.replace(/\s+/g, " "),
+        90
+      )}`;
+      if (review.responseComment) {
+        return `${head}\n    💬 ${truncate(review.responseComment.replace(/\s+/g, " "), 140)}`;
+      }
+      return head;
+    });
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: lines.join("\n") }
+    });
+    if (outgoing.length > 10) {
+      blocks.push({
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `…and ${outgoing.length - 10} more. <${appReviewUrl()}|Open all in Bran>`
+          }
+        ]
+      });
+    }
+  }
+
+  blocks.push({
+    type: "actions",
+    elements: [
+      {
+        type: "button",
+        text: { type: "plain_text", text: "Open Reviews", emoji: true },
+        url: appReviewUrl()
+      }
+    ]
+  });
+
+  const text = `Review overview: ${incoming.length} to act on, ${outgoing.length} requested.`;
+  return { text, blocks };
 }
 
 export async function processSlackReviewMessage(input: {
@@ -408,21 +527,28 @@ export async function processSlackReviewMessage(input: {
     return { handled: true, reason: "no_bran_user" };
   }
 
-  const pending = await listPendingIncoming(branUserId);
-  if (pending.length === 0) {
+  const [incoming, outgoing] = await Promise.all([
+    listPendingIncoming(branUserId),
+    listReviewsForUser({ userId: branUserId, direction: "outgoing", status: "all" })
+  ]);
+
+  if (incoming.length === 0 && outgoing.length === 0) {
     await postSlackMessage(
       input.channelId,
-      "You have no pending review requests. Nice inbox zero ✨"
+      "You have no reviews right now — none to act on, and none you've requested. ✨"
     );
-    return { handled: true, reason: "none_pending" };
+    return { handled: true, reason: "none" };
   }
 
-  const { text: replyText, blocks } = buildPendingReviewsReminderMessage({
-    name: pending[0]?.requestedTo.name ?? "there",
-    reviews: pending
+  const name =
+    incoming[0]?.requestedTo.name ?? outgoing[0]?.requestedBy.name ?? "there";
+  const { text: replyText, blocks } = buildMyReviewsOverview({
+    name,
+    incoming,
+    outgoing
   });
   await postSlackMessage(input.channelId, replyText, { blocks });
-  return { handled: true, reason: "listed" };
+  return { handled: true, reason: "overview" };
 }
 
 export function parseReviewActionId(

@@ -196,15 +196,19 @@ export async function respondToReviewRequest(
       const { lookupSlackUserByEmail, sendDm } = await import("../attendance/attendance.slack.js");
       const slackUser = await lookupSlackUserByEmail(updated.requestedBy.email);
       if (slackUser?.id) {
+        const icon = input.decision === "accepted" ? "✅" : "❌";
         const label = input.decision === "accepted" ? "accepted" : "rejected";
+        const base = (env.appUrl || "").replace(/\/$/, "");
+        const link = base ? `${base}/reviews?id=${updated.id}` : "";
         await sendDm(
           slackUser.id,
           [
-            `Your review request was *${label}* by ${updated.requestedTo.name}.`,
+            `${icon} Your review request was *${label}* by ${updated.requestedTo.name}.`,
             "",
-            `Comment: ${input.comment}`,
+            `💬 Comment: ${input.comment}`,
             "",
-            `Context: ${updated.context.slice(0, 200)}`
+            `Context: ${updated.context.slice(0, 200)}`,
+            ...(link ? ["", `<${link}|Open in Bran>`] : [])
           ].join("\n")
         );
       }

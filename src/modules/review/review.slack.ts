@@ -220,19 +220,54 @@ export async function openReviewResponseModal(input: {
   );
 }
 
+/** Compact per-review blocks with inline Accept/Reject buttons for list/reminder DMs. */
+function pendingReviewBlocks(review: ReviewWithUsers): unknown[] {
+  const file = fileLine(review);
+  const lines = [
+    `*From ${review.requestedBy.name}*`,
+    truncate(review.context.replace(/\s+/g, " "), 240)
+  ];
+  if (file) {
+    lines.push(file);
+  }
+
+  return [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: lines.join("\n") }
+    },
+    {
+      type: "actions",
+      block_id: `review:${review.id}`,
+      elements: [
+        {
+          type: "button",
+          action_id: `${REVIEW_ACCEPT_ACTION}:${review.id}`,
+          text: { type: "plain_text", text: "Accept", emoji: true },
+          style: "primary",
+          value: review.id
+        },
+        {
+          type: "button",
+          action_id: `${REVIEW_REJECT_ACTION}:${review.id}`,
+          text: { type: "plain_text", text: "Reject", emoji: true },
+          style: "danger",
+          value: review.id
+        }
+      ]
+    },
+    { type: "divider" }
+  ];
+}
+
 export function buildPendingReviewsReminderMessage(input: {
   name: string;
   reviews: ReviewWithUsers[];
 }): { text: string; blocks: unknown[] } {
   const count = input.reviews.length;
-  const lines = input.reviews.slice(0, 8).map((r, i) => {
-    const from = r.requestedBy.name;
-    const snippet = truncate(r.context.replace(/\s+/g, " "), 80);
-    return `${i + 1}. From *${from}*: ${snippet}`;
-  });
-  if (count > 8) {
-    lines.push(`…and ${count - 8} more`);
-  }
+  // Slack caps at 50 blocks; each review uses 3, so keep a safe cap.
+  const MAX = 10;
+  const shown = input.reviews.slice(0, MAX);
 
   const text = `You have ${count} pending review${count === 1 ? "" : "s"} waiting for you.`;
   const blocks: unknown[] = [
@@ -240,24 +275,27 @@ export function buildPendingReviewsReminderMessage(input: {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `Hey ${input.name} 👋\nYou have *${count}* pending review${count === 1 ? "" : "s"} waiting for your accept/reject.`
+        text: `Hey ${input.name} 👋\nYou have *${count}* pending review${count === 1 ? "" : "s"} waiting for your accept/reject. Respond right here:`
       }
     },
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: lines.join("\n") }
-    },
-    {
-      type: "actions",
+    { type: "divider" }
+  ];
+
+  for (const review of shown) {
+    blocks.push(...pendingReviewBlocks(review));
+  }
+
+  if (count > MAX) {
+    blocks.push({
+      type: "context",
       elements: [
         {
-          type: "button",
-          text: { type: "plain_text", text: "Open Reviews", emoji: true },
-          url: appReviewUrl()
+          type: "mrkdwn",
+          text: `…and ${count - MAX} more. <${appReviewUrl()}|Open all in Bran>`
         }
       ]
-    }
-  ];
+    });
+  }
 
   return { text, blocks };
 }

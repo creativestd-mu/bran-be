@@ -14,6 +14,7 @@ import {
 import {
   getSlackUserInfo,
   resolveChannelId,
+  sendDm,
   verifySlackSignature
 } from "./attendance.slack";
 import { processSlackEscalationMessage } from "../escalation/escalation.service";
@@ -30,15 +31,25 @@ import { processSlackPodMessage } from "../pods/pods.slack";
 import { processSlackSafetyGuard } from "../slack-safety/slack-safety.slack";
 import { processSlackSentimentMessage } from "../sentiment/sentiment.slack";
 import {
+  openReviewCreateModal,
   parseReviewActionId,
+  parseSlashCommandInput,
   processSlackReviewMessage
 } from "../review/review.slack";
 import {
   REVIEW_COMMENT_ACTION_ID,
   REVIEW_COMMENT_BLOCK_ID,
+  REVIEW_CREATE_CALLBACK_ID,
+  REVIEW_CREATE_CONTEXT_ACTION_ID,
+  REVIEW_CREATE_CONTEXT_BLOCK_ID,
+  REVIEW_CREATE_FILE_ACTION_ID,
+  REVIEW_CREATE_FILE_BLOCK_ID,
+  REVIEW_CREATE_USER_ACTION_ID,
+  REVIEW_CREATE_USER_BLOCK_ID,
   REVIEW_RESPONSE_CALLBACK_ID
 } from "../review/review.constants";
 import {
+  createReviewFromSlack,
   handleReviewSlackAction,
   handleReviewSlackModalSubmit
 } from "../review/review.service";
@@ -502,12 +513,36 @@ export async function slackCommandsHandler(
     const userId = params.get("user_id") ?? "";
     const text = (params.get("text") ?? "").trim();
     const channelId = params.get("channel_id") ?? "";
+    const command = (params.get("command") ?? "").trim();
+    const triggerId = params.get("trigger_id") ?? "";
 
     if (!userId) {
       res.status(200).json({
         response_type: "ephemeral",
         text: "Hmm, I couldn't tell who you are in Slack. Mind trying again from your account?"
       });
+      return;
+    }
+
+    if (command === "/review") {
+      if (!triggerId) {
+        res.status(200).json({
+          response_type: "ephemeral",
+          text: "Couldn't open the review form (missing trigger). Try `/review` again."
+        });
+        return;
+      }
+      const { initialSlackUserId, context } = parseSlashCommandInput(text);
+      try {
+        await openReviewCreateModal({ triggerId, initialSlackUserId, context });
+        res.status(200).end();
+      } catch (error) {
+        console.error("Slack /review modal open failed:", error);
+        res.status(200).json({
+          response_type: "ephemeral",
+          text: "Couldn't open the review form. Please try again."
+        });
+      }
       return;
     }
 
@@ -648,14 +683,74 @@ export async function slackInteractionsHandler(
         state?: {
           values?: Record<
             string,
-            Record<string, { type?: string; value?: string | null }>
+            Record<
+              string,
+              { type?: string; value?: string | null; selected_user?: string | null }
+            >
           >;
         };
       };
     };
 
-    // ── Modal submissions (review accept/reject comment) ──
+    // ── Modal submissions ──
     if (payload.type === "view_submission") {
+      // /review create modal
+      if (payload.view?.callback_id === REVIEW_CREATE_CALLBACK_ID) {
+        if (!payload.user?.id) {
+          res.status(200).json({ response_action: "clear" });
+          return;
+        }
+        const values = payload.view.state?.values;
+        const recipientSlackUserId =
+          values?.[REVIEW_CREATE_USER_BLOCK_ID]?.[REVIEW_CREATE_USER_ACTION_ID]?.selected_user ??
+          "";
+        const context =
+          values?.[REVIEW_CREATE_CONTEXT_BLOCK_ID]?.[REVIEW_CREATE_CONTEXT_ACTION_ID]?.value?.trim() ??
+          "";
+        const fileUrl =
+          values?.[REVIEW_CREATE_FILE_BLOCK_ID]?.[REVIEW_CREATE_FILE_ACTION_ID]?.value?.trim() ?? "";
+
+        try {
+          const result = await createReviewFromSlack({
+            requesterSlackUserId: payload.user.id,
+            recipientSlackUserId,
+            context,
+            fileUrl
+          });
+          if (!result.ok) {
+            const blockId =
+              result.field === "user"
+                ? REVIEW_CREATE_USER_BLOCK_ID
+                : result.field === "context"
+                  ? REVIEW_CREATE_CONTEXT_BLOCK_ID
+                  : REVIEW_CREATE_FILE_BLOCK_ID;
+            res.status(200).json({
+              response_action: "errors",
+              errors: { [blockId]: result.message }
+            });
+            return;
+          }
+          res.status(200).json({ response_action: "clear" });
+          const recipientName = result.review.requestedTo.name;
+          void sendDm(
+            payload.user.id,
+            `✅ Review request sent to ${recipientName}. I'll nudge them about it.`
+          ).catch(() => {
+            /* best-effort confirmation */
+          });
+        } catch (error) {
+          console.error("Slack /review create failed:", error);
+          res.status(200).json({
+            response_action: "errors",
+            errors: {
+              [REVIEW_CREATE_CONTEXT_BLOCK_ID]: "Couldn't create the review. Please try again."
+            }
+          });
+        }
+        return;
+      }
+
+      // review accept/reject comment modal
       if (
         payload.view?.callback_id !== REVIEW_RESPONSE_CALLBACK_ID ||
         !payload.user?.id ||

@@ -17,6 +17,13 @@ import {
   REVIEW_ACCEPT_ACTION,
   REVIEW_COMMENT_ACTION_ID,
   REVIEW_COMMENT_BLOCK_ID,
+  REVIEW_CREATE_CALLBACK_ID,
+  REVIEW_CREATE_CONTEXT_ACTION_ID,
+  REVIEW_CREATE_CONTEXT_BLOCK_ID,
+  REVIEW_CREATE_FILE_ACTION_ID,
+  REVIEW_CREATE_FILE_BLOCK_ID,
+  REVIEW_CREATE_USER_ACTION_ID,
+  REVIEW_CREATE_USER_BLOCK_ID,
   REVIEW_REJECT_ACTION,
   REVIEW_RESPONSE_CALLBACK_ID
 } from "./review.constants";
@@ -341,4 +348,96 @@ export function parseReviewActionId(
     return { decision: "rejected", reviewId: actionId.slice(REVIEW_REJECT_ACTION.length + 1) };
   }
   return null;
+}
+
+/**
+ * Extract a leading Slack user mention from slash-command text.
+ * Slack sends escaped mentions like `<@U12345|name>` when the command has
+ * "Escape channels, users, and links" enabled.
+ */
+export function parseSlashCommandInput(text: string): {
+  initialSlackUserId?: string;
+  context: string;
+} {
+  const trimmed = (text ?? "").trim();
+  const match = trimmed.match(/^<@([A-Z0-9]+)(?:\|[^>]+)?>\s*/i);
+  if (match) {
+    return {
+      initialSlackUserId: match[1],
+      context: trimmed.slice(match[0].length).trim()
+    };
+  }
+  return { context: trimmed };
+}
+
+export function buildReviewCreateModal(input: {
+  initialSlackUserId?: string;
+  context?: string;
+}): Record<string, unknown> {
+  const userElement: Record<string, unknown> = {
+    type: "users_select",
+    action_id: REVIEW_CREATE_USER_ACTION_ID,
+    placeholder: { type: "plain_text", text: "Pick a teammate", emoji: true }
+  };
+  if (input.initialSlackUserId) {
+    userElement.initial_user = input.initialSlackUserId;
+  }
+
+  const contextElement: Record<string, unknown> = {
+    type: "plain_text_input",
+    action_id: REVIEW_CREATE_CONTEXT_ACTION_ID,
+    multiline: true,
+    min_length: 1,
+    max_length: 3000,
+    placeholder: { type: "plain_text", text: "What should they review? Any notes…" }
+  };
+  if (input.context) {
+    contextElement.initial_value = input.context.slice(0, 3000);
+  }
+
+  return {
+    type: "modal",
+    callback_id: REVIEW_CREATE_CALLBACK_ID,
+    title: { type: "plain_text", text: "Request a review", emoji: true },
+    submit: { type: "plain_text", text: "Send", emoji: true },
+    close: { type: "plain_text", text: "Cancel", emoji: true },
+    blocks: [
+      {
+        type: "input",
+        block_id: REVIEW_CREATE_USER_BLOCK_ID,
+        label: { type: "plain_text", text: "Request review from", emoji: true },
+        element: userElement
+      },
+      {
+        type: "input",
+        block_id: REVIEW_CREATE_CONTEXT_BLOCK_ID,
+        label: { type: "plain_text", text: "Context", emoji: true },
+        element: contextElement
+      },
+      {
+        type: "input",
+        block_id: REVIEW_CREATE_FILE_BLOCK_ID,
+        label: { type: "plain_text", text: "File link", emoji: true },
+        element: {
+          type: "plain_text_input",
+          action_id: REVIEW_CREATE_FILE_ACTION_ID,
+          placeholder: { type: "plain_text", text: "https://… (Drive, Notion, etc.)" }
+        }
+      }
+    ]
+  };
+}
+
+export async function openReviewCreateModal(input: {
+  triggerId: string;
+  initialSlackUserId?: string;
+  context?: string;
+}): Promise<void> {
+  await openSlackModal(
+    input.triggerId,
+    buildReviewCreateModal({
+      initialSlackUserId: input.initialSlackUserId,
+      context: input.context
+    })
+  );
 }

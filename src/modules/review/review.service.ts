@@ -248,6 +248,67 @@ export async function handleReviewSlackAction(input: {
 }
 
 /**
+ * Slack /review modal submission: create a review as the Slack user.
+ * Returns the created review, or a field-level error to show in the modal.
+ */
+export async function createReviewFromSlack(input: {
+  requesterSlackUserId: string;
+  recipientSlackUserId: string;
+  context: string;
+  fileUrl?: string | null;
+}): Promise<
+  | { ok: true; review: ReviewWithUsers }
+  | { ok: false; field: "user" | "context" | "file"; message: string }
+> {
+  const { resolveBranUserIdForSlackUser } = await import("../work/work.slack.js");
+
+  const requesterId = await resolveBranUserIdForSlackUser(input.requesterSlackUserId);
+  if (!requesterId) {
+    return {
+      ok: false,
+      field: "user",
+      message: "Your Slack account isn't linked to a Bran user. Ask an admin to add your email."
+    };
+  }
+
+  const recipientId = await resolveBranUserIdForSlackUser(input.recipientSlackUserId);
+  if (!recipientId) {
+    return {
+      ok: false,
+      field: "user",
+      message: "That teammate isn't a Bran user yet (email must match)."
+    };
+  }
+  if (recipientId === requesterId) {
+    return { ok: false, field: "user", message: "You can't request a review from yourself." };
+  }
+
+  const context = input.context.trim();
+  if (!context) {
+    return { ok: false, field: "context", message: "Add some context." };
+  }
+
+  const fileUrl = input.fileUrl?.trim() || "";
+  if (!fileUrl) {
+    return { ok: false, field: "file", message: "Add a file link." };
+  }
+  try {
+    // eslint-disable-next-line no-new
+    new URL(fileUrl);
+  } catch {
+    return { ok: false, field: "file", message: "Enter a valid URL (https://…)." };
+  }
+
+  const review = await createReview(requesterId, {
+    requestedToId: recipientId,
+    context,
+    fileUrl
+  });
+
+  return { ok: true, review };
+}
+
+/**
  * Slack view_submission: respond to the review as the Slack user.
  */
 export async function handleReviewSlackModalSubmit(input: {

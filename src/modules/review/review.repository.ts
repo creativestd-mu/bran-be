@@ -113,12 +113,16 @@ export async function setReviewSlackMessage(input: {
   id: string;
   slackChannelId: string;
   slackMessageTs: string;
+  reviewerSlackUserId?: string | null;
 }): Promise<void> {
   await prisma.reviewRequest.update({
     where: { id: input.id },
     data: {
       slackChannelId: input.slackChannelId,
-      slackMessageTs: input.slackMessageTs
+      slackMessageTs: input.slackMessageTs,
+      ...(input.reviewerSlackUserId
+        ? { reviewerSlackUserId: input.reviewerSlackUserId }
+        : {})
     }
   });
 }

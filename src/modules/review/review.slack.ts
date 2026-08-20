@@ -174,6 +174,7 @@ export function buildReviewResponseModal(input: {
 export async function notifyReviewerOnSlack(review: ReviewWithUsers): Promise<{
   channel: string;
   ts: string;
+  reviewerSlackUserId: string;
 } | null> {
   if (!env.slackBotToken) {
     return null;
@@ -187,9 +188,55 @@ export async function notifyReviewerOnSlack(review: ReviewWithUsers): Promise<{
     return null;
   }
 
+  // Cache the Slack↔Bran mapping so future Slack->Bran resolution succeeds.
+  await cacheSlackMemberMapping(slackUser.id, review.requestedTo.email, review.requestedTo.name);
+
   const text = buildReviewRequestFallbackText(review);
   const blocks = buildReviewRequestBlocks(review);
-  return sendDmWithBlocks(slackUser.id, text, blocks);
+  const dm = await sendDmWithBlocks(slackUser.id, text, blocks);
+  return { ...dm, reviewerSlackUserId: slackUser.id };
+}
+
+/** Best-effort upsert of the slack_members cache (slackUserId ↔ email). */
+async function cacheSlackMemberMapping(
+  slackUserId: string,
+  email: string,
+  name: string | null
+): Promise<void> {
+  try {
+    const { upsertSlackMember } = await import("../attendance/attendance.repository.js");
+    await upsertSlackMember({
+      slackUserId,
+      name,
+      email,
+      realName: name,
+      isBot: false,
+      isDeleted: false
+    });
+  } catch (error) {
+    console.warn("[review] Failed to cache slack member mapping:", error);
+  }
+}
+
+/**
+ * Confirm the given Slack user is the assigned reviewer for a review.
+ * Uses the stored reviewer Slack id first, then a forward email lookup
+ * (email -> Slack), avoiding the fragile reverse Slack -> Bran resolver.
+ */
+export async function isSlackUserTheReviewer(
+  review: ReviewWithUsers,
+  slackUserId: string
+): Promise<boolean> {
+  if (review.reviewerSlackUserId && review.reviewerSlackUserId === slackUserId) {
+    return true;
+  }
+  const slackUser = await lookupSlackUserByEmail(review.requestedTo.email);
+  if (slackUser?.id && slackUser.id === slackUserId) {
+    // Backfill the cache + stored id for future actions.
+    await cacheSlackMemberMapping(slackUserId, review.requestedTo.email, review.requestedTo.name);
+    return true;
+  }
+  return false;
 }
 
 export async function updateReviewSlackCard(review: ReviewWithUsers): Promise<void> {
@@ -309,6 +356,8 @@ export async function sendPendingReviewsReminderDm(input: {
 
   const slackUser = await lookupSlackUserByEmail(input.email);
   if (!slackUser?.id) return false;
+
+  await cacheSlackMemberMapping(slackUser.id, input.email, input.name);
 
   const { text, blocks } = buildPendingReviewsReminderMessage({
     name: input.name,

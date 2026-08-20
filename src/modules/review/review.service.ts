@@ -30,6 +30,7 @@ import {
   type ReviewWithUsers
 } from "./review.repository";
 import {
+  isSlackUserTheReviewer,
   notifyReviewerOnSlack,
   openReviewResponseModal,
   sendPendingReviewsReminderDm,
@@ -118,10 +119,12 @@ export async function createReview(
         await setReviewSlackMessage({
           id: review.id,
           slackChannelId: dm.channel,
-          slackMessageTs: dm.ts
+          slackMessageTs: dm.ts,
+          reviewerSlackUserId: dm.reviewerSlackUserId
         });
         review.slackChannelId = dm.channel;
         review.slackMessageTs = dm.ts;
+        review.reviewerSlackUserId = dm.reviewerSlackUserId;
       }
     } catch (error) {
       console.error("[review] Failed to notify reviewer on Slack:", error);
@@ -222,17 +225,12 @@ export async function handleReviewSlackAction(input: {
   decision: "accepted" | "rejected";
   triggerId: string;
 }): Promise<void> {
-  const { resolveBranUserIdForSlackUser } = await import("../work/work.slack.js");
-  const branUserId = await resolveBranUserIdForSlackUser(input.slackUserId);
-  if (!branUserId) {
-    throw new HttpError(403, "Slack user is not linked to a Bran account");
-  }
-
   const review = await findReviewById(input.reviewId);
   if (!review) {
     throw new HttpError(404, "Review not found");
   }
-  if (review.requestedToId !== branUserId) {
+  const authorized = await isSlackUserTheReviewer(review, input.slackUserId);
+  if (!authorized) {
     throw new HttpError(403, "Only the assigned reviewer can respond");
   }
   if (review.status !== "pending") {
@@ -317,13 +315,17 @@ export async function handleReviewSlackModalSubmit(input: {
   decision: "accepted" | "rejected";
   comment: string;
 }): Promise<ReviewWithUsers> {
-  const { resolveBranUserIdForSlackUser } = await import("../work/work.slack.js");
-  const branUserId = await resolveBranUserIdForSlackUser(input.slackUserId);
-  if (!branUserId) {
-    throw new HttpError(403, "Slack user is not linked to a Bran account");
+  const review = await findReviewById(input.reviewId);
+  if (!review) {
+    throw new HttpError(404, "Review not found");
+  }
+  const authorized = await isSlackUserTheReviewer(review, input.slackUserId);
+  if (!authorized) {
+    throw new HttpError(403, "Only the assigned reviewer can respond");
   }
 
-  return respondToReviewRequest(branUserId, input.reviewId, {
+  // Respond as the review's assigned reviewer (known Bran user) — no reverse lookup.
+  return respondToReviewRequest(review.requestedToId, input.reviewId, {
     decision: input.decision,
     comment: input.comment
   });

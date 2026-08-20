@@ -20,6 +20,8 @@ import { competitorContentCronHandler } from "./modules/competitor-content/compe
 import { podsSocialCronHandler } from "./modules/pods/pods.cron";
 import { competitorContentRouter } from "./modules/competitor-content/competitor-content.routes";
 import { sentimentRouter } from "./modules/sentiment/sentiment.routes";
+import { reviewRouter } from "./modules/review/review.routes";
+import { reviewRemindersCronHandler } from "./modules/review/review.cron";
 import { unsupportedSlackRouter } from "./modules/slack-unsupported/slack-unsupported.routes";
 import { transcriptionKeywordsRouter } from "./modules/transcription-keywords/transcription-keywords.routes";
 import { handleCalendarOAuthCallback } from "./modules/meetings/meetings.service";
@@ -28,7 +30,7 @@ import { handleGmailOAuthCallback } from "./modules/gmail/gmail.service";
 import { apiRouter } from "./routes";
 
 /** Bump when shipping route-surface changes so deploys are easy to verify. */
-const BUILD_MARKER = "attendance-v1";
+const BUILD_MARKER = "reviews-v1";
 
 const app = express();
 
@@ -66,6 +68,7 @@ app.get("/api/cron/escalation-check", escalationCronHandler);
 app.get("/api/cron/meltwater-earned", meltwaterEarnedCronHandler);
 app.get("/api/cron/meltwater-competitors", competitorContentCronHandler);
 app.get("/api/cron/pods-social", podsSocialCronHandler);
+app.get("/api/cron/review-reminders", reviewRemindersCronHandler);
 
 app.get("/oauth/google/calendar/callback", (req, res) => {
   void handleCalendarOAuthCallback(req, res);
@@ -85,6 +88,7 @@ if (env.nodeEnv !== "test") {
 // Guide-compatible aliases (JWT auth) — same handlers as /:lang/v1/attendance
 app.use("/api/eta", attendanceRouter);
 app.use("/api/sentiment", sentimentRouter);
+app.use("/api/reviews", reviewRouter);
 app.use("/api/competitors", competitorContentRouter);
 app.use("/api/unsupported-slack-queries", unsupportedSlackRouter);
 app.use("/api/transcription-keywords", transcriptionKeywordsRouter);
@@ -104,9 +108,11 @@ app.get("/", (_req, res) => {
       meltwaterEarnedCron: "/api/cron/meltwater-earned",
       meltwaterCompetitorsCron: "/api/cron/meltwater-competitors",
       podsSocialCron: "/api/cron/pods-social",
+      reviewRemindersCron: "/api/cron/review-reminders",
       workIngest: "slack #tech-team events + WORK_INGEST cron (gmail off)",
       slackTaskList: "DM or @Bran to list tasks as a checklist; check a box to mark done",
       slackSentiment: "DM or @Bran: sentiment / brand mentions (onboarded users)",
+      slackReviews: "DM or @Bran: pending reviews; Accept/Reject via modal on review DMs",
       slackCompetitors: "DM or @Bran: competitor coverage / impactful content (onboarded users)",
       slackPods: "DM or @Bran: pod IP / inspiration posts (onboarded users)",
       slackTaskCreate:

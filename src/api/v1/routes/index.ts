@@ -36,6 +36,7 @@ import { eventsRouter } from "../../../modules/events/events.routes";
 import { attendanceRouter } from "../../../modules/attendance/attendance.routes";
 import { graphRouter } from "../../../modules/graph/graph.routes";
 import { prereadRouter } from "../../../modules/preread/preread.routes";
+import { reviewRouter } from "../../../modules/review/review.routes";
 import { unsupportedSlackRouter } from "../../../modules/slack-unsupported/slack-unsupported.routes";
 import { transcriptionKeywordsRouter } from "../../../modules/transcription-keywords/transcription-keywords.routes";
 
@@ -74,6 +75,7 @@ v1Router.use("/events", eventsRouter);
 v1Router.use("/attendance", attendanceRouter);
 v1Router.use("/graph", graphRouter);
 v1Router.use("/prereads", prereadRouter);
+v1Router.use("/reviews", reviewRouter);
 v1Router.use("/unsupported-slack-queries", unsupportedSlackRouter);
 v1Router.use("/transcription-keywords", transcriptionKeywordsRouter);
 

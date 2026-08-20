@@ -109,7 +109,12 @@ model User {
   prereadMediaUploads       PrereadMedia[]          @relation("PrereadMediaUploader")
   slackVoiceWorkDrafts      SlackVoiceWorkDraft[]   @relation("SlackVoiceWorkDraftOwner")
   unsupportedSlackQueries   UnsupportedSlackQuery[] @relation("UnsupportedSlackQueryUser")
+  slackIntentSuggestions    SlackIntentSuggestion[] @relation("SlackIntentSuggestionUser")
+  slackIntentExamples       SlackIntentExample[]    @relation("SlackIntentExampleOwner")
   transcriptionKeywordsCreated TranscriptionKeyword[] @relation("TranscriptionKeywordCreatedBy")
+  reviewRequestsSent           ReviewRequest[]          @relation("ReviewRequestedBy")
+  reviewRequestsReceived       ReviewRequest[]          @relation("ReviewRequestedTo")
+  reviewReminderPreference     ReviewReminderPreference?
 
   @@index([roleId])
   @@index([managerUserId])
@@ -1108,6 +1113,49 @@ model UnsupportedSlackQuery {
   @@index([branUserId])
 }
 
+// Pending "Did you mean?" buttons for unrecognized directed Slack asks.
+model SlackIntentSuggestion {
+  id             String   @id @default(uuid())
+  slackUserId    String
+  branUserId     String?
+  channelId      String
+  channelType    String?
+  threadTs       String?
+  messageTs      String
+  replyTs        String?
+  originalText   String   @db.Text
+  eventType      String?
+  isDm           Boolean  @default(false)
+  candidatesJson String   @db.Text
+  chosenIntent   String?
+  status         String   @default("SUGGESTED") // SUGGESTED | EXECUTED | DISMISSED
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  branUser User? @relation("SlackIntentSuggestionUser", fields: [branUserId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([slackUserId, status])
+  @@index([branUserId])
+}
+
+// Confirmed query → intent examples for embedding learning + few-shot.
+model SlackIntentExample {
+  id              String   @id @default(uuid())
+  ownerBranUserId String?
+  normalizedQuery String   @unique @db.VarChar(500)
+  intent          String   @db.VarChar(64)
+  source          String   @default("confirmed") // confirmed | auto
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  owner User? @relation("SlackIntentExampleOwner", fields: [ownerBranUserId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([intent])
+  @@index([createdAt])
+}
+
 // ── Attendance / ETA Tracker (Slack #cs-day-off) ─────────────
 
 model SlackMember {
@@ -1440,4 +1488,53 @@ model PrereadMedia {
   uploadedBy User        @relation("PrereadMediaUploader", fields: [uploadedById], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([nodeId])
+}
+
+// ── Peer review requests ────────────────────────────────────
+
+enum ReviewStatus {
+  pending
+  accepted
+  rejected
+}
+
+model ReviewRequest {
+  id               String       @id @default(uuid())
+  requestedById    String       @map("requested_by_id")
+  requestedToId    String       @map("requested_to_id")
+  context          String
+  fileUrl          String?      @map("file_url")
+  storagePath      String?      @map("storage_path")
+  fileName         String?      @map("file_name")
+  contentType      String?      @map("content_type")
+  status           ReviewStatus @default(pending)
+  responseComment  String?      @map("response_comment")
+  respondedAt      DateTime?    @map("responded_at")
+  slackChannelId   String?      @map("slack_channel_id")
+  slackMessageTs   String?      @map("slack_message_ts")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  requestedBy User @relation("ReviewRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  requestedTo User @relation("ReviewRequestedTo", fields: [requestedToId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([requestedById, status])
+  @@index([requestedToId, status])
+  @@index([status, createdAt])
+  @@map("review_requests")
+}
+
+model ReviewReminderPreference {
+  userId           String   @id @map("user_id")
+  /** HH:mm IST slots, e.g. ["11:00","18:00"] */
+  times            String[] @default(["11:00", "18:00"])
+  enabled          Boolean  @default(true)
+  lastRemindedSlot String?  @map("last_reminded_slot")
+  lastRemindedOn   String?  @map("last_reminded_on")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("review_reminder_preferences")
 }

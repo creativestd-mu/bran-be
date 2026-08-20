@@ -631,9 +631,10 @@ async function parseTaskListDateRangeWithLlm(
 
 export async function resolveSlackTaskListQuery(
   text: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options?: { force?: boolean }
 ): Promise<SlackTaskListQuery | null> {
-  if (!looksLikeTaskListQuery(text)) return null;
+  if (!options?.force && !looksLikeTaskListQuery(text)) return null;
 
   const cleaned = stripSlackUserMentions(text);
   const heuristic = parseTaskListDateRangeHeuristic(cleaned, now);

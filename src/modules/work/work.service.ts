@@ -722,6 +722,8 @@ export async function processSlackDirectedWorkCreateMessage(input: {
   threadTs?: string;
   channelType?: string;
   eventType?: string;
+  /** Skip looksLike* gate when user confirmed via Did-you-mean / auto-intent. */
+  force?: boolean;
 }): Promise<{ handled: boolean; reason?: string; created?: number }> {
   if (input.botId) return { handled: false, reason: "ignored_bot" };
   if (input.subtype && input.subtype !== "thread_broadcast") {
@@ -729,7 +731,7 @@ export async function processSlackDirectedWorkCreateMessage(input: {
   }
 
   const text = input.text?.trim() ?? "";
-  if (!text || !looksLikeSlackDmTaskCreate(text)) {
+  if (!text || (!input.force && !looksLikeSlackDmTaskCreate(text))) {
     return { handled: false, reason: "not_create" };
   }
 
@@ -920,6 +922,7 @@ export async function processSlackTaskListMessage(input: {
   subtype?: string;
   threadTs?: string;
   channelType?: string;
+  force?: boolean;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId) return { handled: false, reason: "ignored_bot" };
   if (input.subtype && input.subtype !== "thread_broadcast") {
@@ -937,7 +940,9 @@ export async function processSlackTaskListMessage(input: {
     }
   }
 
-  if (!looksLikeTaskListQuery(text)) return { handled: false, reason: "not_task_list" };
+  if (!input.force && !looksLikeTaskListQuery(text)) {
+    return { handled: false, reason: "not_task_list" };
+  }
 
   if (!markTaskListEvent(input.channelId, input.ts)) {
     return { handled: true, reason: "duplicate" };
@@ -972,7 +977,7 @@ export async function processSlackTaskListMessage(input: {
     subject.kind === "tagged" ? subject.slackUserIds[0] : input.userId;
   const viewingOther = targetSlackUserId.toUpperCase() !== input.userId.toUpperCase();
 
-  const query = await resolveSlackTaskListQuery(text);
+  const query = await resolveSlackTaskListQuery(text, new Date(), { force: input.force });
   if (!query) return { handled: false, reason: "not_task_list" };
 
   const branUserId = await resolveBranUserIdForSlackUser(targetSlackUserId);

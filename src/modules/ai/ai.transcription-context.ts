@@ -1,8 +1,10 @@
 import { prisma } from "../../lib/prisma";
 import { listActiveTranscriptionPhrases } from "../transcription-keywords/transcription-keywords.repository";
+import { correctTranscriptSpellings } from "./ai.transcript-spellings";
 
-/** Sarvam prompt budget — keep under typical STT context limits. */
+/** Full org-context prompt (tests / docs). Sarvam v3 only gets first names. */
 const MAX_PROMPT_CHARS = 1800;
+const MAX_SARVAM_FIRST_NAME_CHARS = 500;
 const MAX_NAMES_PER_GROUP = 80;
 
 export type TranscriptionOrgContext = {
@@ -67,6 +69,31 @@ export function formatTranscriptionPrompt(
   return prompt;
 }
 
+export function firstNamesFromPeople(people: string[]): string[] {
+  return uniqueTrimmed(
+    people.map((name) => name.trim().split(/\s+/)[0] ?? "").filter((name) => name.length >= 3)
+  );
+}
+
+/** Compact first-name list for Sarvam — v2.5 died on the full org prompt. */
+export function formatSarvamFirstNamesPrompt(people: string[]): string {
+  const names = firstNamesFromPeople(people);
+  if (names.length === 0) return "";
+
+  let list = names.join(", ");
+  const prefix = "Prefer these teammate first-name spellings: ";
+  if (`${prefix}${list}.`.length > MAX_SARVAM_FIRST_NAME_CHARS) {
+    const kept: string[] = [];
+    for (const name of names) {
+      const next = kept.length === 0 ? name : `${kept.join(", ")}, ${name}`;
+      if (`${prefix}${next}.`.length > MAX_SARVAM_FIRST_NAME_CHARS) break;
+      kept.push(name);
+    }
+    list = kept.join(", ");
+  }
+  return list ? `${prefix}${list}.` : "";
+}
+
 export async function loadTranscriptionOrgContext(): Promise<TranscriptionOrgContext> {
   const [people, verticals, pods, projects, keywords] = await Promise.all([
     prisma.user.findMany({
@@ -104,15 +131,27 @@ export async function loadTranscriptionOrgContext(): Promise<TranscriptionOrgCon
   };
 }
 
-/** Org spellings + optional caller extra (e.g. meeting speaker hint or client prompt). */
+/** First names for Sarvam + optional caller extra. */
 export async function buildTranscriptionPrompt(extra?: string | null): Promise<string | undefined> {
   try {
     const context = await loadTranscriptionOrgContext();
-    const prompt = formatTranscriptionPrompt(context, extra);
+    const namesPrompt = formatSarvamFirstNamesPrompt(context.people);
+    const extraTrimmed = extra?.trim();
+    const prompt = [namesPrompt, extraTrimmed].filter(Boolean).join(" ");
     return prompt || undefined;
   } catch (error) {
     console.warn("[transcription-context] failed to build prompt:", error);
     const fallback = extra?.trim();
     return fallback || undefined;
+  }
+}
+
+export async function applyTranscriptNameCorrections(transcript: string): Promise<string> {
+  try {
+    const context = await loadTranscriptionOrgContext();
+    return correctTranscriptSpellings(transcript, [...context.people, ...context.keywords]);
+  } catch (error) {
+    console.warn("[transcription-context] name correction failed:", error);
+    return transcript;
   }
 }

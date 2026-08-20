@@ -262,6 +262,23 @@ export async function sendDm(
   return postSlackMessage(channel, text);
 }
 
+export async function sendDmWithBlocks(
+  userId: string,
+  text: string,
+  blocks: unknown[]
+): Promise<{ channel: string; ts: string }> {
+  const channel = await openDmChannel(userId);
+  return postSlackMessage(channel, text, { blocks });
+}
+
+/** Open a Slack modal (views.open). `view` is the Block Kit view object. */
+export async function openSlackModal(triggerId: string, view: Record<string, unknown>): Promise<void> {
+  await slackApi("views.open", {
+    trigger_id: triggerId,
+    view: JSON.stringify(view)
+  });
+}
+
 export async function authTest(): Promise<{
   ok: boolean;
   user?: string;

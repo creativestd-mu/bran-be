@@ -8,6 +8,7 @@ import { SarvamAIClient } from "sarvamai";
 
 import { env } from "../../config/env";
 import { HttpError } from "../../utils/httpError";
+import { applyTranscriptNameCorrections } from "./ai.transcription-context";
 
 export type SarvamTranslateResult = {
   requestId: string | null;
@@ -83,14 +84,22 @@ function extensionForMime(mimetype: string): string {
   return map[mimetype.toLowerCase()] ?? ".wav";
 }
 
+export function isSarvamPromptError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("prompt is too long") ||
+    normalized.includes("decoder sequence length") ||
+    (normalized.includes("prompt") && normalized.includes("not support"))
+  );
+}
+
 export function shouldFallbackToSarvamBatch(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
     normalized.includes("30 seconds") ||
     normalized.includes("maximum limit") ||
     normalized.includes("batch api for longer") ||
-    normalized.includes("prompt is too long") ||
-    normalized.includes("decoder sequence length")
+    isSarvamPromptError(message)
   );
 }
 
@@ -153,6 +162,7 @@ async function translateAudioWithSarvamRest(params: {
   fileBuffer: Buffer;
   originalname: string;
   mimetype: string;
+  prompt?: string;
 }): Promise<SarvamTranslateResult> {
   const apiKey = env.sarvamApiKey;
   if (!apiKey) {
@@ -173,6 +183,9 @@ async function translateAudioWithSarvamRest(params: {
   });
   form.append("model", sarvamModel());
   form.append("mode", sarvamMode());
+  if (params.prompt) {
+    form.append("prompt", params.prompt);
+  }
 
   const { status, body } = await postFormData(SARVAM_ENDPOINT, form, {
     "api-subscription-key": apiKey
@@ -289,6 +302,16 @@ async function translateAudioWithSarvamBatch(params: {
   }
 }
 
+async function finalizeSarvamTranscript(
+  result: SarvamTranslateResult
+): Promise<SarvamTranslateResult> {
+  const transcript = await applyTranscriptNameCorrections(result.transcript);
+  if (transcript !== result.transcript) {
+    console.log("[sarvam] corrected teammate spellings in transcript");
+  }
+  return { ...result, transcript };
+}
+
 export async function translateAudioWithSarvam(params: {
   fileBuffer: Buffer;
   originalname: string;
@@ -296,8 +319,31 @@ export async function translateAudioWithSarvam(params: {
   prompt?: string;
 }): Promise<SarvamTranslateResult> {
   try {
-    return await translateAudioWithSarvamRest(params);
+    return await finalizeSarvamTranscript(await translateAudioWithSarvamRest(params));
   } catch (error) {
+    if (
+      error instanceof HttpError &&
+      (error.statusCode === 400 || error.statusCode === 422) &&
+      params.prompt &&
+      isSarvamPromptError(error.message)
+    ) {
+      console.warn("[sarvam] first-name prompt rejected; retrying without prompt");
+      try {
+        return await finalizeSarvamTranscript(
+          await translateAudioWithSarvamRest({ ...params, prompt: undefined })
+        );
+      } catch (retryError) {
+        if (
+          retryError instanceof HttpError &&
+          (retryError.statusCode === 400 || retryError.statusCode === 422) &&
+          shouldFallbackToSarvamBatch(retryError.message)
+        ) {
+          return finalizeSarvamTranscript(await translateAudioWithSarvamBatch(params));
+        }
+        throw retryError;
+      }
+    }
+
     if (
       error instanceof HttpError &&
       (error.statusCode === 400 || error.statusCode === 422) &&
@@ -309,7 +355,7 @@ export async function translateAudioWithSarvam(params: {
         status: error.statusCode,
         reason: error.message.slice(0, 240)
       });
-      return translateAudioWithSarvamBatch(params);
+      return finalizeSarvamTranscript(await translateAudioWithSarvamBatch(params));
     }
     throw error;
   }

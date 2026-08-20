@@ -133,6 +133,7 @@ export const env = {
   visionStorageDir: process.env.VISION_STORAGE_DIR ?? "data/visions",
   thumbnailStorageDir: process.env.THUMBNAIL_STORAGE_DIR ?? "data/thumbnails",
   prereadStorageDir: process.env.PREREAD_STORAGE_DIR ?? "data/prereads",
+  reviewStorageDir: process.env.REVIEW_STORAGE_DIR ?? "data/reviews",
   s3Endpoint: process.env.S3_ENDPOINT ?? "",
   s3Region: process.env.S3_REGION ?? "auto",
   s3Bucket: process.env.S3_BUCKET ?? "",
@@ -143,6 +144,11 @@ export const env = {
   s3VisionPrefix: process.env.S3_VISION_PREFIX ?? "visions",
   s3ThumbnailPrefix: process.env.S3_THUMBNAIL_PREFIX ?? "thumbnails",
   s3PrereadPrefix: process.env.S3_PREREAD_PREFIX ?? "prereads",
+  s3ReviewPrefix: process.env.S3_REVIEW_PREFIX ?? "reviews",
+  reviewRemindersEnabled:
+    (process.env.REVIEW_REMINDERS_ENABLED ?? "true").toLowerCase() !== "false",
+  reviewRemindersCronEnabled:
+    (process.env.REVIEW_REMINDERS_CRON_ENABLED ?? "true").toLowerCase() !== "false",
   ideaMatchTopK: parsePositiveNumber(process.env.IDEA_MATCH_TOP_K, 25),
   ideaMatchThreshold: parsePositiveNumber(process.env.IDEA_MATCH_THRESHOLD, 0.6),
   ideaMatchMaxRecommendations: parsePositiveNumber(process.env.IDEA_MATCH_MAX_RECOMMENDATIONS, 5),
@@ -228,5 +234,18 @@ export const env = {
    */
   slackWorkChannels: process.env.SLACK_WORK_CHANNELS ?? "tech-team",
   /** Comma-separated Slack channel IDs or names to exclude from work ingest (plus attendance/escalation). */
-  slackWorkExcludeChannels: process.env.SLACK_WORK_EXCLUDE_CHANNELS ?? ""
+  slackWorkExcludeChannels: process.env.SLACK_WORK_EXCLUDE_CHANNELS ?? "",
+  /** When a directed Slack ask misses all handlers, suggest/auto-run closest intents. */
+  slackIntentSuggestEnabled:
+    (process.env.SLACK_INTENT_SUGGEST_ENABLED ?? "true").toLowerCase() !== "false",
+  slackIntentAutoThreshold: parsePositiveNumber(process.env.SLACK_INTENT_AUTO_THRESHOLD, 0.82),
+  slackIntentSuggestThreshold: parsePositiveNumber(
+    process.env.SLACK_INTENT_SUGGEST_THRESHOLD,
+    0.6
+  ),
+  slackIntentAutoMargin: parsePositiveNumber(process.env.SLACK_INTENT_AUTO_MARGIN, 0.08),
+  slackIntentConfirmedFastPath: parsePositiveNumber(
+    process.env.SLACK_INTENT_CONFIRMED_FAST_PATH,
+    0.9
+  )
 };

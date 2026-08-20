@@ -1,4 +1,8 @@
-import { formatTranscriptionPrompt } from "../../../src/modules/ai/ai.transcription-context";
+import {
+  firstNamesFromPeople,
+  formatSarvamFirstNamesPrompt,
+  formatTranscriptionPrompt
+} from "../../../src/modules/ai/ai.transcription-context";
 
 describe("transcription STT prompt", () => {
   it("includes people, pods, verticals, projects, and custom keywords", () => {
@@ -42,5 +46,16 @@ describe("transcription STT prompt", () => {
         " just speakers "
       )
     ).toBe("just speakers");
+  });
+
+  it("builds a first-name-only Sarvam prompt", () => {
+    expect(firstNamesFromPeople(["Dhananjay Jain", "Amisha Sharma", "Neha"])).toEqual([
+      "Dhananjay",
+      "Amisha",
+      "Neha"
+    ]);
+    expect(formatSarvamFirstNamesPrompt(["Dhananjay Jain", "Amisha Sharma"])).toBe(
+      "Prefer these teammate first-name spellings: Dhananjay, Amisha."
+    );
   });
 });

@@ -211,6 +211,7 @@ export async function processSlackCompetitorMessage(input: {
   subtype?: string;
   threadTs?: string;
   channelType?: string;
+  force?: boolean;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId) {
     return { handled: false, reason: "ignored_bot" };
@@ -232,7 +233,7 @@ export async function processSlackCompetitorMessage(input: {
     }
   }
 
-  if (!looksLikeCompetitorQuery(text)) {
+  if (!input.force && !looksLikeCompetitorQuery(text)) {
     return { handled: false, reason: "not_competitor" };
   }
 

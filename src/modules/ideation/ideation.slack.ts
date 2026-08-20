@@ -121,6 +121,7 @@ export async function processSlackIdeaMessage(input: {
   subtype?: string;
   threadTs?: string;
   channelType?: string;
+  force?: boolean;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId) {
     return { handled: false, reason: "ignored_bot" };
@@ -136,7 +137,7 @@ export async function processSlackIdeaMessage(input: {
 
   const wantsList = looksLikeListIdeasQuery(text);
   const wantsAdd = looksLikeAddIdeaQuery(text);
-  if (!wantsList && !wantsAdd) {
+  if (!input.force && !wantsList && !wantsAdd) {
     return { handled: false, reason: "not_idea" };
   }
 

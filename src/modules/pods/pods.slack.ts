@@ -209,11 +209,12 @@ export async function processSlackPodMessage(input: {
   threadTs?: string;
   channelType?: string;
   eventType?: string;
+  force?: boolean;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId || input.subtype === "bot_message") {
     return { handled: false };
   }
-  if (!input.text || !looksLikePodQuery(input.text)) {
+  if (!input.text || (!input.force && !looksLikePodQuery(input.text))) {
     return { handled: false };
   }
 

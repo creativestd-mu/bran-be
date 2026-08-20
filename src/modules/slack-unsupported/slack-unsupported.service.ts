@@ -1,9 +1,21 @@
+import { env } from "../../config/env";
 import { ATTENDANCE_ADMIN_ROLES } from "../attendance/attendance.constants";
 import { postSlackMessage } from "../attendance/attendance.slack";
 import { HttpError } from "../../utils/httpError";
 import { isSlackMessageAddressedToBran } from "../slack-safety/slack-safety.slack";
 import { isSlackDmChannel } from "../work/work.slack-voice";
 import { resolveBranUserIdForSlackUser } from "../work/work.slack";
+import { runSlackIntent } from "../slack-intents/slack-intents.dispatch";
+import { learnSlackIntent } from "../slack-intents/slack-intents.learn";
+import { matchSlackIntent } from "../slack-intents/slack-intents.matcher";
+import {
+  buildDidYouMeanBlocks,
+  formatDidYouMeanFallbackText
+} from "../slack-intents/slack-intents.reply";
+import {
+  createSlackIntentSuggestion,
+  setSlackIntentSuggestionReplyTs
+} from "../slack-intents/slack-intents.repository";
 import {
   listUnsupportedSlackQueries,
   updateUnsupportedSlackQueryStatus,
@@ -57,7 +69,8 @@ export function formatUnsupportedSlackReply(reason?: string): string {
 
 /**
  * When a DM or @Bran message wasn't handled by any feature, reply clearly
- * and persist the ask for product review.
+ * and persist the ask for product review. Prefer embedding+DeepSeek intent
+ * suggestions (auto-run or Did-you-mean buttons) when enabled.
  */
 export async function processSlackUnsupportedDirectedQuery(input: {
   channelId: string;
@@ -84,8 +97,6 @@ export async function processSlackUnsupportedDirectedQuery(input: {
     return { handled: false, reason: "not_addressed" };
   }
 
-  // Leave pure create phrasing to the directed-create handler when it can run.
-  // This path is for leftovers after create already declined or wasn't applicable.
   if (!markUnsupportedEvent(input.channelId, input.ts)) {
     return { handled: true, reason: "deduped" };
   }
@@ -109,6 +120,88 @@ export async function processSlackUnsupportedDirectedQuery(input: {
     });
   } catch (error) {
     console.error("[slack-unsupported] failed to persist:", error);
+  }
+
+  // Special mass-assign reasons keep the static guidance reply.
+  if (reason === "mass_assign_dm" || reason === "mass_assign_over_cap") {
+    try {
+      await postSlackMessage(input.channelId, formatUnsupportedSlackReply(reason), {
+        threadTs: input.threadTs ?? input.ts
+      });
+    } catch (error) {
+      console.error("[slack-unsupported] failed to reply:", error);
+    }
+    return { handled: true, reason: `unsupported_${reason}` };
+  }
+
+  if (env.slackIntentSuggestEnabled) {
+    try {
+      const decision = await matchSlackIntent({ text, isDm });
+
+      if (decision.mode === "auto") {
+        const result = await runSlackIntent(decision.intent, {
+          channelId: input.channelId,
+          userId: input.userId,
+          text,
+          ts: input.ts,
+          botId: input.botId,
+          subtype: input.subtype,
+          threadTs: input.threadTs,
+          channelType: input.channelType,
+          eventType: input.eventType
+        });
+        if (result.handled) {
+          void learnSlackIntent({
+            query: text,
+            intent: decision.intent,
+            ownerBranUserId: branUserId,
+            source: "auto"
+          }).catch((error) => {
+            console.warn("[slack-unsupported] learn auto intent failed:", error);
+          });
+          return { handled: true, reason: `intent_auto_${decision.intent}` };
+        }
+        // Fall through to suggest/generic if force-run somehow failed.
+      }
+
+      if (decision.mode === "auto" || decision.mode === "suggest") {
+        const top3 = decision.top3.slice(0, 3);
+        if (top3.length > 0) {
+          const suggestion = await createSlackIntentSuggestion({
+            slackUserId: input.userId,
+            branUserId,
+            channelId: input.channelId,
+            channelType: input.channelType ?? null,
+            threadTs: input.threadTs ?? null,
+            messageTs: input.ts,
+            originalText: text,
+            eventType: input.eventType ?? null,
+            isDm,
+            candidates: top3.map((c) => ({
+              intent: c.intent,
+              label: c.label,
+              score: c.score
+            }))
+          });
+
+          const posted = await postSlackMessage(
+            input.channelId,
+            formatDidYouMeanFallbackText(top3),
+            {
+              threadTs: input.threadTs ?? input.ts,
+              blocks: buildDidYouMeanBlocks({
+                suggestionId: suggestion.id,
+                candidates: top3
+              })
+            }
+          );
+          await setSlackIntentSuggestionReplyTs(suggestion.id, posted.ts);
+          return { handled: true, reason: "intent_suggested" };
+        }
+      }
+    } catch (error) {
+      console.error("[slack-unsupported] intent suggest failed:", error);
+    }
   }
 
   try {

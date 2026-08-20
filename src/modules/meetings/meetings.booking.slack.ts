@@ -409,6 +409,7 @@ export async function processSlackCalendarMessage(input: {
   threadTs?: string;
   channelType?: string;
   eventType?: string;
+  force?: boolean;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId) return { handled: false, reason: "ignored_bot" };
   if (input.subtype && input.subtype !== "thread_broadcast") {
@@ -416,7 +417,7 @@ export async function processSlackCalendarMessage(input: {
   }
 
   const text = input.text?.trim() ?? "";
-  if (!text || !looksLikeCalendarQuery(text)) {
+  if (!text || (!input.force && !looksLikeCalendarQuery(text))) {
     return { handled: false, reason: "not_calendar" };
   }
 

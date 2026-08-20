@@ -30,6 +30,19 @@ import { processSlackPodMessage } from "../pods/pods.slack";
 import { processSlackSafetyGuard } from "../slack-safety/slack-safety.slack";
 import { processSlackSentimentMessage } from "../sentiment/sentiment.slack";
 import {
+  parseReviewActionId,
+  processSlackReviewMessage
+} from "../review/review.slack";
+import {
+  REVIEW_COMMENT_ACTION_ID,
+  REVIEW_COMMENT_BLOCK_ID,
+  REVIEW_RESPONSE_CALLBACK_ID
+} from "../review/review.constants";
+import {
+  handleReviewSlackAction,
+  handleReviewSlackModalSubmit
+} from "../review/review.service";
+import {
   processSlackDirectedWorkCreateMessage,
   processSlackTaskListMessage,
   processSlackVoiceWorkConfirm,
@@ -41,6 +54,10 @@ import { SLACK_WORK_COMPLETE_ACTION, looksLikeSlackDmTaskCreate } from "../work/
 import { hasSlackAudioFiles, isSlackDmChannel } from "../work/work.slack-voice";
 import { processSlackUnsupportedDirectedQuery } from "../slack-unsupported/slack-unsupported.service";
 import { isSlackMessageAddressedToBran } from "../slack-safety/slack-safety.slack";
+import {
+  isDidYouMeanActionId,
+  processSlackDidYouMeanAction
+} from "../slack-intents/slack-intents.actions";
 
 async function processSlackInteractiveQuery(input: {
   channelId: string;
@@ -68,6 +85,10 @@ async function processSlackInteractiveQuery(input: {
   const sentiment = await processSlackSentimentMessage(input);
   if (sentiment.handled) {
     return sentiment;
+  }
+  const review = await processSlackReviewMessage(input);
+  if (review.handled) {
+    return review;
   }
   const idea = await processSlackIdeaMessage(input);
   if (idea.handled) {
@@ -590,7 +611,8 @@ export async function etaCronHandler(
 }
 
 /**
- * POST /api/slack/interactions — Block Kit actions (task checklist + calendar booking).
+ * POST /api/slack/interactions — Block Kit actions + modal submissions
+ * (task checklist, calendar booking, review accept/reject).
  */
 export async function slackInteractionsHandler(
   req: Request,
@@ -610,6 +632,7 @@ export async function slackInteractionsHandler(
 
     const payload = JSON.parse(rawPayload) as {
       type?: string;
+      trigger_id?: string;
       user?: { id?: string };
       channel?: { id?: string };
       response_url?: string;
@@ -619,7 +642,82 @@ export async function slackInteractionsHandler(
         value?: string;
         selected_options?: Array<{ value?: string }>;
       }>;
+      view?: {
+        callback_id?: string;
+        private_metadata?: string;
+        state?: {
+          values?: Record<
+            string,
+            Record<string, { type?: string; value?: string | null }>
+          >;
+        };
+      };
     };
+
+    // ── Modal submissions (review accept/reject comment) ──
+    if (payload.type === "view_submission") {
+      if (
+        payload.view?.callback_id !== REVIEW_RESPONSE_CALLBACK_ID ||
+        !payload.user?.id ||
+        !payload.view.private_metadata
+      ) {
+        res.status(200).json({ response_action: "clear" });
+        return;
+      }
+
+      let meta: { reviewId?: string; decision?: "accepted" | "rejected" };
+      try {
+        meta = JSON.parse(payload.view.private_metadata) as {
+          reviewId?: string;
+          decision?: "accepted" | "rejected";
+        };
+      } catch {
+        res.status(200).json({
+          response_action: "errors",
+          errors: { [REVIEW_COMMENT_BLOCK_ID]: "Invalid review context. Try again." }
+        });
+        return;
+      }
+
+      const comment =
+        payload.view.state?.values?.[REVIEW_COMMENT_BLOCK_ID]?.[REVIEW_COMMENT_ACTION_ID]
+          ?.value?.trim() ?? "";
+
+      if (!meta.reviewId || !meta.decision) {
+        res.status(200).json({
+          response_action: "errors",
+          errors: { [REVIEW_COMMENT_BLOCK_ID]: "Missing review details. Try again." }
+        });
+        return;
+      }
+      if (!comment) {
+        res.status(200).json({
+          response_action: "errors",
+          errors: { [REVIEW_COMMENT_BLOCK_ID]: "Please add a comment." }
+        });
+        return;
+      }
+
+      try {
+        await handleReviewSlackModalSubmit({
+          slackUserId: payload.user.id,
+          reviewId: meta.reviewId,
+          decision: meta.decision,
+          comment
+        });
+        res.status(200).json({ response_action: "clear" });
+      } catch (error) {
+        const message =
+          error instanceof HttpError
+            ? error.message
+            : "Could not save your response. Please try again.";
+        res.status(200).json({
+          response_action: "errors",
+          errors: { [REVIEW_COMMENT_BLOCK_ID]: message }
+        });
+      }
+      return;
+    }
 
     res.status(200).json({ ok: true });
 
@@ -627,6 +725,20 @@ export async function slackInteractionsHandler(
 
     const action = payload.actions?.[0];
     if (!action?.action_id || !payload.user?.id) return;
+
+    const reviewAction = parseReviewActionId(action.action_id);
+    if (reviewAction) {
+      if (!payload.trigger_id) return;
+      void handleReviewSlackAction({
+        slackUserId: payload.user.id,
+        reviewId: reviewAction.reviewId,
+        decision: reviewAction.decision,
+        triggerId: payload.trigger_id
+      }).catch((error) => {
+        console.error("Slack review action failed:", error);
+      });
+      return;
+    }
 
     if (action.action_id.startsWith(SLACK_CALENDAR_BOOK_SLOT_ACTION)) {
       if (!action.value) return;
@@ -649,6 +761,20 @@ export async function slackInteractionsHandler(
         responseUrl: payload.response_url
       }).catch((error) => {
         console.error("Slack calendar pick person action failed:", error);
+      });
+      return;
+    }
+
+    if (isDidYouMeanActionId(action.action_id)) {
+      if (!action.value) return;
+      void processSlackDidYouMeanAction({
+        slackUserId: payload.user.id,
+        actionId: action.action_id,
+        suggestionId: action.value,
+        channelId: payload.channel?.id,
+        responseUrl: payload.response_url
+      }).catch((error) => {
+        console.error("Slack did-you-mean action failed:", error);
       });
       return;
     }

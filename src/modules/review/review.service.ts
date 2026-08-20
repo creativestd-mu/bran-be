@@ -33,6 +33,7 @@ import {
   isSlackUserTheReviewer,
   notifyReviewerOnSlack,
   openReviewResponseModal,
+  resolveBranUserForReviewQuery,
   sendPendingReviewsReminderDm,
   updateReviewSlackCard
 } from "./review.slack";
@@ -262,9 +263,7 @@ export async function createReviewFromSlack(input: {
   | { ok: true; review: ReviewWithUsers }
   | { ok: false; field: "user" | "context" | "file"; message: string }
 > {
-  const { resolveBranUserIdForSlackUser } = await import("../work/work.slack.js");
-
-  const requesterId = await resolveBranUserIdForSlackUser(input.requesterSlackUserId);
+  const requesterId = await resolveBranUserForReviewQuery(input.requesterSlackUserId);
   if (!requesterId) {
     return {
       ok: false,
@@ -273,7 +272,7 @@ export async function createReviewFromSlack(input: {
     };
   }
 
-  const recipientId = await resolveBranUserIdForSlackUser(input.recipientSlackUserId);
+  const recipientId = await resolveBranUserForReviewQuery(input.recipientSlackUserId);
   if (!recipientId) {
     return {
       ok: false,

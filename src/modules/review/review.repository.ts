@@ -24,6 +24,23 @@ export async function findActiveUserById(userId: string) {
   });
 }
 
+export async function findActiveUserByEmail(email: string) {
+  const normalized = email.trim();
+  if (!normalized) return null;
+  return prisma.user.findFirst({
+    where: { email: { equals: normalized, mode: "insensitive" }, isActive: true },
+    select: userSelect
+  });
+}
+
+export async function findSlackMemberEmail(slackUserId: string): Promise<string | null> {
+  const member = await prisma.slackMember.findUnique({
+    where: { slackUserId },
+    select: { email: true }
+  });
+  return member?.email?.trim() || null;
+}
+
 export async function createReviewRequest(input: {
   requestedById: string;
   requestedToId: string;

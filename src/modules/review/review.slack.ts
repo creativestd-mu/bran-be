@@ -1,6 +1,7 @@
 import { env } from "../../config/env";
 import {
   getSlackBotUserId,
+  getSlackUserInfo,
   lookupSlackUserByEmail,
   openSlackModal,
   postSlackMessage,
@@ -8,7 +9,6 @@ import {
   updateSlackMessage
 } from "../attendance/attendance.slack";
 import { isSlackDmChannel } from "../work/work.slack-voice";
-import { resolveBranUserIdForSlackUser } from "../work/work.slack";
 import {
   stripSlackUserMentions,
   textMentionsSlackUser
@@ -28,7 +28,12 @@ import {
   REVIEW_RESPONSE_CALLBACK_ID
 } from "./review.constants";
 import type { ReviewWithUsers } from "./review.repository";
-import { listPendingIncoming, listReviewsForUser } from "./review.repository";
+import {
+  findActiveUserByEmail,
+  findSlackMemberEmail,
+  listPendingIncoming,
+  listReviewsForUser
+} from "./review.repository";
 
 function truncate(text: string, max: number): string {
   const trimmed = text.trim();
@@ -239,6 +244,45 @@ export async function isSlackUserTheReviewer(
   return false;
 }
 
+/**
+ * Resolve a Slack user to an active Bran user id for review Slack flows.
+ *
+ * Avoids the shared `resolveBranUserIdForSlackUser`, which caches negative
+ * lookups in-process for the whole lifetime of the server.
+ *   1. SlackMember cache (slackUserId -> email), then match an active Bran user.
+ *   2. Live `users.info` email as a fallback, self-healing the cache on hit.
+ */
+export async function resolveBranUserForReviewQuery(
+  slackUserId: string
+): Promise<string | null> {
+  const cachedEmail = await findSlackMemberEmail(slackUserId);
+  if (cachedEmail) {
+    const user = await findActiveUserByEmail(cachedEmail);
+    if (user) return user.id;
+  }
+
+  try {
+    const profile = await getSlackUserInfo(slackUserId);
+    const email = profile.profile?.email?.trim();
+    if (email) {
+      const user = await findActiveUserByEmail(email);
+      if (user) {
+        await cacheSlackMemberMapping(slackUserId, email, user.name ?? profile.real_name ?? null);
+        return user.id;
+      }
+      console.warn(
+        `[review] Slack user ${slackUserId} email ${email} has no active Bran user.`
+      );
+    } else {
+      console.warn(`[review] Slack user ${slackUserId} has no email on profile.`);
+    }
+  } catch (error) {
+    console.warn(`[review] users.info failed for ${slackUserId}:`, error);
+  }
+
+  return null;
+}
+
 export async function updateReviewSlackCard(review: ReviewWithUsers): Promise<void> {
   if (!review.slackChannelId || !review.slackMessageTs) return;
   if (!env.slackBotToken) return;
@@ -368,7 +412,7 @@ export async function sendPendingReviewsReminderDm(input: {
 }
 
 const REVIEW_QUERY_RE =
-  /\b(pending reviews?|my reviews?|review requests?|reviews? (for me|waiting|pending)|list (my )?reviews?|reviews? i (requested|sent|asked|raised)|status of (my )?reviews?|review status|my review requests?)\b/i;
+  /\b(pending reviews?|my reviews?|my review requests?|reviews? (for me|waiting|pending)|list (my )?reviews?|reviews? i (requested|sent|asked|raised)|status of (my )?reviews?|review status)\b/i;
 
 export function looksLikeReviewQuery(text: string): boolean {
   const trimmed = stripSlackUserMentions(text);
@@ -499,17 +543,27 @@ export async function processSlackReviewMessage(input: {
   userId: string;
   text?: string;
   ts: string;
+  botId?: string;
+  subtype?: string;
   channelType?: string;
   eventType?: string;
 }): Promise<{ handled: boolean; reason?: string }> {
+  if (input.botId || input.subtype === "bot_message") {
+    return { handled: false, reason: "ignored_bot" };
+  }
+
   const text = input.text ?? "";
   if (!looksLikeReviewQuery(text)) {
     return { handled: false, reason: "not_review_query" };
   }
 
+  const botUserId = await getSlackBotUserId();
+  if (botUserId && input.userId === botUserId) {
+    return { handled: false, reason: "ignored_bot" };
+  }
+
   const isDm = isSlackDmChannel(input.channelId, input.channelType);
   if (!isDm) {
-    const botUserId = await getSlackBotUserId();
     const addressed =
       input.eventType === "app_mention" ||
       (botUserId ? textMentionsSlackUser(text, botUserId) : false);
@@ -518,7 +572,7 @@ export async function processSlackReviewMessage(input: {
     }
   }
 
-  const branUserId = await resolveBranUserIdForSlackUser(input.userId);
+  const branUserId = await resolveBranUserForReviewQuery(input.userId);
   if (!branUserId) {
     await postSlackMessage(
       input.channelId,

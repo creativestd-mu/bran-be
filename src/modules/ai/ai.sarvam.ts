@@ -31,9 +31,10 @@ type SarvamErrorResponse = {
   };
 };
 
-const SARVAM_ENDPOINT = "https://api.sarvam.ai/speech-to-text-translate";
+const SARVAM_ENDPOINT = "https://api.sarvam.ai/speech-to-text";
 const SARVAM_BATCH_POLL_INTERVAL_SECONDS = 3;
 const SARVAM_BATCH_TIMEOUT_SECONDS = 600;
+const SARVAM_BATCH_UPLOAD_TIMEOUT_SECONDS = 300;
 
 const SUPPORTED_MIME_TYPES = new Set([
   "audio/wav",
@@ -82,13 +83,23 @@ function extensionForMime(mimetype: string): string {
   return map[mimetype.toLowerCase()] ?? ".wav";
 }
 
-function isAudioDurationLimitError(message: string): boolean {
+export function shouldFallbackToSarvamBatch(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
     normalized.includes("30 seconds") ||
     normalized.includes("maximum limit") ||
-    normalized.includes("batch api for longer")
+    normalized.includes("batch api for longer") ||
+    normalized.includes("prompt is too long") ||
+    normalized.includes("decoder sequence length")
   );
+}
+
+function sarvamModel(): string {
+  return env.sarvamModel || "saaras:v3";
+}
+
+function sarvamMode(): string {
+  return env.sarvamSttMode || "transcribe";
 }
 
 function getSarvamClient(): SarvamAIClient {
@@ -138,44 +149,10 @@ function mapSarvamHttpError(status: number, message: string): never {
   throw new HttpError(502, `Sarvam API returned status ${status}: ${message}`);
 }
 
-async function uploadAudioToBatchJob(
-  client: SarvamAIClient,
-  jobId: string,
-  fileName: string,
-  fileBuffer: Buffer,
-  mimetype: string
-): Promise<void> {
-  const uploadLinksResponse = await client.speechToTextTranslateJob.getUploadLinks({
-    body: {
-      job_id: jobId,
-      files: [fileName]
-    }
-  });
-
-  const uploadUrl = uploadLinksResponse.upload_urls[fileName]?.file_url;
-  if (!uploadUrl) {
-    throw new HttpError(502, "Sarvam batch upload URL was not returned");
-  }
-
-  const response = await fetch(uploadUrl, {
-    method: "PUT",
-    body: new Uint8Array(fileBuffer),
-    headers: {
-      "x-ms-blob-type": "BlockBlob",
-      "Content-Type": mimetype
-    }
-  });
-
-  if (response.status < 200 || response.status > 226) {
-    throw new HttpError(502, `Sarvam batch upload failed with status ${response.status}`);
-  }
-}
-
 async function translateAudioWithSarvamRest(params: {
   fileBuffer: Buffer;
   originalname: string;
   mimetype: string;
-  prompt?: string;
 }): Promise<SarvamTranslateResult> {
   const apiKey = env.sarvamApiKey;
   if (!apiKey) {
@@ -194,10 +171,8 @@ async function translateAudioWithSarvamRest(params: {
     filename: params.originalname,
     contentType: params.mimetype
   });
-  form.append("model", "saaras:v2.5");
-  if (params.prompt) {
-    form.append("prompt", params.prompt);
-  }
+  form.append("model", sarvamModel());
+  form.append("mode", sarvamMode());
 
   const { status, body } = await postFormData(SARVAM_ENDPOINT, form, {
     "api-subscription-key": apiKey
@@ -229,7 +204,6 @@ async function translateAudioWithSarvamBatch(params: {
   fileBuffer: Buffer;
   originalname: string;
   mimetype: string;
-  prompt?: string;
 }): Promise<SarvamTranslateResult> {
   const apiKey = env.sarvamApiKey;
   if (!apiKey) {
@@ -248,12 +222,14 @@ async function translateAudioWithSarvamBatch(params: {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "sarvam-batch-"));
 
   try {
-    const job = await client.speechToTextTranslateJob.createJob({
-      model: "saaras:v2.5",
-      prompt: params.prompt
+    const job = await client.speechToTextJob.createJob({
+      model: sarvamModel() as "saaras:v3",
+      mode: sarvamMode() as "transcribe" | "translate" | "verbatim" | "translit" | "codemix"
     });
 
-    await uploadAudioToBatchJob(client, job.jobId, fileName, params.fileBuffer, params.mimetype);
+    const uploadPath = path.join(tmpDir, fileName);
+    fs.writeFileSync(uploadPath, params.fileBuffer);
+    await job.uploadFiles([uploadPath], SARVAM_BATCH_UPLOAD_TIMEOUT_SECONDS);
     await job.start();
 
     const status = await job.waitUntilComplete(
@@ -277,12 +253,19 @@ async function translateAudioWithSarvamBatch(params: {
     const outputDir = path.join(tmpDir, "output");
     await job.downloadOutputs(outputDir);
 
-    const outputJsonPath = path.join(outputDir, `${fileName}.json`);
-    if (!fs.existsSync(outputJsonPath)) {
+    const outputName = fileResults.successful[0]?.output_file || `${fileName}.json`;
+    const outputJsonPath = path.join(outputDir, outputName);
+    const fallbackJsonPath = path.join(outputDir, `${fileName}.json`);
+    const resolvedJsonPath = fs.existsSync(outputJsonPath)
+      ? outputJsonPath
+      : fs.existsSync(fallbackJsonPath)
+        ? fallbackJsonPath
+        : fs.readdirSync(outputDir).map((name) => path.join(outputDir, name)).find((p) => p.endsWith(".json"));
+    if (!resolvedJsonPath) {
       throw new HttpError(502, "Sarvam batch transcription output was not found");
     }
 
-    const raw = JSON.parse(fs.readFileSync(outputJsonPath, "utf-8")) as SarvamSuccessResponse;
+    const raw = JSON.parse(fs.readFileSync(resolvedJsonPath, "utf-8")) as SarvamSuccessResponse;
     if (!raw.transcript?.trim()) {
       throw new HttpError(422, "Sarvam could not extract a transcript from the audio");
     }
@@ -318,8 +301,14 @@ export async function translateAudioWithSarvam(params: {
     if (
       error instanceof HttpError &&
       (error.statusCode === 400 || error.statusCode === 422) &&
-      isAudioDurationLimitError(error.message)
+      shouldFallbackToSarvamBatch(error.message)
     ) {
+      console.log("[sarvam] REST failed; using batch", {
+        model: sarvamModel(),
+        mode: sarvamMode(),
+        status: error.statusCode,
+        reason: error.message.slice(0, 240)
+      });
       return translateAudioWithSarvamBatch(params);
     }
     throw error;

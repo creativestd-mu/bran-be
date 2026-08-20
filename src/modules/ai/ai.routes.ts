@@ -54,7 +54,7 @@ aiRouter.get("/queries/:id", async (req, res, next) => {
   }
 });
 
-// 25 MB limit — Sarvam recommends audio under 30 seconds; 25 MB covers most quality settings
+// 25 MB limit — Sarvam REST is ≤30s; longer clips fall back to batch (≤2h).
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
 
 const audioUpload = multer({

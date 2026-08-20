@@ -26,6 +26,13 @@ function buildDatabaseUrlFromParts(): string {
   return sslMode ? `${baseUrl}?sslmode=${encodeURIComponent(sslMode)}` : baseUrl;
 }
 
+const SARVAM_STT_MODES = new Set(["transcribe", "translate", "verbatim", "translit", "codemix"]);
+
+function parseSarvamSttMode(value: string | undefined): string {
+  const mode = (value ?? "transcribe").trim().toLowerCase();
+  return SARVAM_STT_MODES.has(mode) ? mode : "transcribe";
+}
+
 function parseCsv(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
@@ -115,6 +122,9 @@ export const env = {
   qdrantUrl: process.env.QDRANT_URL ?? "",
   qdrantApiKey: process.env.QDRANT_API_KEY ?? "",
   sarvamApiKey: process.env.SARVAM_API_KEY ?? "",
+  /** Default saaras:v3 — REST ≤30s, batch ≤2h. v2.5 used a 228-token prompt budget. */
+  sarvamModel: process.env.SARVAM_MODEL ?? "saaras:v3",
+  sarvamSttMode: parseSarvamSttMode(process.env.SARVAM_STT_MODE),
   audioStorageDir: process.env.AUDIO_STORAGE_DIR ?? "data/audio",
   visionStorageDir: process.env.VISION_STORAGE_DIR ?? "data/visions",
   thumbnailStorageDir: process.env.THUMBNAIL_STORAGE_DIR ?? "data/thumbnails",

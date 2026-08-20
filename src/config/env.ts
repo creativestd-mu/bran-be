@@ -115,6 +115,10 @@ export const env = {
   aiProvider: process.env.AI_PROVIDER ?? "gemini",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514",
+  openrouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
+  openrouterModel: process.env.OPENROUTER_MODEL ?? "deepseek/deepseek-v4-flash-0731",
+  /** Work-unit extraction only. Defaults to OpenRouter DeepSeek; falls back if the key is missing. */
+  workExtractionProvider: process.env.WORK_EXTRACTION_PROVIDER ?? "openrouter",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-2.0-flash",
   geminiImageModel: process.env.GEMINI_IMAGE_MODEL ?? "gemini-2.0-flash-preview-image-generation",

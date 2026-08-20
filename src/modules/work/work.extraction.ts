@@ -46,12 +46,27 @@ function getGemini(): GoogleGenerativeAI {
   return geminiClient;
 }
 
-function getAiProvider(): "anthropic" | "gemini" {
+type WorkAiProvider = "anthropic" | "gemini" | "openrouter";
+
+function getAiProvider(): WorkAiProvider {
+  const requested = (env.workExtractionProvider || env.aiProvider || "").toLowerCase();
+  if (requested === "openrouter") {
+    if (env.openrouterApiKey) return "openrouter";
+    console.warn("[work.extraction] OPENROUTER_API_KEY missing; falling back to AI_PROVIDER");
+  } else if (requested === "gemini" || requested === "anthropic") {
+    return requested;
+  }
+
+  if (env.aiProvider.toLowerCase() === "openrouter" && env.openrouterApiKey) {
+    return "openrouter";
+  }
   return env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
 }
 
-function getAiModel(provider: "anthropic" | "gemini"): string {
-  return provider === "gemini" ? env.geminiModel : env.anthropicModel;
+function getAiModel(provider: WorkAiProvider): string {
+  if (provider === "gemini") return env.geminiModel;
+  if (provider === "openrouter") return env.openrouterModel;
+  return env.anthropicModel;
 }
 
 function describeLlmError(error: unknown): Record<string, unknown> {
@@ -102,7 +117,9 @@ const extractedResponseSchema = z.object({
 });
 
 function stripCodeFences(text: string): string {
-  const trimmed = text.trim();
+  const trimmed = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   return fenced ? fenced[1].trim() : trimmed;
 }
@@ -179,12 +196,61 @@ export function parseDeadlineToIso(value: string | null | undefined): string | n
   return workDeadlineAtEndOfDay(parsed).toISOString();
 }
 
+async function callOpenRouter(systemPrompt: string, userPrompt: string, model: string): Promise<string> {
+  if (!env.openrouterApiKey) {
+    throw new Error("OPENROUTER_API_KEY is not configured");
+  }
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.openrouterApiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": env.appUrl || "https://bran.app",
+      "X-Title": "Bran"
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      max_tokens: 8192,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ]
+    })
+  });
+
+  const body = (await response.json()) as {
+    error?: { message?: string };
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+  };
+
+  if (!response.ok) {
+    throw new HttpError(
+      response.status >= 400 && response.status < 600 ? response.status : 502,
+      body.error?.message || `OpenRouter returned status ${response.status}`
+    );
+  }
+
+  const content = body.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => (typeof part === "string" ? part : part.text || "")).join("");
+  }
+  return "";
+}
+
 async function callLlm(systemPrompt: string, userPrompt: string): Promise<string> {
   const provider = getAiProvider();
   const model = getAiModel(provider);
   console.log("[work.extraction] calling LLM", { provider, model, promptChars: userPrompt.length });
 
   try {
+    if (provider === "openrouter") {
+      return await callOpenRouter(systemPrompt, userPrompt, model);
+    }
+
     if (provider === "gemini") {
       const gemini = getGemini().getGenerativeModel({
         model,
@@ -217,7 +283,9 @@ export async function callWorkLlm(systemPrompt: string, userPrompt: string): Pro
 
 export function isWorkExtractionAiConfigured(): boolean {
   const provider = getAiProvider();
-  return provider === "gemini" ? Boolean(env.geminiApiKey) : Boolean(env.anthropicApiKey);
+  if (provider === "gemini") return Boolean(env.geminiApiKey);
+  if (provider === "openrouter") return Boolean(env.openrouterApiKey);
+  return Boolean(env.anthropicApiKey);
 }
 
 export function getWorkExtractionAiInfo() {
@@ -262,7 +330,7 @@ function buildExtractionSystemPrompt(options: {
     options.orgNameHint +
     options.teamHint +
     slackMentionHint +
-    "assigneeName at the work unit level means the whole task is for that person; assigneeName on a step means only that step is for them; set to null if unclear; only use exact names from the team members list; " +
+    "assigneeName is who must DO the work, not who is helped, shown something, or receiving a deliverable. If the speaker says I/me need to help/show/create for someone, leave assigneeName null. Set assigneeName only when the source says that person needs to / will / should do it. Use a team-list name when it is clearly the same person (Amisha ≈ Amit Shah, Dhananjay ≈ Dhananjaya/Narayan if context matches). Set to null if unclear; " +
     "sourceExcerpt must be a verbatim quote from the source that this work unit or step was derived from; use null only if no specific phrase can be identified; " +
     "deadline must be ISO-8601 resolved relative to the provided current date-time: date-only is fine when no clock time is mentioned (the system treats it as 20:00 Asia/Kolkata that day); " +
     "if no deadline is mentioned, use the current date — assume the work is due that same day; do not leave deadline null; " +

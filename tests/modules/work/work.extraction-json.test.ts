@@ -20,6 +20,14 @@ describe("parseLlmWorkUnitsJson", () => {
     expect(parsed.workUnits[0].title).toBe("Finish Karauzal");
   });
 
+  it("strips DeepSeek think tags before parsing", () => {
+    const parsed = parseLlmWorkUnitsJson(
+      '<think>planning</think>{"workUnits":[{"title":"Reply to Mrittika"}]}'
+    ) as { workUnits: Array<{ title: string }> };
+
+    expect(parsed.workUnits[0].title).toBe("Reply to Mrittika");
+  });
+
   it("recovers a truncated workUnits array", () => {
     const parsed = parseLlmWorkUnitsJson(
       '{"workUnits":[{"title":"Google Drive search","context":"Dhananjay"},{"title":"Show Bran to Neha","context":"demo"'

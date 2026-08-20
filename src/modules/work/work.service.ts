@@ -1280,16 +1280,15 @@ async function createWorkUnitsFromSlackVoiceDraft(input: {
   }
 
   const titles = formatSlackVoiceCreatedUnits(result.workUnits, input.draft.branUserId);
+  const emptyFollowUp =
+    result.skipReason === "extract_error"
+      ? "I heard the note but couldn’t turn it into work units (extractor error). Reply with edited text, or `create` to try the same transcript again."
+      : result.skipReason === "all_deduped"
+        ? "I heard the note; matching open work units already exist, so I didn’t create duplicates."
+        : "I didn’t find any new work units to create (they may already exist).\nReply in this thread with edited text to try again, or `create` to reuse the transcript.";
   const reply =
     count === 0
-      ? [
-          "I heard:",
-          "",
-          input.finalText,
-          "",
-          "I didn’t find any new work units to create (they may already exist).",
-          "Reply in this thread with edited text to try again, or `create` to reuse the transcript."
-        ].join("\n")
+      ? ["I heard:", "", input.finalText, "", emptyFollowUp].join("\n")
       : [
           "I heard:",
           "",

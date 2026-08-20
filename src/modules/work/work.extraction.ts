@@ -107,6 +107,63 @@ function stripCodeFences(text: string): string {
   return fenced ? fenced[1].trim() : trimmed;
 }
 
+function recoverTruncatedWorkUnitsJson(text: string): unknown {
+  const key = text.search(/"workUnits"\s*:\s*\[/);
+  if (key < 0) {
+    throw new SyntaxError("no workUnits array");
+  }
+
+  const bracket = text.indexOf("[", key);
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let lastCompleteObjectEnd = -1;
+
+  for (let i = bracket + 1; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) lastCompleteObjectEnd = i;
+    }
+  }
+
+  if (lastCompleteObjectEnd < 0) {
+    throw new SyntaxError("no complete work unit object");
+  }
+
+  return JSON.parse(`{"workUnits":${text.slice(bracket, lastCompleteObjectEnd + 1)}]}`);
+}
+
+/** Parse LLM JSON, including markdown fences and truncated workUnits arrays. */
+export function parseLlmWorkUnitsJson(raw: string): unknown {
+  const stripped = stripCodeFences(raw);
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    const start = stripped.search(/[{\[]/);
+    if (start < 0) {
+      throw new SyntaxError("LLM output contained no JSON");
+    }
+    const slice = stripped.slice(start);
+    try {
+      return JSON.parse(slice);
+    } catch {
+      return recoverTruncatedWorkUnitsJson(slice);
+    }
+  }
+}
+
 export function parseDeadlineToIso(value: string | null | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -132,7 +189,7 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
       const gemini = getGemini().getGenerativeModel({
         model,
         systemInstruction: systemPrompt,
-        generationConfig: { maxOutputTokens: 2048, temperature: 0.2 }
+        generationConfig: { maxOutputTokens: 8192, temperature: 0.2 }
       });
       const result = await gemini.generateContent(userPrompt);
       return result.response.text() || "";
@@ -140,7 +197,7 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
 
     const response = await getAnthropic().messages.create({
       model,
-      max_tokens: 2048,
+      max_tokens: 8192,
       temperature: 0.2,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }]
@@ -223,7 +280,7 @@ export function deadlineOrSameDay(
 async function parseExtractedWorkUnits(raw: string, now: Date): Promise<ExtractedWorkUnit[]> {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(stripCodeFences(raw));
+    parsed = parseLlmWorkUnitsJson(raw);
   } catch (err) {
     console.error("[work.extraction] LLM returned non-JSON", {
       rawLength: raw.length,
@@ -342,20 +399,38 @@ export async function extractWorkUnitsFromText(
     verticalCount: availableVerticals.length
   });
 
-  const raw = await callLlm(systemPrompt, userPrompt);
+  let raw = await callLlm(systemPrompt, userPrompt);
   console.log("[work.extraction] LLM raw response", {
     kind: options.kind,
     rawChars: raw.length,
     rawPreview: previewWorkText(raw, 400)
   });
 
-  const units = await parseExtractedWorkUnits(raw, now);
-  console.log("[work.extraction] parsed", {
-    kind: options.kind,
-    count: units.length,
-    titles: units.map((unit) => unit.title)
-  });
-  return units;
+  try {
+    const units = await parseExtractedWorkUnits(raw, now);
+    console.log("[work.extraction] parsed", {
+      kind: options.kind,
+      count: units.length,
+      titles: units.map((unit) => unit.title)
+    });
+    return units;
+  } catch (firstError) {
+    console.warn("[work.extraction] first parse failed; retrying compact JSON", {
+      kind: options.kind,
+      error: firstError instanceof Error ? firstError.message : String(firstError)
+    });
+    raw = await callLlm(
+      `${systemPrompt} Reply with one compact JSON object only. Keep titles short. Omit sourceExcerpt if needed.`,
+      userPrompt
+    );
+    const units = await parseExtractedWorkUnits(raw, now);
+    console.log("[work.extraction] parsed after retry", {
+      kind: options.kind,
+      count: units.length,
+      titles: units.map((unit) => unit.title)
+    });
+    return units;
+  }
 }
 
 export async function extractWorkUnitsFromTranscript(

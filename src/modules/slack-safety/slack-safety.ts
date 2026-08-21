@@ -3,8 +3,9 @@ import { looksLikeCompetitorQuery } from "../competitor-content/competitor-conte
 import { looksLikeAddIdeaQuery, looksLikeListIdeasQuery } from "../ideation/ideation.slack";
 import { looksLikeCalendarQuery } from "../meetings/meetings.booking.slack";
 import { looksLikePodQuery } from "../pods/pods.slack";
+import { looksLikeReviewQuery } from "../review/review.slack";
 import { looksLikeSentimentQuery } from "../sentiment/sentiment.slack";
-import { callWorkLlm, isWorkExtractionAiConfigured } from "../work/work.extraction";
+import { callClassifierLlm, isClassifierAiConfigured } from "../work/work.extraction";
 import {
   looksLikeCreateWorkQuery,
   looksLikeChannelMassAssignQuery,
@@ -119,6 +120,9 @@ export function looksLikeSafeOperationalQuery(text: string): boolean {
     return true;
   }
   if (looksLikeTaskListQuery(trimmed) && trimmed.length <= SAFE_OPERATIONAL_MAX_CHARS) {
+    return true;
+  }
+  if (looksLikeReviewQuery(trimmed) && trimmed.length <= SAFE_OPERATIONAL_MAX_CHARS) {
     return true;
   }
   if (parseAttendanceMessage(trimmed) && trimmed.length <= SAFE_ATTENDANCE_MAX_CHARS) {
@@ -247,12 +251,14 @@ export function honorLlmVerdict(verdict: SlackSafetyVerdict | null): SlackSafety
 
 async function classifySlackPromptWithLlm(text: string): Promise<SlackSafetyVerdict | null> {
   const { system, user } = safetyClassifierPrompt(text);
+  const started = Date.now();
   const raw = await Promise.race([
-    callWorkLlm(system, user),
+    callClassifierLlm(system, user),
     new Promise<string>((_, reject) => {
       setTimeout(() => reject(new Error("slack_safety_llm_timeout")), LLM_TIMEOUT_MS);
     })
   ]);
+  console.log("[slack-safety] classifier", { ms: Date.now() - started, chars: text.length });
   return honorLlmVerdict(parseSafetyClassifierResponse(raw));
 }
 
@@ -273,7 +279,7 @@ export async function evaluateSlackPromptSafety(
     return { allowed: true, category: "ok", layer: "allowlist" };
   }
 
-  const useLlm = options?.useLlm !== false && isSafetyLlmEnabled() && isWorkExtractionAiConfigured();
+  const useLlm = options?.useLlm !== false && isSafetyLlmEnabled() && isClassifierAiConfigured();
   if (!useLlm) {
     return heuristic;
   }

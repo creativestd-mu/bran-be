@@ -196,7 +196,30 @@ export function parseDeadlineToIso(value: string | null | undefined): string | n
   return workDeadlineAtEndOfDay(parsed).toISOString();
 }
 
-async function callOpenRouter(systemPrompt: string, userPrompt: string, model: string): Promise<string> {
+type LlmCallOptions = {
+  provider?: WorkAiProvider;
+  maxTokens?: number;
+  temperature?: number;
+  purpose?: string;
+};
+
+/** App-wide AI_PROVIDER (Gemini by default) — not the DeepSeek work-extraction route. */
+function getGeneralAiProvider(): WorkAiProvider {
+  const requested = (env.aiProvider || "").toLowerCase();
+  if (requested === "openrouter" && env.openrouterApiKey) return "openrouter";
+  if (requested === "gemini" && env.geminiApiKey) return "gemini";
+  if (requested === "anthropic" && env.anthropicApiKey) return "anthropic";
+  if (env.geminiApiKey) return "gemini";
+  if (env.anthropicApiKey) return "anthropic";
+  return getAiProvider();
+}
+
+async function callOpenRouter(
+  systemPrompt: string,
+  userPrompt: string,
+  model: string,
+  options?: { maxTokens?: number; temperature?: number }
+): Promise<string> {
   if (!env.openrouterApiKey) {
     throw new Error("OPENROUTER_API_KEY is not configured");
   }
@@ -211,8 +234,8 @@ async function callOpenRouter(systemPrompt: string, userPrompt: string, model: s
     },
     body: JSON.stringify({
       model,
-      temperature: 0.2,
-      max_tokens: 8192,
+      temperature: options?.temperature ?? 0.2,
+      max_tokens: options?.maxTokens ?? 8192,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
@@ -241,21 +264,33 @@ async function callOpenRouter(systemPrompt: string, userPrompt: string, model: s
   return "";
 }
 
-async function callLlm(systemPrompt: string, userPrompt: string): Promise<string> {
-  const provider = getAiProvider();
+async function callLlm(
+  systemPrompt: string,
+  userPrompt: string,
+  options?: LlmCallOptions
+): Promise<string> {
+  const provider = options?.provider ?? getAiProvider();
   const model = getAiModel(provider);
-  console.log("[work.extraction] calling LLM", { provider, model, promptChars: userPrompt.length });
+  const maxTokens = options?.maxTokens ?? 8192;
+  const temperature = options?.temperature ?? 0.2;
+  console.log("[work.extraction] calling LLM", {
+    purpose: options?.purpose ?? "extract",
+    provider,
+    model,
+    maxTokens,
+    promptChars: userPrompt.length
+  });
 
   try {
     if (provider === "openrouter") {
-      return await callOpenRouter(systemPrompt, userPrompt, model);
+      return await callOpenRouter(systemPrompt, userPrompt, model, { maxTokens, temperature });
     }
 
     if (provider === "gemini") {
       const gemini = getGemini().getGenerativeModel({
         model,
         systemInstruction: systemPrompt,
-        generationConfig: { maxOutputTokens: 8192, temperature: 0.2 }
+        generationConfig: { maxOutputTokens: maxTokens, temperature }
       });
       const result = await gemini.generateContent(userPrompt);
       return result.response.text() || "";
@@ -263,8 +298,8 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
 
     const response = await getAnthropic().messages.create({
       model,
-      max_tokens: 8192,
-      temperature: 0.2,
+      max_tokens: maxTokens,
+      temperature,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }]
     });
@@ -281,11 +316,28 @@ export async function callWorkLlm(systemPrompt: string, userPrompt: string): Pro
   return callLlm(systemPrompt, userPrompt);
 }
 
-export function isWorkExtractionAiConfigured(): boolean {
-  const provider = getAiProvider();
+/** Fast classifier path — Gemini/AI_PROVIDER, not DeepSeek work extraction. */
+export async function callClassifierLlm(systemPrompt: string, userPrompt: string): Promise<string> {
+  return callLlm(systemPrompt, userPrompt, {
+    provider: getGeneralAiProvider(),
+    maxTokens: 256,
+    temperature: 0,
+    purpose: "classifier"
+  });
+}
+
+function isProviderConfigured(provider: WorkAiProvider): boolean {
   if (provider === "gemini") return Boolean(env.geminiApiKey);
   if (provider === "openrouter") return Boolean(env.openrouterApiKey);
   return Boolean(env.anthropicApiKey);
+}
+
+export function isWorkExtractionAiConfigured(): boolean {
+  return isProviderConfigured(getAiProvider());
+}
+
+export function isClassifierAiConfigured(): boolean {
+  return isProviderConfigured(getGeneralAiProvider());
 }
 
 export function getWorkExtractionAiInfo() {

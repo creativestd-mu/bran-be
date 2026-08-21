@@ -1,7 +1,7 @@
 import { env } from "../../config/env";
 import { generateEmbedding } from "../ai/ai.gemini-embeddings";
 import { isQdrantConfigured, queryVectors, upsertVectors } from "../ai/ai.qdrant";
-import { callWorkLlm, isWorkExtractionAiConfigured } from "../work/work.extraction";
+import { callClassifierLlm, isClassifierAiConfigured } from "../work/work.extraction";
 import {
   getSlackIntent,
   isSlackIntentId,
@@ -164,7 +164,7 @@ async function refineWithDeepSeek(
   query: string,
   candidates: IntentCandidate[]
 ): Promise<{ intent: SlackIntentId | null; confidence: number; top3: SlackIntentId[] } | null> {
-  if (!isWorkExtractionAiConfigured()) return null;
+  if (!isClassifierAiConfigured()) return null;
 
   const catalogLines = SLACK_INTENT_CATALOG.map(
     (entry) => `- ${entry.id}: ${entry.label} — ${entry.description}`
@@ -209,7 +209,7 @@ async function refineWithDeepSeek(
   ].join("\n");
 
   try {
-    const raw = await callWorkLlm(systemPrompt, userPrompt);
+    const raw = await callClassifierLlm(systemPrompt, userPrompt);
     const stripped = raw
       .replace(/<think>[\s\S]*?<\/think>/gi, "")
       .replace(/^```(?:json)?\s*|\s*```$/gi, "")
@@ -240,7 +240,7 @@ async function refineWithDeepSeek(
 
     return { intent, confidence, top3 };
   } catch (error) {
-    console.warn("[slack-intents] DeepSeek refine failed:", error);
+    console.warn("[slack-intents] intent refine failed:", error);
     return null;
   }
 }

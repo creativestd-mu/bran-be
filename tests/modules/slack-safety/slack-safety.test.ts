@@ -31,9 +31,13 @@ describe("slack prompt safety", () => {
     expect(looksLikeSafeOperationalQuery("sentiment this week")).toBe(true);
     expect(looksLikeSafeOperationalQuery("my ideas")).toBe(true);
     expect(looksLikeSafeOperationalQuery("list my tasks")).toBe(true);
+    expect(looksLikeSafeOperationalQuery("pending reviews")).toBe(true);
+    expect(looksLikeSafeOperationalQuery("my reviews")).toBe(true);
     expect(looksLikeSafeOperationalQuery("ok")).toBe(true);
-    expect(looksLikeSafeOperationalQuery("idea: film a founder night recap")).toBe(false);
-    expect(looksLikeBranPrompt("idea: film a founder night recap")).toBe(true);
+    expect(looksLikeSafeOperationalQuery("I have an idea about a founder night recap")).toBe(
+      false
+    );
+    expect(looksLikeBranPrompt("I have an idea about a founder night recap")).toBe(true);
   });
 
   it("blocks sexual, hate, jailbreak, and self-harm prompts", () => {

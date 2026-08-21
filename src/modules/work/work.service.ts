@@ -64,6 +64,7 @@ import {
   classifyWorkUnitsForTaskList,
   collectSlackUserMentions,
   formatSlackTaskListBlocks,
+  buildDirectedSlackCreateFallback,
   looksLikeChannelMassAssignQuery,
   looksLikeOverdueTaskQuery,
   looksLikeSlackDmTaskCreate,
@@ -453,6 +454,8 @@ async function ingestWorkFromText(input: {
   preferredAssigneeUserId?: string | null;
   useLedger: boolean;
   throwOnExtractError: boolean;
+  /** When LLM returns nothing (or errors), synthesize one unit from the message. */
+  fallbackOnEmpty?: boolean;
 }) {
   if (input.useLedger && input.sourceType && input.sourceId) {
     const existing = await findWorkUnitSource(input.sourceType, input.sourceId);
@@ -487,7 +490,8 @@ async function ingestWorkFromText(input: {
     ...getWorkExtractionAiInfo()
   });
 
-  let extracted: Awaited<ReturnType<typeof extractWorkUnitsFromTranscript>>;
+  let extracted: Awaited<ReturnType<typeof extractWorkUnitsFromTranscript>> = [];
+  let usedFallback = false;
   try {
     extracted = await extractWorkUnitsFromText(input.text, {
       kind: input.extractionKind,
@@ -504,23 +508,50 @@ async function ingestWorkFromText(input: {
       extractError,
       ...getWorkExtractionAiInfo()
     });
-    if (input.useLedger && input.sourceType && input.sourceId) {
-      await recordWorkUnitSource({
-        sourceType: input.sourceType,
-        sourceId: input.sourceId,
-        status: "ERROR",
-        workUnitCount: 0,
-        errorMessage: extractError
+
+    if (input.fallbackOnEmpty) {
+      const fallback = buildDirectedSlackCreateFallback(input.text);
+      if (fallback) {
+        extracted = [fallback];
+        usedFallback = true;
+        console.log("[work.ingest] directed-create fallback after extract error", {
+          title: fallback.title,
+          assigneeName: fallback.assigneeName
+        });
+      }
+    }
+
+    if (!usedFallback) {
+      if (input.useLedger && input.sourceType && input.sourceId) {
+        await recordWorkUnitSource({
+          sourceType: input.sourceType,
+          sourceId: input.sourceId,
+          status: "ERROR",
+          workUnitCount: 0,
+          errorMessage: extractError
+        });
+      }
+      if (input.throwOnExtractError) throw error;
+      return {
+        transcript: input.text,
+        workUnits: [],
+        taggingMappings: [],
+        skipReason: "extract_error",
+        extractError
+      };
+    }
+  }
+
+  if (extracted.length === 0 && input.fallbackOnEmpty) {
+    const fallback = buildDirectedSlackCreateFallback(input.text);
+    if (fallback) {
+      extracted = [fallback];
+      usedFallback = true;
+      console.log("[work.ingest] directed-create fallback after empty LLM", {
+        title: fallback.title,
+        assigneeName: fallback.assigneeName
       });
     }
-    if (input.throwOnExtractError) throw error;
-    return {
-      transcript: input.text,
-      workUnits: [],
-      taggingMappings: [],
-      skipReason: "extract_error",
-      extractError
-    };
   }
 
   const persisted = await persistExtractedUnits(
@@ -542,6 +573,8 @@ async function ingestWorkFromText(input: {
     if (extracted.length === 0) skipReason = "llm_returned_empty";
     else if (persisted.skippedDedup === extracted.length) skipReason = "all_deduped";
     else skipReason = "none_persisted";
+  } else if (usedFallback) {
+    skipReason = "fallback_defaults";
   }
 
   if (input.useLedger && input.sourceType && input.sourceId) {
@@ -560,6 +593,7 @@ async function ingestWorkFromText(input: {
     created: workUnits.length,
     skippedDedup: persisted.skippedDedup,
     skipReason: skipReason ?? null,
+    usedFallback,
     titles: extracted.map((unit) => unit.title)
   });
 
@@ -569,7 +603,8 @@ async function ingestWorkFromText(input: {
     taggingMappings: workUnits.flatMap((unit) => unit.taggingMappings ?? []),
     skipReason,
     extractedCount: extracted.length,
-    skippedDedupCount: persisted.skippedDedup
+    skippedDedupCount: persisted.skippedDedup,
+    usedFallback
   };
 }
 
@@ -880,15 +915,18 @@ export async function processSlackDirectedWorkCreateMessage(input: {
     sourceId,
     preferredAssigneeUserId,
     useLedger: true,
-    throwOnExtractError: false
+    throwOnExtractError: false,
+    fallbackOnEmpty: true
   });
 
   const count = result.workUnits.length;
   const titles = formatSlackVoiceCreatedUnits(result.workUnits, branUserId);
   const reply =
     count === 0
-      ? "I didn’t find any new work units to create from that (they may already exist, or it didn’t look like a task). Try “add task: …” or say who it’s for."
-      : `Created ${count} work unit${count === 1 ? "" : "s"}:\n${titles}`;
+      ? result.skipReason === "all_deduped"
+        ? "I already have a similar open task for that — nothing new to create."
+        : "I didn’t find any new work units to create from that (they may already exist, or it didn’t look like a task). Try “add task: …” or say who it’s for."
+      : `${result.usedFallback ? "Created 1 work unit (from your message):\n" : `Created ${count} work unit${count === 1 ? "" : "s"}:\n`}${titles}`;
 
   await postSlackMessage(input.channelId, reply, replyOpts);
   console.log("[work.slack-create] created", {
@@ -1016,7 +1054,9 @@ export async function processSlackTaskListMessage(input: {
     appUrl: env.appUrl,
     ownerName,
     listUserId: branUserId,
-    includeOverdue
+    includeOverdue,
+    // Only the owner gets interactive checkboxes; peers see a read-only list.
+    interactive: !viewingOther
   });
 
   await postSlackMessage(input.channelId, listMessage.text, {
@@ -1185,7 +1225,8 @@ export async function processSlackWorkChecklistAction(input: {
       appUrl: env.appUrl,
       ownerName: owner,
       listUserId: meta.userId,
-      includeOverdue: meta.includeOverdue
+      includeOverdue: meta.includeOverdue,
+      interactive: meta.userId === branUserId
     });
     // Keep the original heading/label from the posted message when we can.
     const headingBlock = input.messageBlocks?.find((block) => parseSlackTaskListMeta(block.block_id));

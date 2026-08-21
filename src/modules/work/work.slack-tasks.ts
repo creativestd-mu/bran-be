@@ -6,7 +6,7 @@ import {
   wallClockToUtc
 } from "../../utils/timezone";
 import { parseAttendanceMessage } from "../attendance/attendance.parser";
-import { implicitWorkDeadline, isWorkDeadlineOverdue } from "./work.due-fields";
+import { implicitWorkDeadline, isWorkDeadlineOverdue, workDeadlineAtEndOfDay } from "./work.due-fields";
 import { callWorkLlm, isWorkExtractionAiConfigured } from "./work.extraction";
 import { isAcceptAsIsConfirmReply } from "./work.slack-voice";
 
@@ -223,6 +223,118 @@ export function textMentionsSlackUser(text: string, slackUserId: string): boolea
   if (!slackUserId) return false;
   const escaped = slackUserId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`<@${escaped}(?:\\|[^>]+)?>`, "i").test(text);
+}
+
+const FALLBACK_ASSIGNEE_RESERVED = new Set([
+  "everyone",
+  "everybody",
+  "all",
+  "me",
+  "myself",
+  "us",
+  "today",
+  "tomorrow",
+  "yesterday",
+  "this",
+  "that",
+  "the",
+  "a",
+  "an",
+  "my",
+  "our",
+  "your"
+]);
+
+/**
+ * When the LLM returns no work units for a directed Slack "add task" message,
+ * synthesize one unit with three defaults:
+ * 1) title — from "about/regarding …" or stripped create phrasing
+ * 2) assigneeName — from "for <Name>" when present (else null → requester / @tag)
+ * 3) context — the cleaned original message
+ */
+export function buildDirectedSlackCreateFallback(
+  text: string,
+  now: Date = new Date()
+): {
+  title: string;
+  context: string;
+  status: "OPEN";
+  projectName: null;
+  assigneeName: string | null;
+  sourceExcerpt: string;
+  steps: Array<{
+    description: string;
+    deadline: string;
+    assigneeName: string | null;
+    sourceExcerpt: string;
+  }>;
+} | null {
+  const cleaned = stripSlackUserMentions(text).replace(/\s+/g, " ").trim();
+  if (cleaned.length < 3) return null;
+
+  let assigneeName: string | null = null;
+  const beforeAbout = cleaned
+    .replace(/\b(?:about|regarding|\bre)\s+.+$/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const forMatch = beforeAbout.match(
+    /\bfor\s+([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*)?)\b/i
+  );
+  if (forMatch?.[1]) {
+    const candidate = forMatch[1].trim();
+    const first = candidate.split(/\s+/)[0]?.toLowerCase() ?? "";
+    if (first && !FALLBACK_ASSIGNEE_RESERVED.has(first)) {
+      assigneeName = candidate;
+    }
+  }
+
+  let title = "";
+  const aboutMatch = cleaned.match(/\b(?:about|regarding|re)\s+(.+)$/i);
+  if (aboutMatch?.[1]?.trim()) {
+    title = aboutMatch[1].trim();
+  } else {
+    const afterColon = cleaned.match(/:\s*(.+)$/);
+    if (afterColon?.[1]?.trim() && afterColon[1].trim().length >= 3) {
+      title = afterColon[1].trim();
+    } else {
+      title = cleaned
+        .replace(
+          /^(?:please\s+)?(?:add|create|log|capture|note|assign)\s+(?:a\s+|an\s+|the\s+|this\s+|these\s+|some\s+)?(?:new\s+)?(?:task|to-?do|todo|work unit|action item|something)?s?\b[:\s-]*/i,
+          ""
+        )
+        .replace(/\bfor\s+[A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*)?\b/i, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+  }
+
+  title = title.replace(/^[:\-–—\s]+|[:\-–—\s]+$/g, "").trim();
+  if (title.length < 2) {
+    title = cleaned.slice(0, 80).trim();
+  }
+  if (title.length > 120) {
+    title = `${title.slice(0, 117).trim()}...`;
+  }
+
+  const deadline = workDeadlineAtEndOfDay(now).toISOString();
+  const excerpt = cleaned.slice(0, 280);
+
+  return {
+    title,
+    context: cleaned,
+    status: "OPEN",
+    projectName: null,
+    assigneeName,
+    sourceExcerpt: excerpt,
+    steps: [
+      {
+        description: title,
+        deadline,
+        assigneeName,
+        sourceExcerpt: excerpt
+      }
+    ]
+  };
 }
 
 function isReservedTaskListName(value: string): boolean {
@@ -894,7 +1006,13 @@ export function formatSlackTaskListBlocks(input: {
   ownerName?: string;
   listUserId: string;
   includeOverdue: boolean;
+  /**
+   * When true (default), pending tasks render as interactive checkboxes.
+   * When false (viewing someone else's list), render a plain read-only list.
+   */
+  interactive?: boolean;
 }): { text: string; blocks: Array<Record<string, unknown>> } {
+  const interactive = input.interactive !== false;
   const text = formatSlackTaskListMessage(input);
   const heading = input.ownerName
     ? `${input.ownerName}'s tasks by due date`
@@ -914,23 +1032,27 @@ export function formatSlackTaskListBlocks(input: {
         type: "mrkdwn",
         text: `*${escapeSlackMrkdwn(heading)} · ${escapeSlackMrkdwn(input.range.label)}*`
       }
-    },
-    {
-      type: "context",
-      elements: [{ type: "mrkdwn", text: "Check a box to mark that task done in Bran." }]
-    },
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: `*Pending (${input.pending.length})*` }
     }
   ];
+
+  if (interactive) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: "Check a box to mark that task done in Bran." }]
+    });
+  }
+
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: `*Pending (${input.pending.length})*` }
+  });
 
   if (pendingShown.length === 0) {
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: "_None._" }
     });
-  } else {
+  } else if (interactive) {
     for (const item of pendingShown) {
       blocks.push({
         type: "actions",
@@ -960,6 +1082,26 @@ export function formatSlackTaskListBlocks(input: {
         ]
       });
     }
+  } else {
+    const linkFor = (id: string) =>
+      input.appUrl ? `${input.appUrl.replace(/\/$/, "")}/work/${id}` : "";
+    const lines = pendingShown.map((item) => {
+      const due = item.overdue
+        ? `overdue · due ${formatDue(item.dueAt)}`
+        : `due ${formatDue(item.dueAt)}`;
+      const title = escapeSlackMrkdwn(item.title);
+      const link = linkFor(item.id);
+      return link ? `• *<${link}|${title}>* — ${due}` : `• *${title}* — ${due}`;
+    });
+    if (input.pending.length > pendingShown.length) {
+      lines.push(
+        `_…and ${input.pending.length - pendingShown.length} more pending. Ask for a narrower date._`
+      );
+    }
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: lines.join("\n") }
+    });
   }
 
   blocks.push({

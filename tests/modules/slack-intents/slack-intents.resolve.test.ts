@@ -64,13 +64,34 @@ describe("calendar vs task create collision", () => {
 });
 
 describe("deterministic resolver compounds", () => {
-  it("flags genuine multi-intent messages as compound", () => {
+  it("flags genuine multi-intent messages as compound when joined with and/also", () => {
     const resolved = resolveDeterministicSlackIntents(
       "show sentiment this week and list my tasks"
     );
     expect(resolved.mode).toBe("compound");
     if (resolved.mode === "compound") {
       expect(resolved.intents).toEqual(expect.arrayContaining(["sentiment", "list_tasks"]));
+    }
+  });
+
+  it("keeps a clear list-tasks ask as a single resolve", () => {
+    const resolved = resolveDeterministicSlackIntents(
+      "<@UBRAN> <@UDHAN>'s task for this week"
+    );
+    expect(resolved.mode).toBe("single");
+    if (resolved.mode === "single") {
+      expect(resolved.intent).toBe("list_tasks");
+      expect(resolved.hits).toHaveLength(1);
+      expect(resolved.hits[0].intent).toBe("list_tasks");
+    }
+  });
+
+  it("does not compound overlapping strong matches without an and/also cue", () => {
+    const listOnly = resolveDeterministicSlackIntents("what are my tasks today");
+    expect(listOnly.mode).toBe("single");
+    if (listOnly.mode === "single") {
+      expect(listOnly.intent).toBe("list_tasks");
+      expect(listOnly.hits.map((h) => h.intent)).toEqual(["list_tasks"]);
     }
   });
 });

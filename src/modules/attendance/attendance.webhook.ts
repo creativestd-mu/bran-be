@@ -113,10 +113,10 @@ async function processSlackInteractiveQuery(input: {
   const resolved = resolveDeterministicSlackIntents(text);
   const hits = filterHitsForChannel(resolved.hits, isDm);
 
-  // Compound: confirm once before any side effects.
+  // Compound: confirm once before any side effects — only when resolver says so.
   if (resolved.mode === "compound") {
-    const compoundIntents = hits
-      .map((h) => h.intent)
+    const compoundIntents = resolved.intents
+      .filter((id) => hits.some((h) => h.intent === id))
       .filter((id): id is SlackIntentId => isSlackIntentId(id));
 
     if (compoundIntents.length >= 2) {
@@ -169,10 +169,18 @@ async function processSlackInteractiveQuery(input: {
         console.error("[slack-intents] compound confirm failed:", error);
       }
     }
+    // Filtered down to one intent — treat as single below.
   }
 
-  if (resolved.mode === "single") {
-    const intent = hits[0]?.intent ?? resolved.intent;
+  if (resolved.mode === "single" || (resolved.mode === "compound" && hits.length === 1)) {
+    const intent =
+      resolved.mode === "single"
+        ? resolved.intent
+        : hits[0]?.intent;
+    if (!intent) {
+      return { handled: false, reason: "empty_resolve" };
+    }
+
     logSlackIntentRoute({
       channelId: input.channelId,
       ts: input.ts,

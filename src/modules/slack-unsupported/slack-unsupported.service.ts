@@ -5,11 +5,11 @@ import { HttpError } from "../../utils/httpError";
 import { isSlackMessageAddressedToBran } from "../slack-safety/slack-safety.slack";
 import { isSlackDmChannel } from "../work/work.slack-voice";
 import { resolveBranUserIdForSlackUser } from "../work/work.slack";
-import { runSlackIntent } from "../slack-intents/slack-intents.dispatch";
 import { matchSlackIntent } from "../slack-intents/slack-intents.matcher";
 import {
   buildDidYouMeanBlocks,
-  formatDidYouMeanFallbackText
+  formatDidYouMeanFallbackText,
+  padTop3IntentCandidates
 } from "../slack-intents/slack-intents.reply";
 import {
   createSlackIntentSuggestion,
@@ -67,9 +67,8 @@ export function formatUnsupportedSlackReply(reason?: string): string {
 }
 
 /**
- * When a DM or @Bran message wasn't handled by any feature, reply clearly
- * and persist the ask for product review. Prefer embedding+DeepSeek intent
- * suggestions (auto-run or Did-you-mean buttons) when enabled.
+ * When a DM or @Bran message wasn't handled by any feature, persist the ask
+ * and immediately show three Did-you-mean options (never silent auto-run).
  */
 export async function processSlackUnsupportedDirectedQuery(input: {
   channelId: string;
@@ -136,61 +135,39 @@ export async function processSlackUnsupportedDirectedQuery(input: {
   if (env.slackIntentSuggestEnabled) {
     try {
       const decision = await matchSlackIntent({ text, isDm });
+      const top3 = padTop3IntentCandidates(decision.top3, { isDm, limit: 3 });
 
-      if (decision.mode === "auto") {
-        const result = await runSlackIntent(decision.intent, {
+      if (top3.length > 0) {
+        const suggestion = await createSlackIntentSuggestion({
+          slackUserId: input.userId,
+          branUserId,
           channelId: input.channelId,
-          userId: input.userId,
-          text,
-          ts: input.ts,
-          botId: input.botId,
-          subtype: input.subtype,
-          threadTs: input.threadTs,
-          channelType: input.channelType,
-          eventType: input.eventType
+          channelType: input.channelType ?? null,
+          threadTs: input.threadTs ?? null,
+          messageTs: input.ts,
+          originalText: text,
+          eventType: input.eventType ?? null,
+          isDm,
+          candidates: top3.map((c) => ({
+            intent: c.intent,
+            label: c.label,
+            score: c.score
+          }))
         });
-        if (result.handled) {
-          // Do not learn auto-runs into the confirmed fast-path store.
-          // Human button confirms still learn via processSlackDidYouMeanAction.
-          return { handled: true, reason: `intent_auto_${decision.intent}` };
-        }
-        // Fall through to suggest/generic if force-run somehow failed.
-      }
 
-      if (decision.mode === "auto" || decision.mode === "suggest") {
-        const top3 = decision.top3.slice(0, 3);
-        if (top3.length > 0) {
-          const suggestion = await createSlackIntentSuggestion({
-            slackUserId: input.userId,
-            branUserId,
-            channelId: input.channelId,
-            channelType: input.channelType ?? null,
-            threadTs: input.threadTs ?? null,
-            messageTs: input.ts,
-            originalText: text,
-            eventType: input.eventType ?? null,
-            isDm,
-            candidates: top3.map((c) => ({
-              intent: c.intent,
-              label: c.label,
-              score: c.score
-            }))
-          });
-
-          const posted = await postSlackMessage(
-            input.channelId,
-            formatDidYouMeanFallbackText(top3),
-            {
-              threadTs: input.threadTs ?? input.ts,
-              blocks: buildDidYouMeanBlocks({
-                suggestionId: suggestion.id,
-                candidates: top3
-              })
-            }
-          );
-          await setSlackIntentSuggestionReplyTs(suggestion.id, posted.ts);
-          return { handled: true, reason: "intent_suggested" };
-        }
+        const posted = await postSlackMessage(
+          input.channelId,
+          formatDidYouMeanFallbackText(top3),
+          {
+            threadTs: input.threadTs ?? input.ts,
+            blocks: buildDidYouMeanBlocks({
+              suggestionId: suggestion.id,
+              candidates: top3
+            })
+          }
+        );
+        await setSlackIntentSuggestionReplyTs(suggestion.id, posted.ts);
+        return { handled: true, reason: "intent_suggested" };
       }
     } catch (error) {
       console.error("[slack-unsupported] intent suggest failed:", error);

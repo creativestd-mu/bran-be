@@ -1090,20 +1090,22 @@ model TranscriptionKeyword {
 
 // Directed @Bran / DM asks we could not fulfill — for product review.
 model UnsupportedSlackQuery {
-  id          String   @id @default(uuid())
-  slackUserId String
-  branUserId  String?
-  channelId   String
-  channelType String?
-  threadTs    String?
-  messageTs   String
-  text        String   @db.Text
-  eventType   String?
-  isDm        Boolean  @default(false)
-  reason      String? // e.g. no_handler, mass_assign_dm, over_cap
-  status      String   @default("NEW") // NEW | REVIEWED | DISMISSED
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  slackUserId        String
+  branUserId         String?
+  channelId          String
+  channelType        String?
+  threadTs           String?
+  messageTs          String
+  text               String   @db.Text
+  eventType          String?
+  isDm               Boolean  @default(false)
+  reason             String? // e.g. no_handler, mass_assign_dm, over_cap, user_clarified_feature_request
+  status             String   @default("NEW") // NEW | REVIEWED | DISMISSED
+  clarificationText  String?  @db.Text
+  resolvedIntent     String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   branUser User? @relation("UnsupportedSlackQueryUser", fields: [branUserId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 

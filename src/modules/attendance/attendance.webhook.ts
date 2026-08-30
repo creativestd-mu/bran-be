@@ -68,7 +68,11 @@ import { processSlackUnsupportedDirectedQuery } from "../slack-unsupported/slack
 import { isSlackMessageAddressedToBran } from "../slack-safety/slack-safety.slack";
 import {
   isDidYouMeanActionId,
-  processSlackDidYouMeanAction
+  processSlackDidYouMeanAction,
+  processSlackIntentClarifySubmit,
+  INTENT_CLARIFY_ACTION_ID,
+  INTENT_CLARIFY_BLOCK_ID,
+  INTENT_CLARIFY_CALLBACK_ID
 } from "../slack-intents/slack-intents.actions";
 import { isSlackIntentId, type SlackIntentId } from "../slack-intents/slack-intents.catalog";
 import { runSlackIntent } from "../slack-intents/slack-intents.dispatch";
@@ -876,6 +880,62 @@ export async function slackInteractionsHandler(
         return;
       }
 
+      // Intent clarification: "No, I meant something else"
+      if (payload.view?.callback_id === INTENT_CLARIFY_CALLBACK_ID) {
+        if (!payload.user?.id || !payload.view.private_metadata) {
+          res.status(200).json({ response_action: "clear" });
+          return;
+        }
+
+        let meta: { suggestionId?: string };
+        try {
+          meta = JSON.parse(payload.view.private_metadata) as { suggestionId?: string };
+        } catch {
+          res.status(200).json({
+            response_action: "errors",
+            errors: { [INTENT_CLARIFY_BLOCK_ID]: "Invalid context. Try again." }
+          });
+          return;
+        }
+
+        const clarification =
+          payload.view.state?.values?.[INTENT_CLARIFY_BLOCK_ID]?.[INTENT_CLARIFY_ACTION_ID]
+            ?.value?.trim() ?? "";
+
+        if (!meta.suggestionId) {
+          res.status(200).json({
+            response_action: "errors",
+            errors: { [INTENT_CLARIFY_BLOCK_ID]: "Missing suggestion context. Try again." }
+          });
+          return;
+        }
+
+        try {
+          const result = await processSlackIntentClarifySubmit({
+            slackUserId: payload.user.id,
+            suggestionId: meta.suggestionId,
+            clarificationText: clarification
+          });
+          if (!result.ok) {
+            res.status(200).json({
+              response_action: "errors",
+              errors: { [INTENT_CLARIFY_BLOCK_ID]: result.fieldError }
+            });
+            return;
+          }
+          res.status(200).json({ response_action: "clear" });
+        } catch (error) {
+          console.error("Slack intent clarify submit failed:", error);
+          res.status(200).json({
+            response_action: "errors",
+            errors: {
+              [INTENT_CLARIFY_BLOCK_ID]: "Couldn’t save that. Please try again."
+            }
+          });
+        }
+        return;
+      }
+
       // review accept/reject comment modal
       if (
         payload.view?.callback_id !== REVIEW_RESPONSE_CALLBACK_ID ||
@@ -993,7 +1053,8 @@ export async function slackInteractionsHandler(
         actionId: action.action_id,
         suggestionId: action.value,
         channelId: payload.channel?.id,
-        responseUrl: payload.response_url
+        responseUrl: payload.response_url,
+        triggerId: payload.trigger_id
       }).catch((error) => {
         console.error("Slack did-you-mean action failed:", error);
       });

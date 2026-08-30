@@ -1,7 +1,10 @@
 import {
   buildDidYouMeanBlocks,
+  buildIntentClarifyModal,
   didYouMeanActionId,
   formatDidYouMeanFallbackText,
+  INTENT_CLARIFY_CALLBACK_ID,
+  padTop3IntentCandidates,
   parseDidYouMeanActionId,
   SLACK_DID_YOU_MEAN_NONE_ACTION
 } from "../../../src/modules/slack-intents/slack-intents.reply";
@@ -15,11 +18,15 @@ const candidates: IntentCandidate[] = [
 ];
 
 describe("slack-intents.reply", () => {
-  it("builds at most 3 intent buttons plus None of these", () => {
+  it("builds at most 3 intent buttons plus No, I meant something else", () => {
     const blocks = buildDidYouMeanBlocks({
       suggestionId: "sug-1",
       candidates
-    }) as Array<{ type: string; elements?: Array<{ action_id?: string; value?: string }> }>;
+    }) as Array<{
+      type: string;
+      text?: { text?: string };
+      elements?: Array<{ action_id?: string; value?: string; text?: { text?: string } }>;
+    }>;
 
     const actions = blocks.find((b) => b.type === "actions");
     expect(actions?.elements).toBeDefined();
@@ -28,6 +35,7 @@ describe("slack-intents.reply", () => {
     expect(actions!.elements![1].action_id).toBe(didYouMeanActionId("list_tasks"));
     expect(actions!.elements![2].action_id).toBe(didYouMeanActionId("sentiment"));
     expect(actions!.elements![3].action_id).toBe(SLACK_DID_YOU_MEAN_NONE_ACTION);
+    expect(actions!.elements![3].text?.text).toMatch(/meant something else/i);
     expect(actions!.elements!.every((el) => el.value === "sug-1")).toBe(true);
   });
 
@@ -60,5 +68,35 @@ describe("slack-intents.reply", () => {
     expect(text).toContain("Add a Task");
     expect(text).toContain("List Tasks");
     expect(text).toContain("Brand Sentiment");
+  });
+
+  it("pads empty or short candidate lists to exactly 3", () => {
+    const paddedEmpty = padTop3IntentCandidates([], { isDm: true });
+    expect(paddedEmpty).toHaveLength(3);
+    expect(paddedEmpty.map((c) => c.intent)).toEqual(["add_task", "list_tasks", "calendar"]);
+
+    const paddedOne = padTop3IntentCandidates(
+      [{ intent: "sentiment", label: "Brand Sentiment", score: 0.5, source: "llm" }],
+      { isDm: true }
+    );
+    expect(paddedOne).toHaveLength(3);
+    expect(paddedOne[0].intent).toBe("sentiment");
+    expect(paddedOne.map((c) => c.intent)).toContain("add_task");
+  });
+
+  it("excludes DM-only intents when padding for channels", () => {
+    const padded = padTop3IntentCandidates([], { isDm: false });
+    expect(padded.every((c) => c.intent !== "ideas")).toBe(true);
+    expect(padded).toHaveLength(3);
+  });
+
+  it("builds an intent clarify modal with private metadata", () => {
+    const view = buildIntentClarifyModal({
+      suggestionId: "sug-99",
+      originalText: "please do the thing with the carousel"
+    });
+    expect(view.callback_id).toBe(INTENT_CLARIFY_CALLBACK_ID);
+    expect(JSON.parse(String(view.private_metadata))).toEqual({ suggestionId: "sug-99" });
+    expect(JSON.stringify(view)).toMatch(/What should Bran do/i);
   });
 });

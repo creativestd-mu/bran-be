@@ -11,6 +11,9 @@ export async function upsertUnsupportedSlackQuery(data: {
   eventType?: string | null;
   isDm: boolean;
   reason?: string | null;
+  clarificationText?: string | null;
+  resolvedIntent?: string | null;
+  status?: "NEW" | "REVIEWED" | "DISMISSED";
 }) {
   return prisma.unsupportedSlackQuery.upsert({
     where: {
@@ -30,7 +33,9 @@ export async function upsertUnsupportedSlackQuery(data: {
       eventType: data.eventType ?? null,
       isDm: data.isDm,
       reason: data.reason ?? null,
-      status: "NEW"
+      clarificationText: data.clarificationText ?? null,
+      resolvedIntent: data.resolvedIntent ?? null,
+      status: data.status ?? "NEW"
     },
     update: {
       text: data.text,
@@ -39,7 +44,36 @@ export async function upsertUnsupportedSlackQuery(data: {
       channelType: data.channelType ?? null,
       threadTs: data.threadTs ?? null,
       eventType: data.eventType ?? null,
-      isDm: data.isDm
+      isDm: data.isDm,
+      ...(data.clarificationText !== undefined
+        ? { clarificationText: data.clarificationText }
+        : {}),
+      ...(data.resolvedIntent !== undefined ? { resolvedIntent: data.resolvedIntent } : {}),
+      ...(data.status ? { status: data.status } : {})
+    }
+  });
+}
+
+export async function updateUnsupportedSlackQueryClarification(data: {
+  channelId: string;
+  messageTs: string;
+  clarificationText: string;
+  reason?: string | null;
+  resolvedIntent?: string | null;
+  status?: "NEW" | "REVIEWED" | "DISMISSED";
+}) {
+  return prisma.unsupportedSlackQuery.update({
+    where: {
+      channelId_messageTs: {
+        channelId: data.channelId,
+        messageTs: data.messageTs
+      }
+    },
+    data: {
+      clarificationText: data.clarificationText,
+      reason: data.reason ?? undefined,
+      resolvedIntent: data.resolvedIntent ?? null,
+      ...(data.status ? { status: data.status } : {})
     }
   });
 }

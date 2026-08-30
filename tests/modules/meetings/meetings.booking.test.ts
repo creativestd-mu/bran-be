@@ -66,4 +66,13 @@ describe("calendar slack intents", () => {
     expect(looksLikeCalendarAgendaQuery("my meetings today")).toBe(true);
     expect(looksLikeCalendarAgendaQuery("book a call with Ada")).toBe(false);
   });
+
+  it("does not book from Add tasks dumps that mention calls", () => {
+    const dump = [
+      "Add tasks:",
+      "• Set up a call with Mishra regarding Windsor",
+      "• Post the demo video on Slack"
+    ].join("\n");
+    expect(looksLikeBookCallQuery(dump)).toBe(false);
+  });
 });

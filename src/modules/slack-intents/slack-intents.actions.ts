@@ -7,6 +7,7 @@ import { resolveBranUserIdForSlackUser } from "../work/work.slack";
 import { runSlackIntent } from "./slack-intents.dispatch";
 import { learnSlackIntent } from "./slack-intents.learn";
 import {
+  formatRunningAllIntentsText,
   formatRunningIntentText,
   parseDidYouMeanActionId,
   SLACK_DID_YOU_MEAN_ACTION_PREFIX
@@ -15,19 +16,21 @@ import {
   getSlackIntentSuggestion,
   markSlackIntentSuggestion
 } from "./slack-intents.repository";
-import { slackIntentLabel } from "./slack-intents.catalog";
+import { isSlackIntentId, slackIntentLabel, type SlackIntentId } from "./slack-intents.catalog";
 
 const CAPABILITIES_HINT =
   "I can help with: listing/creating tasks (DM or @Bran), assigning a task to everyone in a channel, booking a call (Calendar connected), today’s calendar, attendance, sentiment, competitors, pods, and private ideas (DM).";
 
 export function isDidYouMeanActionId(actionId: string): boolean {
   return (
-    actionId === "bran_didyoumean_none" || actionId.startsWith(SLACK_DID_YOU_MEAN_ACTION_PREFIX)
+    actionId === "bran_didyoumean_none" ||
+    actionId === "bran_didyoumean_all" ||
+    actionId.startsWith(SLACK_DID_YOU_MEAN_ACTION_PREFIX)
   );
 }
 
 /**
- * Handle Block Kit "Did you mean?" button clicks.
+ * Handle Block Kit "Did you mean?" / compound confirm button clicks.
  */
 export async function processSlackDidYouMeanAction(input: {
   slackUserId: string;
@@ -101,6 +104,82 @@ export async function processSlackDidYouMeanAction(input: {
     return;
   }
 
+  const branUserId =
+    suggestion.branUserId ?? (await resolveBranUserIdForSlackUser(input.slackUserId));
+
+  const dispatchInput = {
+    channelId,
+    userId: input.slackUserId,
+    text: suggestion.originalText,
+    ts: suggestion.messageTs,
+    threadTs: suggestion.threadTs ?? undefined,
+    channelType: suggestion.channelType ?? undefined,
+    eventType: suggestion.eventType ?? undefined
+  };
+
+  if (parsed.kind === "all") {
+    let candidates: Array<{ intent: string }> = [];
+    try {
+      candidates = JSON.parse(suggestion.candidatesJson) as Array<{ intent: string }>;
+    } catch {
+      candidates = [];
+    }
+    const intents = candidates
+      .map((c) => c.intent)
+      .filter((id): id is SlackIntentId => isSlackIntentId(id));
+
+    if (intents.length === 0) {
+      await markSlackIntentSuggestion(suggestion.id, { status: "DISMISSED" });
+      await postSlackMessage(channelId, "I couldn’t find actions to run. Please try again.", {
+        threadTs
+      });
+      return;
+    }
+
+    await markSlackIntentSuggestion(suggestion.id, {
+      status: "EXECUTED",
+      chosenIntent: intents.join(",")
+    });
+
+    const runningText = formatRunningAllIntentsText(intents);
+    if (suggestion.replyTs) {
+      try {
+        await updateSlackMessage(channelId, suggestion.replyTs, runningText, []);
+      } catch {
+        // still execute
+      }
+    } else if (input.responseUrl) {
+      try {
+        await respondToSlackResponseUrl(input.responseUrl, {
+          replace_original: true,
+          text: runningText
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    for (const intent of intents) {
+      const result = await runSlackIntent(intent, dispatchInput);
+      void learnSlackIntent({
+        query: suggestion.originalText,
+        intent,
+        ownerBranUserId: branUserId,
+        source: "confirmed"
+      }).catch((error) => {
+        console.warn("[slack-intents] learn from run-all failed:", error);
+      });
+      if (!result.handled) {
+        await postSlackMessage(
+          channelId,
+          `I tried to run *${slackIntentLabel(intent)}* but couldn’t complete it.`,
+          { threadTs }
+        );
+      }
+    }
+    return;
+  }
+
   const intent = parsed.intent;
   await markSlackIntentSuggestion(suggestion.id, {
     status: "EXECUTED",
@@ -125,18 +204,7 @@ export async function processSlackDidYouMeanAction(input: {
     }
   }
 
-  const branUserId =
-    suggestion.branUserId ?? (await resolveBranUserIdForSlackUser(input.slackUserId));
-
-  const result = await runSlackIntent(intent, {
-    channelId,
-    userId: input.slackUserId,
-    text: suggestion.originalText,
-    ts: suggestion.messageTs,
-    threadTs: suggestion.threadTs ?? undefined,
-    channelType: suggestion.channelType ?? undefined,
-    eventType: suggestion.eventType ?? undefined
-  });
+  const result = await runSlackIntent(intent, dispatchInput);
 
   void learnSlackIntent({
     query: suggestion.originalText,

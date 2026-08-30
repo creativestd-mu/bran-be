@@ -31,6 +31,18 @@ describe("slack-intents.reply", () => {
     expect(actions!.elements!.every((el) => el.value === "sug-1")).toBe(true);
   });
 
+  it("adds a Run all button for compound confirms", () => {
+    const blocks = buildDidYouMeanBlocks({
+      suggestionId: "sug-2",
+      candidates: candidates.slice(0, 2),
+      runAll: true
+    }) as Array<{ type: string; elements?: Array<{ action_id?: string }> }>;
+
+    const actions = blocks.find((b) => b.type === "actions");
+    expect(actions!.elements![0].action_id).toBe(didYouMeanActionId("all"));
+    expect(parseDidYouMeanActionId(didYouMeanActionId("all"))).toEqual({ kind: "all" });
+  });
+
   it("parses did-you-mean action ids", () => {
     expect(parseDidYouMeanActionId(didYouMeanActionId("add_task"))).toEqual({
       kind: "intent",

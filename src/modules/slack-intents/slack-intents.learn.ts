@@ -34,13 +34,14 @@ export async function learnSlackIntent(input: {
 
   try {
     const values = await generateEmbedding(normalizedQuery, "RETRIEVAL_DOCUMENT");
+    const vectorSource = input.source === "auto" ? "auto" : "confirmed";
     await upsertVectors(SLACK_INTENTS_COLLECTION, [
       {
         id: row.id,
         values,
         metadata: {
           intent: input.intent,
-          source: "confirmed",
+          source: vectorSource,
           example: normalizedQuery,
           ownerBranUserId: input.ownerBranUserId ?? ""
         }

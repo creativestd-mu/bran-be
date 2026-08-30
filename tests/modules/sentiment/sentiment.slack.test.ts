@@ -9,7 +9,8 @@ describe("looksLikeSentimentQuery", () => {
     expect(looksLikeSentimentQuery("sentiment this week")).toBe(true);
     expect(looksLikeSentimentQuery("<@U123> brand mentions last month")).toBe(true);
     expect(looksLikeSentimentQuery("how is the brand perceived")).toBe(true);
-    expect(looksLikeSentimentQuery("press coverage yesterday")).toBe(true);
+    expect(looksLikeSentimentQuery("press coverage yesterday")).toBe(false);
+    expect(looksLikeSentimentQuery("Masters Union press coverage yesterday")).toBe(true);
     expect(looksLikeSentimentQuery("How have we done in the last week")).toBe(true);
     expect(looksLikeSentimentQuery("How has MU done this week")).toBe(true);
     expect(looksLikeSentimentQuery("How has MU done thsi week")).toBe(true);

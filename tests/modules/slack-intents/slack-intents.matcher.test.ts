@@ -23,9 +23,9 @@ describe("decideIntentMatchMode", () => {
     }
   });
 
-  it("auto-runs confirmed fast-path even below auto threshold margin", () => {
+  it("auto-runs confirmed fast-path when margin still clears", () => {
     const decision = decideIntentMatchMode(
-      [candidate("sentiment", 0.91, "confirmed"), candidate("competitors", 0.9)],
+      [candidate("sentiment", 0.91, "confirmed"), candidate("competitors", 0.8)],
       {
         autoThreshold: 0.95,
         suggestThreshold: 0.6,
@@ -37,6 +37,19 @@ describe("decideIntentMatchMode", () => {
     if (decision.mode === "auto") {
       expect(decision.intent).toBe("sentiment");
     }
+  });
+
+  it("does not auto-run confirmed when margin is too tight", () => {
+    const decision = decideIntentMatchMode(
+      [candidate("sentiment", 0.91, "confirmed"), candidate("competitors", 0.9)],
+      {
+        autoThreshold: 0.95,
+        suggestThreshold: 0.6,
+        margin: 0.2,
+        confirmedFastPath: 0.9
+      }
+    );
+    expect(decision.mode).toBe("suggest");
   });
 
   it("suggests when confident enough but not auto", () => {

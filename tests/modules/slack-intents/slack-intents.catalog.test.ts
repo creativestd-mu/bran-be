@@ -15,6 +15,7 @@ describe("slack-intents.catalog", () => {
       "ideas",
       "list_tasks",
       "pods",
+      "review",
       "sentiment"
     ]);
 

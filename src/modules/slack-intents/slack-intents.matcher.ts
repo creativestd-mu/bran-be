@@ -94,15 +94,16 @@ function aggregateIntentScores(
 ): IntentCandidate[] {
   const best = new Map<
     SlackIntentId,
-    { score: number; source: "catalog" | "confirmed" }
+    { score: number; source: "catalog" | "confirmed" | "llm" }
   >();
 
   for (const match of matches) {
     const intentRaw = match.metadata?.intent;
     if (typeof intentRaw !== "string" || !isSlackIntentId(intentRaw)) continue;
     const sourceRaw = match.metadata?.source;
-    const source: "catalog" | "confirmed" =
-      sourceRaw === "confirmed" ? "confirmed" : "catalog";
+    // Auto-learned examples stay provisional — never get confirmed fast-path.
+    const source: "catalog" | "confirmed" | "llm" =
+      sourceRaw === "confirmed" ? "confirmed" : sourceRaw === "auto" ? "catalog" : "catalog";
     const prev = best.get(intentRaw);
     if (!prev || match.score > prev.score) {
       best.set(intentRaw, { score: match.score, source });
@@ -116,7 +117,7 @@ function aggregateIntentScores(
       intent,
       label: slackIntentLabel(intent),
       score: info.score,
-      source: info.source
+      source: (info.source === "confirmed" ? "confirmed" : "catalog") as IntentCandidate["source"]
     }))
     .sort((a, b) => b.score - a.score);
 }
@@ -145,7 +146,12 @@ export function decideIntentMatchMode(
   }
 
   if (top.source === "confirmed" && top.score >= confirmedFastPath) {
-    return { mode: "auto", intent: top.intent, confidence: top.score, top3 };
+    // Still require a margin so poisoned near-ties cannot auto-run.
+    const confirmedGap = top.score - (second?.score ?? 0);
+    const confirmedMargin = Math.min(margin, 0.05);
+    if (confirmedGap >= confirmedMargin) {
+      return { mode: "auto", intent: top.intent, confidence: top.score, top3 };
+    }
   }
 
   const gap = top.score - (second?.score ?? 0);

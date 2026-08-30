@@ -14,7 +14,7 @@ import { getCompetitorContentImpact } from "./competitor-content.service";
 import type { CompetitorContentImpact, CompetitorContentRecord } from "./competitor-content.types";
 
 const COMPETITOR_INTENT_RE =
-  /\b(competitor|competitors|competition|rival|rivals|competitive)\b/i;
+  /\b(competitor|competitors|competition|rival|rivals)\b/i;
 
 const COMPETITOR_COVERAGE_RE =
   /\b(sentiment|coverage|news|mentions?|press|media|impact|impactful|positive|negative|story|stories|article|articles|done|doing|performed|performance|fared)\b/i;
@@ -26,7 +26,6 @@ const COMPETITOR_CANONICAL_WORDS = [
   "competitor",
   "competitors",
   "competition",
-  "competitive",
   "rival",
   "rivals"
 ] as const;
@@ -100,8 +99,16 @@ export function looksLikeCompetitorQuery(text: string): boolean {
   if (!trimmed) {
     return false;
   }
-  if (mentionsCompetitorWord(trimmed)) {
+  if (/\b(don'?t|do\s+not|never|not|ignore)\b[\s\S]{0,24}\b(competitor|competitors|competition)\b/i.test(trimmed)) {
+    return false;
+  }
+  // Exact competitor/rival wording is enough.
+  if (COMPETITOR_INTENT_RE.test(trimmed)) {
     return true;
+  }
+  // Fuzzy misspellings require a coverage or named-competitor co-signal.
+  if (mentionsCompetitorWord(trimmed)) {
+    return COMPETITOR_COVERAGE_RE.test(trimmed) || COMPETITOR_NAME_RE.test(trimmed);
   }
   return COMPETITOR_NAME_RE.test(trimmed) && COMPETITOR_COVERAGE_RE.test(trimmed);
 }

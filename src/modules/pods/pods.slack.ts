@@ -18,7 +18,12 @@ import {
 import { findPodsByName, listPodSocialPosts, searchPodsByName } from "./pods.repository";
 
 const POD_QUERY_RE =
-  /\b(pod|pods|owned\s+ips?|inspirations?|ip posts?|inspiration posts?|social accounts?)\b/i;
+  /\b(pods?|owned\s+ips?|ip posts?|inspiration posts?|pod\s+inspirations?|pod\s+ip)\b/i;
+
+const POD_INSPIRATION_RE = /\b(inspirations?|inspo)\b/i;
+const POD_SOCIAL_ACCOUNTS_RE = /\b(social accounts?)\b/i;
+const POD_PLATFORM_CUE_RE =
+  /\b(instagram|ig|youtube|yt|linkedin|twitter|tweets?|\bx\b|pod|pods)\b/i;
 
 const PLATFORM_RE: Array<{ re: RegExp; platform: PodSocialPlatform }> = [
   { re: /\b(instagram|ig)\b/i, platform: "INSTAGRAM" },
@@ -51,7 +56,12 @@ function markPodEvent(channelId: string, ts: string): boolean {
 export function looksLikePodQuery(text: string): boolean {
   const trimmed = stripSlackUserMentions(text);
   if (!trimmed) return false;
-  return POD_QUERY_RE.test(trimmed);
+  if (POD_QUERY_RE.test(trimmed)) return true;
+  // Bare "inspirations" / "social accounts" need a pod/platform cue.
+  if (POD_INSPIRATION_RE.test(trimmed) || POD_SOCIAL_ACCOUNTS_RE.test(trimmed)) {
+    return POD_PLATFORM_CUE_RE.test(trimmed);
+  }
+  return false;
 }
 
 function defaultLastSevenDays(now = new Date()): SlackTaskDateRange {

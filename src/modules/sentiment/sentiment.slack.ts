@@ -18,12 +18,21 @@ import {
 } from "./sentiment.summary";
 import type { SentimentDashboard } from "./sentiment.types";
 
-const SENTIMENT_RE =
-  /\b(sentiment|earned media|meltwater|brand mentions?|press mentions?|media mentions?|mention volume|news coverage|media coverage|brand coverage|press coverage|brand health|how (are|is|have|has|did) (we|mu|the brand)(\s+\w+){0,3}\s+(done|doing|performed|fared|been|perceived)|masters?\s*['’]?s?\s*union|mastersunion|our (brand|coverage|mentions|sentiment))\b/i;
+const SENTIMENT_EXPLICIT_RE =
+  /\b(sentiment|earned media|meltwater|brand mentions?|press mentions?|media mentions?|mention volume|brand health|our (brand|coverage|mentions|sentiment))\b/i;
+
+const SENTIMENT_COVERAGE_RE =
+  /\b(news coverage|media coverage|brand coverage|press coverage)\b/i;
+
+const SENTIMENT_BRAND_RE =
+  /\b(masters?\s*['’]?s?\s*union|mastersunion|the brand|our brand)\b/i;
+
+const SENTIMENT_HOW_WE_RE =
+  /\bhow (are|is|have|has|did) (we|mu|the brand)(\s+\w+){0,3}\s+(done|doing|performed|fared|been|perceived)\b/i;
 
 const MU_ALIAS_RE = /\bmu\b/i;
 const MU_ASK_RE =
-  /\b(done|doing|sentiment|coverage|mentions?|perceived|performed|fared|health|week|month|today|yesterday)\b/i;
+  /\b(done|doing|sentiment|coverage|mentions?|perceived|performed|fared|health)\b/i;
 
 const SENTIMENT_DEDUP_TTL_MS = 60 * 1000;
 const recentSentimentEvents = new Map<string, number>();
@@ -48,9 +57,24 @@ export function looksLikeSentimentQuery(text: string): boolean {
   if (!trimmed) {
     return false;
   }
-  if (SENTIMENT_RE.test(trimmed)) {
+  if (
+    /\b(don'?t|do\s+not|never|not|ignore)\b[\s\S]{0,24}\b(sentiment|meltwater|earned media|brand mentions?)\b/i.test(
+      trimmed
+    )
+  ) {
+    return false;
+  }
+  if (SENTIMENT_EXPLICIT_RE.test(trimmed) || SENTIMENT_HOW_WE_RE.test(trimmed)) {
     return true;
   }
+  // Bare "press coverage" needs a brand/MU anchor.
+  if (SENTIMENT_COVERAGE_RE.test(trimmed) && SENTIMENT_BRAND_RE.test(trimmed)) {
+    return true;
+  }
+  if (SENTIMENT_BRAND_RE.test(trimmed) && MU_ASK_RE.test(trimmed)) {
+    return true;
+  }
+  // "MU week planning" should not match — require a performance/coverage ask, not just week/month.
   return MU_ALIAS_RE.test(trimmed) && MU_ASK_RE.test(trimmed);
 }
 

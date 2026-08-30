@@ -5,7 +5,8 @@ export const SLACK_INTENT_IDS = [
   "competitors",
   "pods",
   "ideas",
-  "calendar"
+  "calendar",
+  "review"
 ] as const;
 
 export type SlackIntentId = (typeof SLACK_INTENT_IDS)[number];
@@ -103,6 +104,18 @@ export const SLACK_INTENT_CATALOG: SlackIntentDefinition[] = [
       "what’s on my calendar today",
       "today’s agenda",
       "find a slot with Nagpal this week"
+    ]
+  },
+  {
+    id: "review",
+    label: "Reviews",
+    description: "Show pending review requests to act on, or status of reviews you raised.",
+    examples: [
+      "my reviews",
+      "pending reviews",
+      "list my reviews",
+      "reviews waiting for me",
+      "review status"
     ]
   }
 ];

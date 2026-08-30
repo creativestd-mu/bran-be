@@ -57,6 +57,10 @@ export async function runSlackIntent(
       const { processSlackCalendarMessage } = await import("../meetings/meetings.booking.slack.js");
       return processSlackCalendarMessage(forced);
     }
+    case "review": {
+      const { processSlackReviewMessage } = await import("../review/review.slack.js");
+      return processSlackReviewMessage(forced);
+    }
     default:
       return { handled: false, reason: "unknown_intent" };
   }

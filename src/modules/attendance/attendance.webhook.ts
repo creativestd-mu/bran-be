@@ -13,6 +13,7 @@ import {
 } from "./attendance.service";
 import {
   getSlackUserInfo,
+  postSlackMessage,
   resolveChannelId,
   sendDm,
   verifySlackSignature
@@ -69,6 +70,22 @@ import {
   isDidYouMeanActionId,
   processSlackDidYouMeanAction
 } from "../slack-intents/slack-intents.actions";
+import { isSlackIntentId, type SlackIntentId } from "../slack-intents/slack-intents.catalog";
+import { runSlackIntent } from "../slack-intents/slack-intents.dispatch";
+import {
+  filterHitsForChannel,
+  logSlackIntentRoute,
+  resolveDeterministicSlackIntents
+} from "../slack-intents/slack-intents.resolve";
+import {
+  buildDidYouMeanBlocks,
+  formatCompoundConfirmText
+} from "../slack-intents/slack-intents.reply";
+import {
+  createSlackIntentSuggestion,
+  setSlackIntentSuggestionReplyTs
+} from "../slack-intents/slack-intents.repository";
+import { resolveBranUserIdForSlackUser } from "../work/work.slack";
 
 async function processSlackInteractiveQuery(input: {
   channelId: string;
@@ -85,6 +102,107 @@ async function processSlackInteractiveQuery(input: {
   if (safety.handled) {
     return safety;
   }
+
+  const text = input.text?.trim() ?? "";
+  if (!text) {
+    return { handled: false, reason: "empty_text" };
+  }
+
+  const started = Date.now();
+  const isDm = isSlackDmChannel(input.channelId, input.channelType);
+  const resolved = resolveDeterministicSlackIntents(text);
+  const hits = filterHitsForChannel(resolved.hits, isDm);
+
+  // Compound: confirm once before any side effects.
+  if (resolved.mode === "compound") {
+    const compoundIntents = hits
+      .map((h) => h.intent)
+      .filter((id): id is SlackIntentId => isSlackIntentId(id));
+
+    if (compoundIntents.length >= 2) {
+      try {
+        const branUserId = await resolveBranUserIdForSlackUser(input.userId);
+        const candidates = compoundIntents.map((intent) => ({
+          intent,
+          label: hits.find((h) => h.intent === intent)?.label ?? intent,
+          score: 1,
+          source: "catalog" as const
+        }));
+        const suggestion = await createSlackIntentSuggestion({
+          slackUserId: input.userId,
+          branUserId,
+          channelId: input.channelId,
+          channelType: input.channelType ?? null,
+          threadTs: input.threadTs ?? null,
+          messageTs: input.ts,
+          originalText: text,
+          eventType: input.eventType ?? null,
+          isDm,
+          candidates: candidates.map((c) => ({
+            intent: c.intent,
+            label: c.label,
+            score: c.score
+          }))
+        });
+        const posted = await postSlackMessage(
+          input.channelId,
+          formatCompoundConfirmText(candidates),
+          {
+            threadTs: input.threadTs ?? input.ts,
+            blocks: buildDidYouMeanBlocks({
+              suggestionId: suggestion.id,
+              candidates,
+              runAll: true
+            })
+          }
+        );
+        await setSlackIntentSuggestionReplyTs(suggestion.id, posted.ts);
+        logSlackIntentRoute({
+          channelId: input.channelId,
+          ts: input.ts,
+          mode: "compound_confirm",
+          intents: compoundIntents,
+          durationMs: Date.now() - started
+        });
+        return { handled: true, reason: "compound_confirm" };
+      } catch (error) {
+        console.error("[slack-intents] compound confirm failed:", error);
+      }
+    }
+  }
+
+  if (resolved.mode === "single") {
+    const intent = hits[0]?.intent ?? resolved.intent;
+    logSlackIntentRoute({
+      channelId: input.channelId,
+      ts: input.ts,
+      mode: "single",
+      intents: [intent],
+      durationMs: Date.now() - started
+    });
+
+    // Task create still runs in work followups (mass-assign + extraction pipeline).
+    if (intent === "add_task") {
+      return { handled: false, reason: "defer_create" };
+    }
+
+    if (isSlackIntentId(intent)) {
+      const result = await runSlackIntent(intent, {
+        channelId: input.channelId,
+        userId: input.userId,
+        text,
+        ts: input.ts,
+        botId: input.botId,
+        subtype: input.subtype,
+        threadTs: input.threadTs,
+        channelType: input.channelType,
+        eventType: input.eventType
+      });
+      if (result.handled) return result;
+    }
+  }
+
+  // Fallback: prior sequential chain for anything the resolver missed.
   const competitor = await processSlackCompetitorMessage(input);
   if (competitor.handled) {
     return competitor;

@@ -22,6 +22,11 @@ import {
 } from "../work/work.slack-tasks";
 import { isSlackDmChannel } from "../work/work.slack-voice";
 import {
+  hasExplicitTaskCreateEnvelope,
+  hasTopLevelBookCallInstruction,
+  stripQuotedSlackLines
+} from "../slack-intents/slack-intents.text";
+import {
   createMeetCalendarEvent,
   listPrimaryCalendarEvents,
   queryCalendarFreeBusy,
@@ -39,8 +44,6 @@ import { findCalendarConnectionByUserId } from "./meetings.repository";
 export const SLACK_CALENDAR_BOOK_SLOT_ACTION = "bran_calendar_book_slot";
 export const SLACK_CALENDAR_PICK_PERSON_ACTION = "bran_calendar_pick_person";
 
-const BOOK_CALL_RE =
-  /\b(book|schedule|set\s*up|setup|arrange|fix)\b[\s\S]{0,40}\b(call|meeting|sync|catch[- ]?up|1:1|one[- ]on[- ]one)\b/i;
 const AGENDA_RE =
   /\b((what(?:'s| is)|show|list|get|fetch)\s+(my\s+)?(calendar|meetings|calls|schedule)|my\s+(calendar|meetings|calls|schedule)(\s+for\s+today)?|meetings?\s+(for\s+)?today|calendar\s+(for\s+)?today|what(?:'s| is)\s+on\s+my\s+calendar)\b/i;
 
@@ -78,11 +81,16 @@ function markBookingEvent(channelId: string, ts: string): boolean {
 }
 
 export function looksLikeBookCallQuery(text: string): boolean {
-  return BOOK_CALL_RE.test(stripSlackUserMentions(text));
+  const cleaned = stripQuotedSlackLines(text);
+  // Task dumps ("Add tasks: … set up a call with …") must not become bookings.
+  if (hasExplicitTaskCreateEnvelope(cleaned)) return false;
+  return hasTopLevelBookCallInstruction(cleaned);
 }
 
 export function looksLikeCalendarAgendaQuery(text: string): boolean {
-  return AGENDA_RE.test(stripSlackUserMentions(text));
+  const cleaned = stripQuotedSlackLines(text);
+  if (hasExplicitTaskCreateEnvelope(cleaned)) return false;
+  return AGENDA_RE.test(stripSlackUserMentions(cleaned));
 }
 
 export function looksLikeCalendarQuery(text: string): boolean {

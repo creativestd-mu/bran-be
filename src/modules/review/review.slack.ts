@@ -547,13 +547,14 @@ export async function processSlackReviewMessage(input: {
   subtype?: string;
   channelType?: string;
   eventType?: string;
+  force?: boolean;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId || input.subtype === "bot_message") {
     return { handled: false, reason: "ignored_bot" };
   }
 
   const text = input.text ?? "";
-  if (!looksLikeReviewQuery(text)) {
+  if (!input.force && !looksLikeReviewQuery(text)) {
     return { handled: false, reason: "not_review_query" };
   }
 

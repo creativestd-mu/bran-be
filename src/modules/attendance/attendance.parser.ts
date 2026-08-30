@@ -17,15 +17,27 @@ export function parseAttendanceMessage(text: string): ParsedAttendance | null {
 
   const lower = raw.toLowerCase();
 
+  // Negation / prose that merely mentions leave/wfh should not record attendance.
+  if (/\b(don'?t|do\s+not|not|never|no)\s+(on\s+)?(leave|wfh|comp\s*off)\b/.test(lower)) {
+    return null;
+  }
+  if (/\b(don'?t|do\s+not|please\s+don'?t)\s+leave\b/.test(lower)) {
+    return null;
+  }
+  if (/\bleave\s+me\b/.test(lower)) {
+    return null;
+  }
+
   if (/\bcomp\s*off\b/.test(lower) || /\bcompoff\b/.test(lower)) {
     return { recordType: "comp_off", etaText: null, etaMinutes: null };
   }
 
-  if (/\bleave\b/.test(lower)) {
+  // Prefer short status-style messages for leave/wfh.
+  if (lower.length <= 120 && /\bleave\b/.test(lower)) {
     return { recordType: "leave", etaText: null, etaMinutes: null };
   }
 
-  if (/\bwfh\b/.test(lower)) {
+  if (lower.length <= 120 && /\bwfh\b/.test(lower)) {
     return { recordType: "wfh", etaText: null, etaMinutes: null };
   }
 

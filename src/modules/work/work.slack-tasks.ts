@@ -395,7 +395,7 @@ export function looksLikeOverdueTaskQuery(text: string): boolean {
 const CREATE_TASK_PHRASE_RE =
   /\b((add|create|log|capture|note)\s+(a\s+|an\s+|the\s+|this\s+|these\s+)?(new\s+)?(task|to-?do|todo|work unit|action item)s?)\b/i;
 const CREATE_ASSIGN_RE = /\bassign\b/i;
-const CREATE_LEADING_RE = /^\s*(add|create|log|capture|note|assign|task)\b/i;
+const CREATE_LEADING_RE = /^\s*(add|create|log|capture|assign|task)\b/i;
 const CREATE_DUTY_RE = /\b(should|needs? to|has to|have to)\b/i;
 const CREATE_ACTION_RE =
   /\b(follow up|send|share|finish|complete|review|prepare|draft|update|fix|ship|publish|check|sit with|meet|email|call|write|remind)\b/i;
@@ -406,6 +406,9 @@ const RELATIVE_TASKS_WINDOW_RE =
   /\btasks?\s+for\s+(today|tomorrow|yesterday|this|last|next)\b/i;
 const ADD_THESE_TASKS_RE =
   /\b(add|create|log|capture|note)\b[\s\S]{0,40}\b(these|following|below)\b/i;
+const COLON_META_PREFIX_RE = /^(note|fyi|re|fwd|forwarded|update|ps|btw)\s*:/i;
+const NEGATED_CREATE_RE =
+  /\b(don'?t|do\s+not|never|not)\s+(add|create|log|capture|note|assign)\b/i;
 
 /** Numbered / bulleted / "Name - work" lines — a dump to create, not a list query. */
 export function looksLikeBulkAssignedTaskList(text: string): boolean {
@@ -440,6 +443,7 @@ export function looksLikeCreateWorkQuery(text: string): boolean {
   if (!trimmed) return false;
   if (isAcceptAsIsConfirmReply(trimmed)) return false;
   if (parseAttendanceMessage(trimmed)) return false;
+  if (NEGATED_CREATE_RE.test(trimmed)) return false;
 
   // "tasks for today" alone is a list query; with add/create or a bulk dump it is create.
   if (RELATIVE_TASKS_WINDOW_RE.test(trimmed)) {
@@ -455,7 +459,16 @@ export function looksLikeCreateWorkQuery(text: string): boolean {
   if (ADD_THESE_TASKS_RE.test(trimmed)) return true;
   if (looksLikeBulkAssignedTaskList(trimmed)) return true;
   if (CREATE_DUTY_RE.test(trimmed) && trimmed.length >= 16) return true;
-  if (/:\s+\S/.test(trimmed) && trimmed.length >= 12) return true;
+  // Colon create only for assignee-style "Name: work" / create-leading — not FYI:/Note:/Re:
+  if (/:\s+\S/.test(trimmed) && trimmed.length >= 12) {
+    if (COLON_META_PREFIX_RE.test(trimmed)) return false;
+    if (
+      CREATE_LEADING_RE.test(trimmed) ||
+      /^[A-Za-z][A-Za-z.'-]{0,40}(?:\s+[A-Za-z][A-Za-z.'-]{0,40}){0,2}\s*:\s+\S/.test(trimmed)
+    ) {
+      return true;
+    }
+  }
   return false;
 }
 

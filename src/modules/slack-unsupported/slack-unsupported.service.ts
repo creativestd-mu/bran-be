@@ -6,7 +6,6 @@ import { isSlackMessageAddressedToBran } from "../slack-safety/slack-safety.slac
 import { isSlackDmChannel } from "../work/work.slack-voice";
 import { resolveBranUserIdForSlackUser } from "../work/work.slack";
 import { runSlackIntent } from "../slack-intents/slack-intents.dispatch";
-import { learnSlackIntent } from "../slack-intents/slack-intents.learn";
 import { matchSlackIntent } from "../slack-intents/slack-intents.matcher";
 import {
   buildDidYouMeanBlocks,
@@ -151,14 +150,8 @@ export async function processSlackUnsupportedDirectedQuery(input: {
           eventType: input.eventType
         });
         if (result.handled) {
-          void learnSlackIntent({
-            query: text,
-            intent: decision.intent,
-            ownerBranUserId: branUserId,
-            source: "auto"
-          }).catch((error) => {
-            console.warn("[slack-unsupported] learn auto intent failed:", error);
-          });
+          // Do not learn auto-runs into the confirmed fast-path store.
+          // Human button confirms still learn via processSlackDidYouMeanAction.
           return { handled: true, reason: `intent_auto_${decision.intent}` };
         }
         // Fall through to suggest/generic if force-run somehow failed.

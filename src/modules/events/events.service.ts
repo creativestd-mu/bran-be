@@ -129,10 +129,14 @@ export async function patchEvent(
   return serializeOrgEvent(updated);
 }
 
-export async function removeEvent(id: string) {
+export async function removeEvent(id: string, roleName: string) {
   const existing = await findOrgEventById(id);
   if (!existing) {
     throw new HttpError(404, "Event not found");
+  }
+  // Auto-detected events can only be deleted by admins.
+  if (existing.kind === "AUTO" && roleName !== "admin") {
+    throw new HttpError(403, "Only admin can delete auto events");
   }
   await deleteOrgEvent(id);
   return { deleted: true };

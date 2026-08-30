@@ -93,10 +93,10 @@ eventsRouter.patch("/:id", async (req, res, next) => {
   }
 });
 
-/** DELETE /events/:id */
+/** DELETE /events/:id — manual: any auth user; auto: admin only */
 eventsRouter.delete("/:id", async (req, res, next) => {
   try {
-    const data = await removeEvent(param(req.params.id));
+    const data = await removeEvent(param(req.params.id), req.user!.roleName);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

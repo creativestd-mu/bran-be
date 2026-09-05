@@ -143,6 +143,7 @@ const updateUserSchema = z.object({
   roleId: z.string().uuid().optional(),
   isActive: z.boolean().optional(),
   isPlaceholder: z.boolean().optional(),
+  tasksPrivate: z.boolean().optional(),
   email: z.string().email().optional()
 });
 
@@ -174,6 +175,7 @@ usersRouter.put("/:id", async (req, res, next) => {
       data.managerUserId !== undefined ||
       data.reportMode !== undefined ||
       data.isPlaceholder !== undefined ||
+      data.tasksPrivate !== undefined ||
       data.email !== undefined ||
       (!isSelf && (data.roleId !== undefined || data.isActive !== undefined));
 

@@ -34,4 +34,42 @@ describe("work unit closed lock helpers", () => {
       assertCanView({ userId: ownerId, isPrivate: false }, ownerId)
     ).not.toThrow();
   });
+
+  it("hides tasksPrivate member units from everyone except owner and superadmin", () => {
+    expect(() =>
+      assertCanView(
+        { userId: ownerId, isPrivate: false, ownerTasksPrivate: true },
+        otherId,
+        "manager"
+      )
+    ).toThrow(HttpError);
+    expect(() =>
+      assertCanView(
+        { userId: ownerId, isPrivate: false, ownerTasksPrivate: true },
+        otherId,
+        "admin"
+      )
+    ).toThrow(HttpError);
+    expect(() =>
+      assertCanView(
+        { userId: ownerId, isPrivate: false, ownerTasksPrivate: true },
+        otherId,
+        "chief_of_staff"
+      )
+    ).toThrow(HttpError);
+    expect(() =>
+      assertCanView(
+        { userId: ownerId, isPrivate: false, ownerTasksPrivate: true },
+        otherId,
+        "superadmin"
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertCanView(
+        { userId: ownerId, isPrivate: false, ownerTasksPrivate: true },
+        ownerId,
+        "content_creator"
+      )
+    ).not.toThrow();
+  });
 });

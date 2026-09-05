@@ -168,19 +168,33 @@ function canViewAll(roleName: string): boolean {
   return role === "admin" || role === "manager" || role === "superadmin" || role === "chief_of_staff";
 }
 
+/** Only superadmin may inspect members marked tasksPrivate. */
+function canBypassTasksPrivate(roleName: string): boolean {
+  return roleName.trim().toLowerCase() === "superadmin";
+}
+
+type WorkUnitAccessFields = {
+  userId: string;
+  createdById?: string | null;
+  isPrivate: boolean;
+  ownerTasksPrivate?: boolean;
+};
+
 function canAccessWorkUnit(
-  unit: { userId: string; createdById?: string | null; isPrivate: boolean },
+  unit: WorkUnitAccessFields,
   viewerUserId: string,
   roleName: string
 ): boolean {
   if (unit.userId === viewerUserId) return true;
+  // Member-level privacy: only the owner (and privacy admins) may see their units.
+  if (unit.ownerTasksPrivate && !canBypassTasksPrivate(roleName)) return false;
   if (unit.createdById === viewerUserId) return true;
   if (unit.isPrivate) return false;
   return canViewAll(roleName);
 }
 
 export function assertCanView(
-  unit: { userId: string; createdById?: string | null; isPrivate: boolean },
+  unit: WorkUnitAccessFields,
   viewerUserId: string,
   roleName?: string
 ): void {
@@ -189,10 +203,14 @@ export function assertCanView(
 }
 
 export function assertCanModify(
-  unit: { userId: string; createdById?: string | null; isPrivate: boolean },
+  unit: WorkUnitAccessFields,
   viewerUserId: string,
   roleName: string
 ): void {
+  if (unit.ownerTasksPrivate && unit.userId !== viewerUserId && !canBypassTasksPrivate(roleName)) {
+    throw new HttpError(403, "Not authorized to modify this work unit");
+  }
+
   if (unit.isPrivate) {
     if (unit.userId !== viewerUserId && unit.createdById !== viewerUserId) {
       throw new HttpError(403, "Not authorized to modify this work unit");
@@ -203,6 +221,20 @@ export function assertCanModify(
   if (!canAccessWorkUnit(unit, viewerUserId, roleName)) {
     throw new HttpError(403, "Not authorized to modify this work unit");
   }
+}
+
+function accessFieldsFromUnit(unit: {
+  userId: string;
+  createdById?: string | null;
+  isPrivate: boolean;
+  user?: { tasksPrivate?: boolean } | null;
+}): WorkUnitAccessFields {
+  return {
+    userId: unit.userId,
+    createdById: unit.createdById,
+    isPrivate: unit.isPrivate,
+    ownerTasksPrivate: unit.user?.tasksPrivate ?? false
+  };
 }
 
 const CLOSED_LOCK_MESSAGE = "Closed work unit is locked. Reopen it before editing.";
@@ -1030,6 +1062,21 @@ export async function processSlackTaskListMessage(input: {
     return { handled: true, reason: viewingOther ? "unmapped_tagged_user" : "unmapped_user" };
   }
 
+  if (viewingOther) {
+    const target = await prisma.user.findUnique({
+      where: { id: branUserId },
+      select: { tasksPrivate: true, name: true }
+    });
+    if (target?.tasksPrivate) {
+      await postSlackMessage(
+        input.channelId,
+        `${target.name}'s tasks are private — only they can view them.`,
+        threadOpts
+      );
+      return { handled: true, reason: "tasks_private" };
+    }
+  }
+
   const includeOverdue = looksLikeOverdueTaskQuery(text);
   const units = await findWorkUnitsForSlackTaskList({
     userId: branUserId,
@@ -1765,6 +1812,13 @@ export async function createWorkUnit(
   const lifecycle = buildWorkUnitWriteFields({ explicitStatus: data.status, steps });
   const projectId = await resolveProjectIdForUser(data.projectId);
 
+  const owner = await prisma.user.findUnique({
+    where: { id: ownerUserId },
+    select: { tasksPrivate: true }
+  });
+  // Private members' units default to isPrivate so they don't leak in shared lists.
+  const isPrivate = data.isPrivate ?? owner?.tasksPrivate ?? false;
+
   const unit = await createWorkUnitInDb({
     userId: ownerUserId,
     createdById,
@@ -1772,7 +1826,7 @@ export async function createWorkUnit(
     audioRecordingId: data.audioRecordingId,
     title: data.title,
     context: data.context,
-    isPrivate: data.isPrivate ?? false,
+    isPrivate,
     assigneeSpokenName: data.assigneeSpokenName ?? null,
     sourceExcerpt: data.sourceExcerpt ?? null,
     sourceType: data.sourceType ?? null,
@@ -1826,7 +1880,7 @@ export async function getWorkUnitById(id: string, viewerUserId?: string, roleNam
   const unit = await findWorkUnitById(id);
   if (!unit) throw new HttpError(404, "Work unit not found");
   if (viewerUserId) {
-    assertCanView(unit, viewerUserId, roleName);
+    assertCanView(accessFieldsFromUnit(unit), viewerUserId, roleName);
   }
   return formatWorkUnitResponse(unit);
 }
@@ -1846,7 +1900,26 @@ export async function listWorkUnits(options: {
 
   // Admins/managers may list everyone or filter by person; others only see their own.
   const isPrivileged = canViewAll(options.viewerRole ?? "");
+  const canBypassPrivacy = canBypassTasksPrivate(options.viewerRole ?? "");
   const filterUserId = isPrivileged ? options.targetUserId : options.viewerUserId;
+
+  // Person filter on a tasksPrivate member: empty for non-bypass viewers.
+  if (
+    filterUserId &&
+    filterUserId !== options.viewerUserId &&
+    !canBypassPrivacy
+  ) {
+    const target = await prisma.user.findUnique({
+      where: { id: filterUserId },
+      select: { tasksPrivate: true }
+    });
+    if (target?.tasksPrivate) {
+      return {
+        items: [],
+        pagination: { page, pageSize, total: 0, totalPages: 1, hasNextPage: false }
+      };
+    }
+  }
 
   const { items, total } = await findWorkUnits({
     userId: filterUserId,
@@ -1857,6 +1930,7 @@ export async function listWorkUnits(options: {
     isPrivateVisibleForUserId: isPrivileged
       ? (options.targetUserId ?? options.viewerUserId)
       : undefined,
+    hideTasksPrivateExceptUserId: canBypassPrivacy ? undefined : options.viewerUserId,
     page,
     pageSize
   });
@@ -1891,7 +1965,7 @@ export async function updateWorkUnit(
 ) {
   const existingRaw = await findWorkUnitById(id);
   if (!existingRaw) throw new HttpError(404, "Work unit not found");
-  assertCanModify(existingRaw, viewerUserId, roleName);
+  assertCanModify(accessFieldsFromUnit(existingRaw), viewerUserId, roleName);
   assertNotLockedClosedUnit(existingRaw.status, data);
 
   const preferenceOwnerId = resolvePreferenceOwnerId(existingRaw);
@@ -1953,6 +2027,7 @@ export async function updateWorkUnit(
   let nextOwnerUserId = existingRaw.userId;
   let nextCreatedById = existingRaw.createdById;
   let ownerReassigned = false;
+  let nextIsPrivate = data.isPrivate;
 
   if (data.assignedToUserId !== undefined) {
     const resolvedOwnerUserId = data.assignedToUserId ?? viewerUserId;
@@ -1968,13 +2043,21 @@ export async function updateWorkUnit(
           userId: resolvedOwnerUserId
         });
       }
+
+      if (nextIsPrivate === undefined) {
+        const nextOwner = await prisma.user.findUnique({
+          where: { id: resolvedOwnerUserId },
+          select: { tasksPrivate: true }
+        });
+        if (nextOwner?.tasksPrivate) nextIsPrivate = true;
+      }
     }
   }
 
   const unit = await updateWorkUnitInDb(id, {
     title: data.title,
     context: data.context,
-    isPrivate: data.isPrivate,
+    isPrivate: nextIsPrivate,
     projectId,
     userId: ownerReassigned ? nextOwnerUserId : undefined,
     createdById: ownerReassigned ? nextCreatedById : undefined,
@@ -2033,7 +2116,7 @@ export async function reassignWorkUnitAssignments(
 ) {
   const existingRaw = await findWorkUnitById(workUnitId);
   if (!existingRaw) throw new HttpError(404, "Work unit not found");
-  assertCanModify(existingRaw, viewerUserId, roleName);
+  assertCanModify(accessFieldsFromUnit(existingRaw), viewerUserId, roleName);
   if (existingRaw.status === "CLOSED") {
     throw new HttpError(409, CLOSED_LOCK_MESSAGE);
   }
@@ -2099,9 +2182,14 @@ export async function reassignWorkUnitAssignments(
   }
 
   if (ownerReassigned) {
+    const nextOwner = await prisma.user.findUnique({
+      where: { id: nextOwnerUserId },
+      select: { tasksPrivate: true }
+    });
     await updateWorkUnitInDb(workUnitId, {
       userId: nextOwnerUserId,
-      createdById: nextCreatedById
+      createdById: nextCreatedById,
+      ...(nextOwner?.tasksPrivate ? { isPrivate: true } : {})
     });
 
     if (nextOwnerUserId !== viewerUserId && assignedBy) {
@@ -2122,7 +2210,7 @@ export async function reassignWorkUnitAssignments(
 export async function removeWorkUnit(id: string, viewerUserId: string, roleName: string) {
   const existing = await findWorkUnitById(id);
   if (!existing) throw new HttpError(404, "Work unit not found");
-  assertCanModify(existing, viewerUserId, roleName);
+  assertCanModify(accessFieldsFromUnit(existing), viewerUserId, roleName);
   if (existing.status === "CLOSED") {
     throw new HttpError(409, CLOSED_LOCK_MESSAGE);
   }

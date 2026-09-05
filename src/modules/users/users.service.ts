@@ -322,6 +322,7 @@ export async function updateUserProfile(
     roleId?: string;
     isActive?: boolean;
     isPlaceholder?: boolean;
+    tasksPrivate?: boolean;
     email?: string;
   }
 ) {

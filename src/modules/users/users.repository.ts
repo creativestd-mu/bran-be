@@ -122,6 +122,7 @@ export async function updateUser(
     roleId?: string;
     isActive?: boolean;
     isPlaceholder?: boolean;
+    tasksPrivate?: boolean;
     email?: string;
   }
 ) {

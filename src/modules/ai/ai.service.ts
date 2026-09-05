@@ -662,7 +662,11 @@ async function fetchWorkUnitsForUsers(
   }
 
   return results.map((units) =>
-    units.filter((unit) => !unit.isPrivate || unit.userId === requesterId)
+    units.filter((unit) => {
+      if (unit.userId === requesterId) return true;
+      if ((unit.user as { tasksPrivate?: boolean } | undefined)?.tasksPrivate) return false;
+      return !unit.isPrivate;
+    })
   );
 }
 

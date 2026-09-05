@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "../../lib/prisma";
 
-const userSelect = { id: true, name: true, email: true } as const;
+const userSelect = { id: true, name: true, email: true, tasksPrivate: true } as const;
 
 const workUnitInclude = {
   user: { select: userSelect },
@@ -106,6 +106,8 @@ export async function findWorkUnits(options: {
   from?: Date;
   to?: Date;
   isPrivateVisibleForUserId?: string;
+  /** Hide units owned by tasksPrivate members, except this viewer's own. */
+  hideTasksPrivateExceptUserId?: string;
   page: number;
   pageSize: number;
 }) {
@@ -143,6 +145,18 @@ export async function findWorkUnits(options: {
       ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
       {
         OR: [{ isPrivate: false }, { userId: options.isPrivateVisibleForUserId }]
+      }
+    ];
+  }
+
+  if (options.hideTasksPrivateExceptUserId) {
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+      {
+        OR: [
+          { user: { tasksPrivate: false } },
+          { userId: options.hideTasksPrivateExceptUserId }
+        ]
       }
     ];
   }

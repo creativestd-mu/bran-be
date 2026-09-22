@@ -8,9 +8,13 @@ import jwt from "jsonwebtoken";
 import { env } from "../src/config/env";
 import { prisma } from "../src/lib/prisma";
 
-const PRODUCTION_URL = "https://bran-be-production-3549.up.railway.app";
+const productionUrl = env.appUrl.replace(/\/$/, "");
 
 async function main() {
+  if (!productionUrl) {
+    throw new Error("APP_URL must be configured");
+  }
+
   const days = Number(process.argv[2] ?? 30);
 
   const user = await prisma.user.findFirst({
@@ -32,7 +36,7 @@ async function main() {
     { expiresIn: "1h" }
   );
 
-  const response = await fetch(`${PRODUCTION_URL}/api/eta/escalations/sync`, {
+  const response = await fetch(`${productionUrl}/api/eta/escalations/sync`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

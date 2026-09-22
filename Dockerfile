@@ -8,5 +8,5 @@ COPY . .
 RUN npm run build
 
 EXPOSE 3000
-# Match railway.json so migrations run before the server starts
-CMD ["npm", "run", "start:railway"]
+# Database migrations run once in the platform's pre-deploy job.
+CMD ["npm", "run", "start:production"]

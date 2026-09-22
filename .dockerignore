@@ -1,0 +1,15 @@
+.git
+.github
+.cursor
+.do
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+data
+dumps
+*.m4a
+*.log
+npm-debug.log*

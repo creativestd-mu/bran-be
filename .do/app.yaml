@@ -1,0 +1,89 @@
+{
+  "name": "bran-be",
+  "region": "blr",
+  "vpc": {
+    "id": "b88dd0a4-9f08-46d1-b097-f265b584aa11"
+  },
+  "envs": [
+    {
+      "key": "NODE_ENV",
+      "value": "production",
+      "scope": "RUN_TIME"
+    },
+    {
+      "key": "APP_TIMEZONE",
+      "value": "Asia/Kolkata",
+      "scope": "RUN_TIME"
+    }
+  ],
+  "services": [
+    {
+      "name": "api",
+      "github": {
+        "repo": "creativestd-mu/bran-be",
+        "branch": "main",
+        "deploy_on_push": false
+      },
+      "dockerfile_path": "Dockerfile",
+      "run_command": "npm run start:production",
+      "instance_size_slug": "apps-s-1vcpu-1gb",
+      "instance_count": 1,
+      "http_port": 3000,
+      "health_check": {
+        "initial_delay_seconds": 30,
+        "period_seconds": 10,
+        "timeout_seconds": 5,
+        "success_threshold": 1,
+        "failure_threshold": 6,
+        "http_path": "/",
+        "port": 3000
+      },
+      "liveness_health_check": {
+        "initial_delay_seconds": 60,
+        "period_seconds": 30,
+        "timeout_seconds": 5,
+        "success_threshold": 1,
+        "failure_threshold": 3,
+        "http_path": "/",
+        "port": 3000
+      }
+    }
+  ],
+  "jobs": [
+    {
+      "name": "database-migrate",
+      "github": {
+        "repo": "creativestd-mu/bran-be",
+        "branch": "main",
+        "deploy_on_push": false
+      },
+      "dockerfile_path": "Dockerfile",
+      "run_command": "npm run prisma:migrate:deploy",
+      "kind": "PRE_DEPLOY",
+      "instance_size_slug": "apps-s-1vcpu-0.5gb",
+      "instance_count": 1
+    }
+  ],
+  "ingress": {
+    "rules": [
+      {
+        "match": {
+          "path": {
+            "prefix": "/"
+          }
+        },
+        "component": {
+          "name": "api"
+        }
+      }
+    ]
+  },
+  "alerts": [
+    {
+      "rule": "DEPLOYMENT_FAILED"
+    },
+    {
+      "rule": "DOMAIN_FAILED"
+    }
+  ]
+}

@@ -22,8 +22,8 @@
       "image": {
         "registry_type": "DOCR",
         "registry": "mu-pitch-studio",
-        "repository": "bran-be",
-        "tag": "__IMAGE_TAG__"
+        "repository": "dfi-carousel-backend",
+        "tag": "bran-__IMAGE_TAG__"
       },
       "run_command": "npm run start:production",
       "instance_size_slug": "apps-s-1vcpu-1gb",
@@ -55,8 +55,8 @@
       "image": {
         "registry_type": "DOCR",
         "registry": "mu-pitch-studio",
-        "repository": "bran-be",
-        "tag": "__IMAGE_TAG__"
+        "repository": "dfi-carousel-backend",
+        "tag": "bran-__IMAGE_TAG__"
       },
       "run_command": "npm run prisma:migrate:deploy",
       "kind": "PRE_DEPLOY",

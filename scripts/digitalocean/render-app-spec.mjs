@@ -71,8 +71,8 @@ const appUrl = argument(
 
 const spec = loadJson(templatePath);
 for (const component of [...(spec.services ?? []), ...(spec.jobs ?? [])]) {
-  if (component.image?.tag === "__IMAGE_TAG__") {
-    component.image.tag = imageTag;
+  if (component.image?.tag?.includes("__IMAGE_TAG__")) {
+    component.image.tag = component.image.tag.replace("__IMAGE_TAG__", imageTag);
   }
 }
 const railway = loadJson(railwayPath);

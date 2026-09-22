@@ -15,7 +15,10 @@ async function runSync(): Promise<void> {
       `[gmail-cron] Synced ${result.accounts} account(s), ${result.synced} message(s), ${result.failures} failure(s)`
     );
   } catch (error) {
-    console.error("[gmail-cron] Sync run failed:", error);
+    console.error(
+      "[gmail-cron] Sync run failed:",
+      error instanceof Error ? error.message : String(error)
+    );
   } finally {
     running = false;
   }

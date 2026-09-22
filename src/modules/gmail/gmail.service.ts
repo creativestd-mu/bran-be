@@ -33,6 +33,10 @@ import {
   upsertGmailMessage
 } from "./gmail.repository";
 
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function redirectToApp(path: string, res: Response): void {
   const base = env.appUrl || "http://localhost:3000";
   res.redirect(`${base.replace(/\/$/, "")}${path}`);
@@ -123,7 +127,7 @@ export async function handleGmailOAuthCallback(req: Request, res: Response): Pro
 
     redirectToApp("/gmail?gmail=connected", res);
   } catch (error) {
-    console.error("[gmail] OAuth callback failed:", error);
+    console.error("[gmail] OAuth callback failed:", safeErrorMessage(error));
     redirectToApp("/gmail?gmail=error&message=connect_failed", res);
   }
 }
@@ -147,7 +151,7 @@ export async function disconnectGmail(userId: string) {
     const plain = decryptSecret(connection.refreshToken);
     await revokeGmailRefreshToken(plain);
   } catch (error) {
-    console.warn("[gmail] Token revoke skipped:", error);
+    console.warn("[gmail] Token revoke skipped:", safeErrorMessage(error));
   }
 
   await deleteGmailConnection(userId);
@@ -236,7 +240,10 @@ async function syncGmailConnection(input: {
           await upsertGmailMessage(connection.id, parsed);
           return true;
         } catch (error) {
-          console.warn(`[gmail] Failed to fetch message ${messageId}:`, error);
+          console.warn(
+            `[gmail] Failed to fetch message ${messageId}:`,
+            safeErrorMessage(error)
+          );
           return false;
         }
       }
@@ -268,7 +275,10 @@ function scheduleInitialGmailSync(userId: string): void {
   for (const delay of delaysMs) {
     const timer = setTimeout(() => {
       void syncGmailForUser(userId).catch((error) => {
-        console.error(`[gmail] Initial sync failed for user ${userId}:`, error);
+        console.error(
+          `[gmail] Initial sync failed for user ${userId}:`,
+          safeErrorMessage(error)
+        );
       });
     }, delay);
     if (typeof timer === "object" && timer && "unref" in timer) {
@@ -297,7 +307,10 @@ export async function syncAllConnectedGmailAccounts(): Promise<{
       });
     } catch (error) {
       failures += 1;
-      console.error(`[gmail] Cron sync failed for user ${connection.userId}:`, error);
+      console.error(
+        `[gmail] Cron sync failed for user ${connection.userId}:`,
+        safeErrorMessage(error)
+      );
     }
   }
 

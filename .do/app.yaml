@@ -19,12 +19,12 @@
   "services": [
     {
       "name": "api",
-      "github": {
-        "repo": "creativestd-mu/bran-be",
-        "branch": "main",
-        "deploy_on_push": false
+      "image": {
+        "registry_type": "DOCR",
+        "registry": "mu-pitch-studio",
+        "repository": "bran-be",
+        "tag": "__IMAGE_TAG__"
       },
-      "dockerfile_path": "Dockerfile",
       "run_command": "npm run start:production",
       "instance_size_slug": "apps-s-1vcpu-1gb",
       "instance_count": 1,
@@ -52,12 +52,12 @@
   "jobs": [
     {
       "name": "database-migrate",
-      "github": {
-        "repo": "creativestd-mu/bran-be",
-        "branch": "main",
-        "deploy_on_push": false
+      "image": {
+        "registry_type": "DOCR",
+        "registry": "mu-pitch-studio",
+        "repository": "bran-be",
+        "tag": "__IMAGE_TAG__"
       },
-      "dockerfile_path": "Dockerfile",
       "run_command": "npm run prisma:migrate:deploy",
       "kind": "PRE_DEPLOY",
       "instance_size_slug": "apps-s-1vcpu-0.5gb",

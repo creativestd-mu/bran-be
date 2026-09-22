@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import dotenv from "dotenv";
@@ -56,12 +57,24 @@ const digitalOceanPath = argument(
   path.join(process.env.HOME, ".config/bran-be/digitalocean-production.env")
 );
 const outputPath = argument("--output", "/tmp/bran-app-spec.json");
+const imageTag = argument(
+  "--image-tag",
+  execFileSync("git", ["rev-parse", "--short=12", "HEAD"], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  }).trim()
+);
 const appUrl = argument(
   "--app-url",
   "https://bran-be-production-3549.up.railway.app"
 ).replace(/\/$/, "");
 
 const spec = loadJson(templatePath);
+for (const component of [...(spec.services ?? []), ...(spec.jobs ?? [])]) {
+  if (component.image?.tag === "__IMAGE_TAG__") {
+    component.image.tag = imageTag;
+  }
+}
 const railway = loadJson(railwayPath);
 const digitalOcean = loadEnv(digitalOceanPath);
 const runtimeKeys = discoverRuntimeKeys();
@@ -104,6 +117,23 @@ if (hasFlag("--use-do-qdrant")) {
 values.APP_URL = appUrl;
 values.GOOGLE_OAUTH_REDIRECT_URI = `${appUrl}/oauth/google/calendar/callback`;
 values.GOOGLE_GMAIL_OAUTH_REDIRECT_URI = `${appUrl}/oauth/google/gmail/callback`;
+
+if (hasFlag("--disable-schedulers")) {
+  for (const key of [
+    "ATTENDANCE_CRON_ENABLED",
+    "ESCALATION_CRON_ENABLED",
+    "EVENTS_DETECT_CRON_ENABLED",
+    "GMAIL_SYNC_CRON_ENABLED",
+    "MEETINGS_SYNC_CRON_ENABLED",
+    "MELTWATER_COMPETITOR_CRON_ENABLED",
+    "MELTWATER_EARNED_CRON_ENABLED",
+    "PODS_SOCIAL_CRON_ENABLED",
+    "REVIEW_REMINDERS_CRON_ENABLED",
+    "WORK_INGEST_CRON_ENABLED"
+  ]) {
+    values[key] = "false";
+  }
+}
 
 for (const required of [
   "DATABASE_URL",

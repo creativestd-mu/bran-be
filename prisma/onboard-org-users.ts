@@ -432,6 +432,12 @@ const ORG_USERS: OrgUser[] = [
     roleName: "executive"
   },
   {
+    name: "Sraddha Agarwal",
+    email: "sraddha.agarwal@mastersunion.org",
+    designation: "Lead - Events & Growth | Marketing",
+    roleName: "team_lead"
+  },
+  {
     name: "Sudeep Purwar",
     email: "sudeep.purwar@mastersunion.org",
     designation: "Manager",

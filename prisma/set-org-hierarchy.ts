@@ -88,6 +88,13 @@ const HIERARCHY: Edge[] = [
     managerEmail: "divyam.goenka@mastersunion.org",
     managerName: "Divyam Amit Goenka"
   },
+  {
+    employeeEmail: "sraddha.agarwal@mastersunion.org",
+    employeeName: "Sraddha Agarwal",
+    managerEmail: "divyam.goenka@mastersunion.org",
+    managerName: "Divyam Amit Goenka",
+    designation: "Lead - Events & Growth | Marketing"
+  },
 
   // Neha's reports
   {

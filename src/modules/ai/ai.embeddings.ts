@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 import { env } from "../../config/env";
 import { generateEmbedding } from "./ai.gemini-embeddings";
+import { callOpenRouter } from "./ai.openrouter";
 import { upsertVectors, queryVectors } from "./ai.qdrant";
 
 let anthropicClient: Anthropic | null = null;
@@ -28,10 +29,11 @@ function getGemini(): GoogleGenerativeAI {
   return geminiClient;
 }
 
-type AiProvider = "anthropic" | "gemini";
+type AiProvider = "anthropic" | "gemini" | "openrouter";
 
 function getAiProvider(): AiProvider {
   const provider = env.aiProvider.toLowerCase();
+  if (provider === "openrouter") return "openrouter";
   return provider === "gemini" ? "gemini" : "anthropic";
 }
 
@@ -581,6 +583,15 @@ ${workStatsSection}
 ${socialSection}`;
 
   const provider = getAiProvider();
+  if (provider === "openrouter") {
+    return callOpenRouter({
+      systemPrompt,
+      userPrompt,
+      maxTokens: 1024,
+      temperature: 0.3
+    });
+  }
+
   if (provider === "gemini") {
     const model = getGemini().getGenerativeModel({
       model: env.geminiModel,

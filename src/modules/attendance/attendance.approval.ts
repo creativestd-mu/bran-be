@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { z } from "zod";
 
 import { env } from "../../config/env";
+import { callOpenRouter } from "../ai/ai.openrouter";
 
 export type WfhApprovalDecision = "approved" | "denied" | "unclear";
 
@@ -34,8 +35,10 @@ function getGemini(): GoogleGenerativeAI {
   return geminiClient;
 }
 
-function getAiProvider(): "anthropic" | "gemini" {
-  return env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
+function getAiProvider(): "anthropic" | "gemini" | "openrouter" {
+  const provider = env.aiProvider.toLowerCase();
+  if (provider === "openrouter") return "openrouter";
+  return provider === "gemini" ? "gemini" : "anthropic";
 }
 
 function stripCodeFences(text: string): string {
@@ -55,6 +58,16 @@ const classificationSchema = z.object({
 
 async function callLlm(systemPrompt: string, userPrompt: string): Promise<string> {
   const provider = getAiProvider();
+
+  if (provider === "openrouter") {
+    return callOpenRouter({
+      systemPrompt,
+      userPrompt,
+      maxTokens: 256,
+      temperature: 0.1,
+      json: true
+    });
+  }
 
   if (provider === "gemini") {
     const model = getGemini().getGenerativeModel({

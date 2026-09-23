@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { env } from "../../../config/env";
 import { HttpError } from "../../../utils/httpError";
+import { callOpenRouter } from "../../ai/ai.openrouter";
 import { thumbnailAiOutputSchema } from "./thumbnail-generator.schemas";
 
 let anthropicClient: Anthropic | null = null;
@@ -29,8 +30,10 @@ function getGemini(): GoogleGenerativeAI {
   return geminiClient;
 }
 
-function getAiProvider(): "anthropic" | "gemini" {
-  return env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
+function getAiProvider(): "anthropic" | "gemini" | "openrouter" {
+  const provider = env.aiProvider.toLowerCase();
+  if (provider === "openrouter") return "openrouter";
+  return provider === "gemini" ? "gemini" : "anthropic";
 }
 
 function stripCodeFences(text: string): string {
@@ -64,6 +67,17 @@ async function callVisionLlm(
   references: ThumbnailReferenceImage[]
 ): Promise<string> {
   const provider = getAiProvider();
+
+  if (provider === "openrouter") {
+    return callOpenRouter({
+      systemPrompt,
+      userPrompt,
+      maxTokens: 4096,
+      temperature: 0.35,
+      json: true,
+      images: references
+    });
+  }
 
   if (provider === "gemini") {
     const model = getGemini().getGenerativeModel({

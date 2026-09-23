@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 import { env } from "../../config/env";
+import { callOpenRouter } from "../ai/ai.openrouter";
 import { BRAIN_NODE_COLORS, TRANSCRIPT_EXCERPT_CHARS, nodeId } from "./graph.constants";
 import {
   aiEnrichmentSchema,
@@ -33,8 +34,10 @@ function getGemini(): GoogleGenerativeAI {
   return geminiClient;
 }
 
-function getAiProvider(): "anthropic" | "gemini" {
-  return env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
+function getAiProvider(): "anthropic" | "gemini" | "openrouter" {
+  const provider = env.aiProvider.toLowerCase();
+  if (provider === "openrouter") return "openrouter";
+  return provider === "gemini" ? "gemini" : "anthropic";
 }
 
 function stripCodeFences(text: string): string {
@@ -45,6 +48,16 @@ function stripCodeFences(text: string): string {
 
 async function callLlm(systemPrompt: string, userPrompt: string): Promise<string> {
   const provider = getAiProvider();
+
+  if (provider === "openrouter") {
+    return callOpenRouter({
+      systemPrompt,
+      userPrompt,
+      maxTokens: 4096,
+      temperature: 0.2,
+      json: true
+    });
+  }
 
   if (provider === "gemini") {
     const model = getGemini().getGenerativeModel({

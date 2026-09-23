@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { z } from "zod";
 
 import { env } from "../../config/env";
+import { callOpenRouter } from "../ai/ai.openrouter";
 import type { SourceCandidate } from "./events.sources";
 
 const clusterSchema = z.object({
@@ -52,12 +53,15 @@ function getGemini(): GoogleGenerativeAI {
   return geminiClient;
 }
 
-function getAiProvider(): "anthropic" | "gemini" {
-  return env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
+function getAiProvider(): "anthropic" | "gemini" | "openrouter" {
+  const provider = env.aiProvider.toLowerCase();
+  if (provider === "openrouter") return "openrouter";
+  return provider === "gemini" ? "gemini" : "anthropic";
 }
 
 export function isEventsAiConfigured(): boolean {
   const provider = getAiProvider();
+  if (provider === "openrouter") return Boolean(env.openrouterApiKey);
   return provider === "gemini" ? Boolean(env.geminiApiKey) : Boolean(env.anthropicApiKey);
 }
 
@@ -69,6 +73,16 @@ function stripCodeFences(text: string): string {
 
 async function callLlm(systemPrompt: string, userPrompt: string): Promise<string> {
   const provider = getAiProvider();
+
+  if (provider === "openrouter") {
+    return callOpenRouter({
+      systemPrompt,
+      userPrompt,
+      maxTokens: 4096,
+      temperature: 0.2,
+      json: true
+    });
+  }
 
   if (provider === "gemini") {
     const model = getGemini().getGenerativeModel({

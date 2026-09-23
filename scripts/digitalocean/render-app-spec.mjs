@@ -117,6 +117,12 @@ if (hasFlag("--use-do-qdrant")) {
 values.APP_URL = appUrl;
 values.GOOGLE_OAUTH_REDIRECT_URI = `${appUrl}/oauth/google/calendar/callback`;
 values.GOOGLE_GMAIL_OAUTH_REDIRECT_URI = `${appUrl}/oauth/google/gmail/callback`;
+values.AI_PROVIDER = argument("--ai-provider", "openrouter");
+
+if (values.AI_PROVIDER === "openrouter") {
+  delete values.ANTHROPIC_API_KEY;
+  delete values.ANTHROPIC_MODEL;
+}
 
 if (hasFlag("--disable-schedulers")) {
   for (const key of [

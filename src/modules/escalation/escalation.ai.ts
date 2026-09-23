@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { z } from "zod";
 
 import { env } from "../../config/env";
+import { callOpenRouter } from "../ai/ai.openrouter";
 import {
   ESCALATION_PRIORITIES,
   ESCALATION_STATUSES,
@@ -51,12 +52,15 @@ function getGemini(): GoogleGenerativeAI {
   return geminiClient;
 }
 
-function getAiProvider(): "anthropic" | "gemini" {
-  return env.aiProvider.toLowerCase() === "gemini" ? "gemini" : "anthropic";
+function getAiProvider(): "anthropic" | "gemini" | "openrouter" {
+  const provider = env.aiProvider.toLowerCase();
+  if (provider === "openrouter") return "openrouter";
+  return provider === "gemini" ? "gemini" : "anthropic";
 }
 
 export function isEscalationAiConfigured(): boolean {
   const provider = getAiProvider();
+  if (provider === "openrouter") return Boolean(env.openrouterApiKey);
   return provider === "gemini" ? Boolean(env.geminiApiKey) : Boolean(env.anthropicApiKey);
 }
 
@@ -118,6 +122,17 @@ async function callLlm(
   images: SlackImageBytes[]
 ): Promise<string> {
   const provider = getAiProvider();
+
+  if (provider === "openrouter") {
+    return callOpenRouter({
+      systemPrompt,
+      userPrompt,
+      maxTokens: 1536,
+      temperature: 0.2,
+      json: true,
+      images
+    });
+  }
 
   if (provider === "gemini") {
     const model = getGemini().getGenerativeModel({

@@ -5,15 +5,16 @@ alwaysApply: true
 
 # Production URL
 
-- **Current production:** `https://bran-be-production-3549.up.railway.app`
+- **Current production:** `https://bran-be-6jtht.ondigitalocean.app`
+- **Rollback only:** `https://bran-be-production-3549.up.railway.app` (do not use)
 - **Deprecated / old:** `https://bran-be-production.up.railway.app` (do not use)
 
 ## Slack Event Subscriptions
 
-- Request URL: `https://bran-be-production-3549.up.railway.app/api/slack/events`
-- Slash command URL: `https://bran-be-production-3549.up.railway.app/api/slack/commands`
-- Interactivity Request URL: `https://bran-be-production-3549.up.railway.app/api/slack/interactions`
-- Cron check: `https://bran-be-production-3549.up.railway.app/api/cron/eta-check`
+- Request URL: `https://bran-be-6jtht.ondigitalocean.app/api/slack/events`
+- Slash command URL: `https://bran-be-6jtht.ondigitalocean.app/api/slack/commands`
+- Interactivity Request URL: `https://bran-be-6jtht.ondigitalocean.app/api/slack/interactions`
+- Cron check: `https://bran-be-6jtht.ondigitalocean.app/api/cron/eta-check`
 
 ## Deploy verification
 

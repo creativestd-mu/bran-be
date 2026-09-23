@@ -2,9 +2,9 @@
  * One-off script: onboard the Socials team.
  * Run with: npx tsx prisma/onboard-socials-team.ts
  *
- * - Finds Sudipto Adhicary (already exists) and uses him as manager.
+ * - Upserts Varchasvi Mahajan as Head of Socials (reports to Divyam when present).
  * - Creates any missing roles with basic content_creator-level permissions.
- * - Upserts all team members, skipping anyone already present.
+ * - Upserts all team members under Varchasvi.
  */
 
 import { PrismaClient } from "@prisma/client";
@@ -76,12 +76,6 @@ const TEAM_MEMBERS: {
     roleName: "associate"
   },
   {
-    name: "Varchasvi Mahajan",
-    email: "varchasvi.mahajan@mastersunion.org",
-    designation: "Team Lead",
-    roleName: "team_lead"
-  },
-  {
     name: "Mani Sharma",
     email: "mani.sharma@mastersunion.org",
     designation: "Executive",
@@ -90,7 +84,6 @@ const TEAM_MEMBERS: {
 ];
 
 async function main() {
-  // ── 1. Ensure new roles exist first (needed for Sudipto too) ───────────────
   console.log("Ensuring roles exist...");
 
   const basicPermissions = await prisma.permission.findMany({
@@ -128,30 +121,40 @@ async function main() {
     roleMap[r.name] = r.id;
   }
 
-  // ── 2. Upsert Sudipto (manager for the team) ──────────────────────────────
-  console.log("\nUpserting Sudipto Adhicary (team manager)...");
-  const sudiptoRoleId = roleMap["head_of_socials"];
-  if (!sudiptoRoleId) throw new Error("head_of_socials role not found after creation");
+  console.log("\nUpserting Varchasvi Mahajan (Head of Socials)...");
+  const headRoleId = roleMap["head_of_socials"];
+  if (!headRoleId) throw new Error("head_of_socials role not found after creation");
 
-  const sudipto = await prisma.user.upsert({
-    where: { email: "sudipto.adhicary@mastersunion.org" },
+  const divyam = await prisma.user.findUnique({
+    where: { email: "divyam.goenka@mastersunion.org" }
+  });
+
+  const head = await prisma.user.upsert({
+    where: { email: "varchasvi.mahajan@mastersunion.org" },
     update: {
-      name: "Sudipto Adhicary",
+      name: "Varchasvi Mahajan",
       designation: "Head of Socials",
-      roleId: sudiptoRoleId,
+      roleId: headRoleId,
+      managerUserId: divyam?.id ?? null,
       isActive: true
     },
     create: {
-      email: "sudipto.adhicary@mastersunion.org",
-      name: "Sudipto Adhicary",
+      email: "varchasvi.mahajan@mastersunion.org",
+      name: "Varchasvi Mahajan",
       designation: "Head of Socials",
-      roleId: sudiptoRoleId,
+      roleId: headRoleId,
+      managerUserId: divyam?.id ?? null,
       isActive: true
     }
   });
-  console.log(`  ${sudipto.name} (${sudipto.id})`);
+  console.log(`  ${head.name} (${head.id})`);
 
-  // ── 3. Upsert team members ─────────────────────────────────────────────────
+  // Keep Sudipto deactivated if present
+  await prisma.user.updateMany({
+    where: { email: "sudipto.adhicary@mastersunion.org" },
+    data: { isActive: false, managerUserId: null }
+  });
+
   console.log("\nOnboarding team members...");
 
   for (const member of TEAM_MEMBERS) {
@@ -167,7 +170,7 @@ async function main() {
         name: member.name,
         designation: member.designation,
         roleId,
-        managerUserId: sudipto.id,
+        managerUserId: head.id,
         isActive: true
       },
       create: {
@@ -175,7 +178,7 @@ async function main() {
         name: member.name,
         designation: member.designation,
         roleId,
-        managerUserId: sudipto.id,
+        managerUserId: head.id,
         isActive: true
       }
     });

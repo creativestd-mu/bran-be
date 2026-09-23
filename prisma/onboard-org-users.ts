@@ -462,12 +462,6 @@ const ORG_USERS: OrgUser[] = [
     roleName: "project_manager"
   },
   {
-    name: "Sudipto Adhicary",
-    email: "sudipto.adhicary@mastersunion.org",
-    designation: "Head of Socials",
-    roleName: "head_of_socials"
-  },
-  {
     name: "Arijit Bose",
     email: "arijit.bose@mastersunion.org",
     designation: "Executive - Video Editor",
@@ -518,8 +512,8 @@ const ORG_USERS: OrgUser[] = [
   {
     name: "Varchasvi Mahajan",
     email: "varchasvi.mahajan@mastersunion.org",
-    designation: "Team Lead",
-    roleName: "team_lead"
+    designation: "Head of Socials",
+    roleName: "head_of_socials"
   },
   {
     name: "Mani Sharma",

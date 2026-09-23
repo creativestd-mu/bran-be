@@ -77,12 +77,6 @@ const HIERARCHY: Edge[] = [
     managerName: "Divyam Amit Goenka"
   },
   {
-    employeeEmail: "sudipto.adhicary@mastersunion.org",
-    employeeName: "Sudipto Adhicary",
-    managerEmail: "divyam.goenka@mastersunion.org",
-    managerName: "Divyam Amit Goenka"
-  },
-  {
     employeeEmail: "spandana.guduru@mastersunion.org",
     employeeName: "Spandana Guduru",
     managerEmail: "divyam.goenka@mastersunion.org",
@@ -94,6 +88,13 @@ const HIERARCHY: Edge[] = [
     managerEmail: "divyam.goenka@mastersunion.org",
     managerName: "Divyam Amit Goenka",
     designation: "Lead - Events & Growth | Marketing"
+  },
+  {
+    employeeEmail: "varchasvi.mahajan@mastersunion.org",
+    employeeName: "Varchasvi Mahajan",
+    managerEmail: "divyam.goenka@mastersunion.org",
+    managerName: "Divyam Amit Goenka",
+    designation: "Head of Socials"
   },
 
   // Neha's reports
@@ -415,42 +416,36 @@ const HIERARCHY: Edge[] = [
     managerName: "Akash P K"
   },
 
-  // Socials under Sudipto
-  {
-    employeeEmail: "varchasvi.mahajan@mastersunion.org",
-    employeeName: "Varchasvi Mahajan",
-    managerEmail: "sudipto.adhicary@mastersunion.org",
-    managerName: "Sudipto Adhicary"
-  },
+  // Socials under Varchasvi
   {
     employeeEmail: "samar.ansari@mastersunion.org",
     employeeName: "Samar Ansari",
-    managerEmail: "sudipto.adhicary@mastersunion.org",
-    managerName: "Sudipto Adhicary"
+    managerEmail: "varchasvi.mahajan@mastersunion.org",
+    managerName: "Varchasvi Mahajan"
   },
   {
     employeeEmail: "prachi.malik@mastersunion.org",
     employeeName: "Prachi Malik",
-    managerEmail: "sudipto.adhicary@mastersunion.org",
-    managerName: "Sudipto Adhicary"
+    managerEmail: "varchasvi.mahajan@mastersunion.org",
+    managerName: "Varchasvi Mahajan"
   },
   {
     employeeEmail: "khushi.nahar@mastersunion.org",
     employeeName: "Khushi Nahar",
-    managerEmail: "sudipto.adhicary@mastersunion.org",
-    managerName: "Sudipto Adhicary"
+    managerEmail: "varchasvi.mahajan@mastersunion.org",
+    managerName: "Varchasvi Mahajan"
   },
   {
     employeeEmail: "mani.sharma@mastersunion.org",
     employeeName: "Mani Sharma",
-    managerEmail: "sudipto.adhicary@mastersunion.org",
-    managerName: "Sudipto Adhicary"
+    managerEmail: "varchasvi.mahajan@mastersunion.org",
+    managerName: "Varchasvi Mahajan"
   },
   {
     employeeEmail: "arijit.bose@mastersunion.org",
     employeeName: "Arijit Bose",
-    managerEmail: "sudipto.adhicary@mastersunion.org",
-    managerName: "Sudipto Adhicary"
+    managerEmail: "varchasvi.mahajan@mastersunion.org",
+    managerName: "Varchasvi Mahajan"
   },
 
   // Sudeep's reports

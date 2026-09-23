@@ -20,14 +20,14 @@ const workUnitInclude = {
 function listOrderBy(status?: string): Prisma.WorkUnitOrderByWithRelationInput[] {
   if (status === "OPEN") {
     return [
-      { nextDueAt: { sort: "asc", nulls: "last" } },
+      { nextDueAt: { sort: "desc", nulls: "last" } },
       { createdAt: "desc" }
     ];
   }
 
   if (status === "CLOSED") {
     return [
-      { firstDueAt: { sort: "asc", nulls: "last" } },
+      { firstDueAt: { sort: "desc", nulls: "last" } },
       { closedAt: { sort: "desc", nulls: "last" } },
       { createdAt: "desc" }
     ];

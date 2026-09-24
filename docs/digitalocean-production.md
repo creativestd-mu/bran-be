@@ -35,8 +35,11 @@ doctl apps update d1253564-720b-49ab-991b-540c2b222881 \
   --wait
 ```
 
-Use `--disable-schedulers` while Railway is still active. Never run both deployments with
-in-process schedulers enabled.
+Use `--disable-schedulers` only if another environment still owns in-process crons.
+Never run both deployments with in-process schedulers enabled.
+
+Daily pending-task Slack DMs run at 10:00 IST (`TASK_REMINDER_*`). Manual trigger:
+`GET /api/cron/task-reminders` (optional `?force=true`) with `Authorization: Bearer $CRON_SECRET`.
 
 ## External callback URLs
 

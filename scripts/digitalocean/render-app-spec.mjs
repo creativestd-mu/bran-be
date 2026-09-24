@@ -114,7 +114,10 @@ if (hasFlag("--use-do-qdrant")) {
   values.QDRANT_API_KEY = digitalOcean.QDRANT_API_KEY;
 }
 
-values.APP_URL = appUrl;
+values.APP_URL =
+  digitalOcean.APP_URL ||
+  railway.APP_URL ||
+  "https://bran.cohesivity.app";
 values.GOOGLE_OAUTH_REDIRECT_URI = `${appUrl}/oauth/google/calendar/callback`;
 values.GOOGLE_GMAIL_OAUTH_REDIRECT_URI = `${appUrl}/oauth/google/gmail/callback`;
 values.AI_PROVIDER = argument("--ai-provider", "openrouter");
@@ -135,6 +138,7 @@ if (hasFlag("--disable-schedulers")) {
     "MELTWATER_EARNED_CRON_ENABLED",
     "PODS_SOCIAL_CRON_ENABLED",
     "REVIEW_REMINDERS_CRON_ENABLED",
+    "TASK_REMINDER_CRON_ENABLED",
     "WORK_INGEST_CRON_ENABLED"
   ]) {
     values[key] = "false";

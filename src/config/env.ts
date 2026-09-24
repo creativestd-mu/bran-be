@@ -149,6 +149,15 @@ export const env = {
     (process.env.REVIEW_REMINDERS_ENABLED ?? "true").toLowerCase() !== "false",
   reviewRemindersCronEnabled:
     (process.env.REVIEW_REMINDERS_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  /** Daily 10:00 IST Slack DMs listing pending work units (max 10 + Bran link). */
+  taskReminderEnabled: (process.env.TASK_REMINDER_ENABLED ?? "true").toLowerCase() !== "false",
+  taskReminderCronEnabled:
+    (process.env.TASK_REMINDER_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  /** Hour of day in IST (0–23). Default 10. */
+  taskReminderHourIst: Math.min(
+    23,
+    Math.max(0, Math.trunc(parsePositiveNumber(process.env.TASK_REMINDER_HOUR_IST, 10)))
+  ),
   ideaMatchTopK: parsePositiveNumber(process.env.IDEA_MATCH_TOP_K, 25),
   ideaMatchThreshold: parsePositiveNumber(process.env.IDEA_MATCH_THRESHOLD, 0.6),
   ideaMatchMaxRecommendations: parsePositiveNumber(process.env.IDEA_MATCH_MAX_RECOMMENDATIONS, 5),

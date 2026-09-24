@@ -1016,10 +1016,18 @@ export type SlackTaskListMeta = {
   toMs: number;
   userId: string;
   includeOverdue: boolean;
+  /** Max pending checkboxes when refreshing (reminder uses 10). */
+  pendingCap?: number;
+  /** Reminder DMs hide completed + link overflow to Bran /work. */
+  mode?: "reminder";
 };
 
 export function encodeSlackTaskListMeta(meta: SlackTaskListMeta): string {
-  return `${SLACK_TASK_LIST_META_PREFIX}${meta.fromMs}:${meta.toMs}:${meta.userId}:${meta.includeOverdue ? 1 : 0}`;
+  const base = `${SLACK_TASK_LIST_META_PREFIX}${meta.fromMs}:${meta.toMs}:${meta.userId}:${meta.includeOverdue ? 1 : 0}`;
+  if (meta.pendingCap == null && meta.mode == null) return base;
+  const cap = meta.pendingCap != null ? String(meta.pendingCap) : "";
+  const mode = meta.mode === "reminder" ? "r" : "";
+  return `${base}:${cap}:${mode}`;
 }
 
 export function parseSlackTaskListMeta(blockId: string | undefined): SlackTaskListMeta | null {
@@ -1031,13 +1039,29 @@ export function parseSlackTaskListMeta(blockId: string | undefined): SlackTaskLi
   const userId = parts[2];
   const includeOverdue = parts[3] === "1";
   if (!userId || Number.isNaN(fromMs) || Number.isNaN(toMs)) return null;
-  return { fromMs, toMs, userId, includeOverdue };
+  const pendingCapRaw = parts[4];
+  const pendingCap =
+    pendingCapRaw && /^\d+$/.test(pendingCapRaw) ? Number(pendingCapRaw) : undefined;
+  const mode = parts[5] === "r" ? ("reminder" as const) : undefined;
+  return {
+    fromMs,
+    toMs,
+    userId,
+    includeOverdue,
+    ...(pendingCap != null ? { pendingCap } : {}),
+    ...(mode ? { mode } : {})
+  };
 }
 
 function checkboxLabel(item: SlackTaskListItem): string {
   const due = item.overdue ? `overdue · ${formatDue(item.dueAt)}` : `due ${formatDue(item.dueAt)}`;
   const raw = `${item.title} — ${due}`;
   return raw.length <= 75 ? raw : `${raw.slice(0, 72)}...`;
+}
+
+function branWorkListUrl(appUrl?: string): string {
+  const base = (appUrl || "https://bran.cohesivity.app").replace(/\/$/, "");
+  return `${base}/work`;
 }
 
 export function formatSlackTaskListBlocks(input: {
@@ -1053,13 +1077,32 @@ export function formatSlackTaskListBlocks(input: {
    * When false (viewing someone else's list), render a plain read-only list.
    */
   interactive?: boolean;
+  /** Override default pending checkbox cap (18). Reminder uses 10. */
+  pendingCap?: number;
+  /**
+   * When the full pending count is larger than `pending.length` (e.g. reminder
+   * only fetched the first 10), use this for the section header + overflow line.
+   */
+  pendingTotal?: number;
+  /** Hide the Completed section (daily reminders). */
+  hideCompleted?: boolean;
+  /** Replace the default heading line. */
+  headingOverride?: string;
+  /** Reminder mode: overflow links to Bran /work; stored in checklist meta for refresh. */
+  mode?: "reminder";
 }): { text: string; blocks: Array<Record<string, unknown>> } {
   const interactive = input.interactive !== false;
+  const pendingCap = Math.max(
+    1,
+    Math.min(SLACK_CHECKLIST_PENDING_CAP, input.pendingCap ?? SLACK_CHECKLIST_PENDING_CAP)
+  );
   const text = formatSlackTaskListMessage(input);
-  const heading = input.ownerName
+  const defaultHeading = input.ownerName
     ? `${input.ownerName}'s tasks by due date`
     : "Your tasks by due date";
-  const pendingShown = input.pending.slice(0, SLACK_CHECKLIST_PENDING_CAP);
+  const heading = input.headingOverride ?? `${defaultHeading} · ${input.range.label}`;
+  const pendingShown = input.pending.slice(0, pendingCap);
+  const pendingTotal = Math.max(input.pendingTotal ?? input.pending.length, pendingShown.length);
   const completedShown = input.completed.slice(0, SLACK_CHECKLIST_COMPLETED_CAP);
   const blocks: Array<Record<string, unknown>> = [
     {
@@ -1068,11 +1111,13 @@ export function formatSlackTaskListBlocks(input: {
         fromMs: input.range.from.getTime(),
         toMs: input.range.to.getTime(),
         userId: input.listUserId,
-        includeOverdue: input.includeOverdue
+        includeOverdue: input.includeOverdue,
+        pendingCap: input.pendingCap,
+        mode: input.mode
       }),
       text: {
         type: "mrkdwn",
-        text: `*${escapeSlackMrkdwn(heading)} · ${escapeSlackMrkdwn(input.range.label)}*`
+        text: `*${escapeSlackMrkdwn(heading)}*`
       }
     }
   ];
@@ -1086,7 +1131,7 @@ export function formatSlackTaskListBlocks(input: {
 
   blocks.push({
     type: "section",
-    text: { type: "mrkdwn", text: `*Pending (${input.pending.length})*` }
+    text: { type: "mrkdwn", text: `*Pending (${pendingTotal})*` }
   });
 
   if (pendingShown.length === 0) {
@@ -1113,13 +1158,23 @@ export function formatSlackTaskListBlocks(input: {
         ]
       });
     }
-    if (input.pending.length > pendingShown.length) {
+    if (pendingTotal > pendingShown.length) {
+      const more = pendingTotal - pendingShown.length;
+      const overflow =
+        input.mode === "reminder"
+          ? `_…and ${more} more._ <${branWorkListUrl(input.appUrl)}|Open all in Bran>`
+          : `_…and ${more} more pending. Ask for a narrower date._`;
+      blocks.push({
+        type: "context",
+        elements: [{ type: "mrkdwn", text: overflow }]
+      });
+    } else if (input.mode === "reminder") {
       blocks.push({
         type: "context",
         elements: [
           {
             type: "mrkdwn",
-            text: `_…and ${input.pending.length - pendingShown.length} more pending. Ask for a narrower date._`
+            text: `<${branWorkListUrl(input.appUrl)}|Open tasks in Bran>`
           }
         ]
       });
@@ -1135,10 +1190,8 @@ export function formatSlackTaskListBlocks(input: {
       const link = linkFor(item.id);
       return link ? `• *<${link}|${title}>* — ${due}` : `• *${title}* — ${due}`;
     });
-    if (input.pending.length > pendingShown.length) {
-      lines.push(
-        `_…and ${input.pending.length - pendingShown.length} more pending. Ask for a narrower date._`
-      );
+    if (pendingTotal > pendingShown.length) {
+      lines.push(`_…and ${pendingTotal - pendingShown.length} more pending. Ask for a narrower date._`);
     }
     blocks.push({
       type: "section",
@@ -1146,28 +1199,30 @@ export function formatSlackTaskListBlocks(input: {
     });
   }
 
-  blocks.push({
-    type: "section",
-    text: { type: "mrkdwn", text: `*Completed (${input.completed.length})*` }
-  });
+  if (!input.hideCompleted) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `*Completed (${input.completed.length})*` }
+    });
 
-  if (completedShown.length === 0) {
-    blocks.push({
-      type: "section",
-      text: { type: "mrkdwn", text: "_None._" }
-    });
-  } else {
-    const lines = completedShown.map((item) => {
-      const due = `due ${formatDue(item.dueAt)}`;
-      return `• ~${escapeSlackMrkdwn(item.title)}~ — ${due}`;
-    });
-    if (input.completed.length > completedShown.length) {
-      lines.push(`_…and ${input.completed.length - completedShown.length} more completed._`);
+    if (completedShown.length === 0) {
+      blocks.push({
+        type: "section",
+        text: { type: "mrkdwn", text: "_None._" }
+      });
+    } else {
+      const lines = completedShown.map((item) => {
+        const due = `due ${formatDue(item.dueAt)}`;
+        return `• ~${escapeSlackMrkdwn(item.title)}~ — ${due}`;
+      });
+      if (input.completed.length > completedShown.length) {
+        lines.push(`_…and ${input.completed.length - completedShown.length} more completed._`);
+      }
+      blocks.push({
+        type: "section",
+        text: { type: "mrkdwn", text: lines.join("\n") }
+      });
     }
-    blocks.push({
-      type: "section",
-      text: { type: "mrkdwn", text: lines.join("\n") }
-    });
   }
 
   return { text, blocks };

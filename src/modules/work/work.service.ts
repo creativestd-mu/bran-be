@@ -33,6 +33,7 @@ import {
   findWorkUnitById,
   findWorkUnits,
   findWorkUnitsForSlackTaskList,
+  findOpenWorkUnitsForReminder,
   updateWorkStepAssignee,
   updateWorkUnit as updateWorkUnitInDb
 } from "./work.repository";
@@ -67,6 +68,11 @@ import {
   loadSlackWorkIngestCandidates,
   resolveBranUserIdForSlackUser
 } from "./work.slack";
+import {
+  TASK_REMINDER_MAX_SHOWN,
+  TASK_REMINDER_RANGE,
+  toReminderTaskListItems
+} from "./work.task-reminder";
 import {
   classifyWorkUnitsForTaskList,
   collectSlackUserMentions,
@@ -1297,37 +1303,70 @@ export async function processSlackWorkChecklistAction(input: {
     .find((value): value is NonNullable<typeof value> => Boolean(value));
 
   if (meta && input.responseUrl) {
-    const units = await findWorkUnitsForSlackTaskList({
-      userId: meta.userId,
-      from: new Date(meta.fromMs),
-      to: new Date(meta.toMs),
-      includeOverdue: meta.includeOverdue
-    });
-    const { pending, completed } = classifyWorkUnitsForTaskList({
-      userId: meta.userId,
-      from: new Date(meta.fromMs),
-      to: new Date(meta.toMs),
-      includeOverdue: meta.includeOverdue,
-      units
-    });
+    let pending: ReturnType<typeof classifyWorkUnitsForTaskList>["pending"] = [];
+    let completed: ReturnType<typeof classifyWorkUnitsForTaskList>["completed"] = [];
+    let pendingTotal: number | undefined;
+
+    if (meta.mode === "reminder") {
+      const openUnits = await findOpenWorkUnitsForReminder(
+        meta.userId,
+        meta.pendingCap ?? TASK_REMINDER_MAX_SHOWN
+      );
+      const remainingOpen = await prisma.workUnit.count({
+        where: { userId: meta.userId, status: "OPEN" }
+      });
+      pending = toReminderTaskListItems(openUnits, new Date());
+      completed = [];
+      pendingTotal = remainingOpen;
+    } else {
+      const units = await findWorkUnitsForSlackTaskList({
+        userId: meta.userId,
+        from: new Date(meta.fromMs),
+        to: new Date(meta.toMs),
+        includeOverdue: meta.includeOverdue
+      });
+      const classified = classifyWorkUnitsForTaskList({
+        userId: meta.userId,
+        from: new Date(meta.fromMs),
+        to: new Date(meta.toMs),
+        includeOverdue: meta.includeOverdue,
+        units
+      });
+      pending = classified.pending;
+      completed = classified.completed;
+    }
+
     const owner =
       meta.userId === branUserId
         ? undefined
         : (await prisma.user.findUnique({ where: { id: meta.userId }, select: { name: true } }))
             ?.name;
     const { text, blocks } = formatSlackTaskListBlocks({
-      range: {
-        from: new Date(meta.fromMs),
-        to: new Date(meta.toMs),
-        label: ""
-      },
+      range:
+        meta.mode === "reminder"
+          ? { ...TASK_REMINDER_RANGE }
+          : {
+              from: new Date(meta.fromMs),
+              to: new Date(meta.toMs),
+              label: ""
+            },
       pending,
       completed,
       appUrl: env.appUrl,
       ownerName: owner,
       listUserId: meta.userId,
       includeOverdue: meta.includeOverdue,
-      interactive: meta.userId === branUserId
+      interactive: meta.userId === branUserId,
+      pendingCap: meta.pendingCap,
+      pendingTotal,
+      hideCompleted: meta.mode === "reminder",
+      mode: meta.mode,
+      headingOverride:
+        meta.mode === "reminder"
+          ? pendingTotal === 1
+            ? "You have 1 pending task"
+            : `You have ${pendingTotal ?? pending.length} pending tasks`
+          : undefined
     });
     // Keep the original heading/label from the posted message when we can.
     const headingBlock = input.messageBlocks?.find((block) => parseSlackTaskListMeta(block.block_id));

@@ -10,6 +10,7 @@ import { startMeltwaterEarnedCron } from "./modules/meltwater-earned/meltwater-e
 import { startCompetitorContentCron } from "./modules/competitor-content/competitor-content.cron";
 import { startPodsSocialCron } from "./modules/pods/pods.cron";
 import { startReviewReminderCron } from "./modules/review/review.cron";
+import { startTaskReminderCron } from "./modules/work/work.task-reminder.cron";
 
 app.listen(env.port, () => {
   console.log(`Server running on http://localhost:${env.port}`);
@@ -23,4 +24,5 @@ app.listen(env.port, () => {
   startCompetitorContentCron();
   startPodsSocialCron();
   startReviewReminderCron();
+  startTaskReminderCron();
 });

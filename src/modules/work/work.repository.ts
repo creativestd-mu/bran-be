@@ -338,3 +338,49 @@ export async function findOverdueStepsForUser(userId: string, now: Date) {
     orderBy: { deadline: "asc" }
   });
 }
+
+/** Active users who own at least one OPEN work unit (for daily Slack reminders). */
+export async function listActiveUsersWithOpenWorkUnits() {
+  const grouped = await prisma.workUnit.groupBy({
+    by: ["userId"],
+    where: { status: "OPEN" },
+    _count: { _all: true }
+  });
+  if (grouped.length === 0) return [];
+
+  const counts = new Map(grouped.map((row) => [row.userId, row._count._all]));
+  const users = await prisma.user.findMany({
+    where: {
+      id: { in: grouped.map((row) => row.userId) },
+      isActive: true,
+      isPlaceholder: false
+    },
+    select: { id: true, email: true, name: true }
+  });
+
+  return users.map((user) => ({
+    ...user,
+    pendingCount: counts.get(user.id) ?? 0
+  }));
+}
+
+/** OPEN work units for a user, soonest due first. `take` includes room to detect overflow. */
+export async function findOpenWorkUnitsForReminder(userId: string, take: number) {
+  return prisma.workUnit.findMany({
+    where: { userId, status: "OPEN" },
+    select: {
+      id: true,
+      title: true,
+      nextDueAt: true,
+      firstDueAt: true,
+      createdAt: true
+    },
+    orderBy: [
+      { nextDueAt: { sort: "asc", nulls: "last" } },
+      { firstDueAt: { sort: "asc", nulls: "last" } },
+      { createdAt: "asc" }
+    ],
+    take
+  });
+}
+

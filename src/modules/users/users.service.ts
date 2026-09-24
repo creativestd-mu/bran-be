@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { HttpError } from "../../utils/httpError";
 import { prisma } from "../../lib/prisma";
+import { invalidateAssignmentContextCache } from "../work/work.assignment-cache";
 import {
   findAllUsers,
   findAllUserManagerLinks,
@@ -235,11 +236,13 @@ export async function createUser(data: {
 
   await ensureManagerCanBeAssigned(undefined, data.managerUserId);
 
-  return createUserInDb({
+  const user = await createUserInDb({
     ...data,
     isActive: data.isActive ?? true,
     isPlaceholder: data.isPlaceholder ?? false
   });
+  invalidateAssignmentContextCache();
+  return user;
 }
 
 export async function createNewHire(data: {
@@ -349,12 +352,16 @@ export async function updateUserProfile(
     return getUserById(id);
   }
 
-  return updateUser(id, profileData);
+  const updated = await updateUser(id, profileData);
+  invalidateAssignmentContextCache();
+  return updated;
 }
 
 export async function removeUser(id: string) {
   await getUserById(id);
-  return deleteUser(id);
+  const removed = await deleteUser(id);
+  invalidateAssignmentContextCache();
+  return removed;
 }
 
 export async function addSocialAccount(

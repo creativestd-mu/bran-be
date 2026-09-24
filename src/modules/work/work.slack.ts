@@ -374,7 +374,22 @@ async function resolveExcludedChannelIds(): Promise<Set<string>> {
   return excluded;
 }
 
-const branUserByEmailCache = new Map<string, string | null>();
+const BRAN_USER_CACHE_TTL_MS = 10 * 60 * 1000;
+const branUserByEmailCache = new Map<string, { value: string | null; expiresAt: number }>();
+
+function getCachedBranUserId(email: string): string | null | undefined {
+  const entry = branUserByEmailCache.get(email);
+  if (!entry) return undefined;
+  if (entry.expiresAt <= Date.now()) {
+    branUserByEmailCache.delete(email);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function setCachedBranUserId(email: string, value: string | null): void {
+  branUserByEmailCache.set(email, { value, expiresAt: Date.now() + BRAN_USER_CACHE_TTL_MS });
+}
 
 export async function resolveBranUserIdForSlackUser(slackUserId: string): Promise<string | null> {
   const cachedMember = await prisma.slackMember.findUnique({
@@ -383,14 +398,15 @@ export async function resolveBranUserIdForSlackUser(slackUserId: string): Promis
   });
   const memberEmail = cachedMember?.email?.trim().toLowerCase();
   if (memberEmail) {
-    if (branUserByEmailCache.has(memberEmail)) {
-      return branUserByEmailCache.get(memberEmail) ?? null;
+    const cached = getCachedBranUserId(memberEmail);
+    if (cached !== undefined) {
+      return cached;
     }
     const fromMember = await prisma.user.findFirst({
       where: { email: { equals: memberEmail, mode: "insensitive" }, isActive: true },
       select: { id: true }
     });
-    branUserByEmailCache.set(memberEmail, fromMember?.id ?? null);
+    setCachedBranUserId(memberEmail, fromMember?.id ?? null);
     if (fromMember) return fromMember.id;
   }
 
@@ -398,8 +414,9 @@ export async function resolveBranUserIdForSlackUser(slackUserId: string): Promis
   const email = profile.profile?.email?.trim().toLowerCase();
   if (!email) return null;
 
-  if (branUserByEmailCache.has(email)) {
-    return branUserByEmailCache.get(email) ?? null;
+  const cached = getCachedBranUserId(email);
+  if (cached !== undefined) {
+    return cached;
   }
 
   const user = await prisma.user.findFirst({
@@ -407,7 +424,7 @@ export async function resolveBranUserIdForSlackUser(slackUserId: string): Promis
     select: { id: true }
   });
 
-  branUserByEmailCache.set(email, user?.id ?? null);
+  setCachedBranUserId(email, user?.id ?? null);
   return user?.id ?? null;
 }
 

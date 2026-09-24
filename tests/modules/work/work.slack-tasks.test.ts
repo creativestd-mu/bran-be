@@ -10,9 +10,23 @@ import {
   looksLikeTaskListQuery,
   parseSlackTaskListMeta,
   parseTaskListDateRangeHeuristic,
+  resolveSlackTaskListQuery,
   resolveTaskListSubject,
   SLACK_WORK_COMPLETE_ACTION
 } from "../../../src/modules/work/work.slack-tasks";
+
+jest.mock("../../../src/modules/work/work.extraction", () => {
+  const actual = jest.requireActual("../../../src/modules/work/work.extraction");
+  return {
+    ...actual,
+    callWorkLlm: jest.fn(),
+    isWorkExtractionAiConfigured: jest.fn(() => true)
+  };
+});
+
+import { callWorkLlm } from "../../../src/modules/work/work.extraction";
+
+const mockCallWorkLlm = callWorkLlm as jest.MockedFunction<typeof callWorkLlm>;
 
 describe("Slack task list query", () => {
   const now = new Date("2026-08-13T08:30:00.000Z"); // 14:00 IST on Thu 13 Aug 2026
@@ -373,6 +387,73 @@ describe("Slack task list query", () => {
     expect(serialized).not.toContain("Check a box");
     expect(serialized).toContain("Ask Pratham for xyz");
     expect(serialized).toContain("Dhananjay Jain");
+  });
+});
+
+describe("resolveSlackTaskListQuery range precedence", () => {
+  const now = new Date("2026-08-13T08:30:00.000Z");
+
+  beforeEach(() => {
+    mockCallWorkLlm.mockReset();
+  });
+
+  it("prefers the heuristic over a provided listRange", async () => {
+    const query = await resolveSlackTaskListQuery("list my tasks yesterday", now, {
+      force: true,
+      listRange: { from: "2026-08-01", to: "2026-08-07", label: "provided week" }
+    });
+
+    expect(query?.source).toBe("heuristic");
+    expect(mockCallWorkLlm).not.toHaveBeenCalled();
+  });
+
+  it("uses a provided listRange when the heuristic misses, without calling the LLM", async () => {
+    const query = await resolveSlackTaskListQuery("what is on my plate around the offsite", now, {
+      force: true,
+      listRange: { from: "2026-08-01", to: "2026-08-07", label: "provided week" }
+    });
+
+    expect(query?.source).toBe("provided");
+    expect(query?.range.label).toContain("provided week");
+    expect(mockCallWorkLlm).not.toHaveBeenCalled();
+  });
+
+  it("uses heuristic before calling the LLM", async () => {
+    mockCallWorkLlm.mockResolvedValue(
+      JSON.stringify({
+        isTaskList: true,
+        from: "2026-01-01",
+        to: "2026-01-01",
+        label: "llm"
+      })
+    );
+
+    const query = await resolveSlackTaskListQuery("list my tasks yesterday", now, {
+      force: true
+    });
+
+    expect(query?.source).toBe("heuristic");
+    expect(query?.range.label).toContain("12 Aug 2026");
+    expect(mockCallWorkLlm).not.toHaveBeenCalled();
+  });
+
+  it("falls back to LLM then today when heuristic misses", async () => {
+    mockCallWorkLlm.mockResolvedValue(
+      JSON.stringify({
+        isTaskList: true,
+        from: "2026-08-10",
+        to: "2026-08-12",
+        label: "custom"
+      })
+    );
+
+    const query = await resolveSlackTaskListQuery("show my open work units for the sprint", now, {
+      force: true
+    });
+
+    expect(query?.source).toBe("llm");
+    expect(query?.range.label.toLowerCase()).toContain("custom");
+    expect(mockCallWorkLlm).toHaveBeenCalled();
   });
 });
 

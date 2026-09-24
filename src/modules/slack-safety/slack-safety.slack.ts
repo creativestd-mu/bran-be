@@ -78,6 +78,8 @@ export async function processSlackSafetyGuard(input: {
   threadTs?: string;
   channelType?: string;
   eventType?: string;
+  /** When false, skip the safety LLM (heuristic only). */
+  useLlm?: boolean;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId) {
     return { handled: false, reason: "ignored_bot" };
@@ -97,7 +99,9 @@ export async function processSlackSafetyGuard(input: {
     return { handled: false, reason: "not_bran_prompt" };
   }
 
-  const verdict = await evaluateSlackPromptSafety(text, { useLlm: addressed || branPrompt });
+  const useLlm =
+    input.useLlm !== false && (addressed || branPrompt);
+  const verdict = await evaluateSlackPromptSafety(text, { useLlm });
   if (verdict.allowed) {
     return { handled: false, reason: "allowed" };
   }

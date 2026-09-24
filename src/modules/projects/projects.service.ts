@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../utils/httpError";
+import { invalidateAssignmentContextCache } from "../work/work.assignment-cache";
 import {
   addProjectMember,
   createProjectPhase,
@@ -147,7 +148,7 @@ export async function createTemporaryProject(input: {
   status?: string;
 }) {
   await ensurePodExists(input.podId);
-  return createProject({
+  const project = await createProject({
     name: input.name,
     description: input.description,
     objectives: input.objectives,
@@ -158,6 +159,8 @@ export async function createTemporaryProject(input: {
     endsAt: parseOptionalDate(input.endsAt) ?? undefined,
     status: input.status
   });
+  invalidateAssignmentContextCache();
+  return project;
 }
 
 export async function listTemporaryProjects() {
@@ -185,7 +188,7 @@ export async function updateTemporaryProject(
   if (input.podId) {
     await ensurePodExists(input.podId);
   }
-  return updateProject(id, {
+  const project = await updateProject(id, {
     name: input.name,
     description: input.description,
     objectives: input.objectives,
@@ -195,11 +198,15 @@ export async function updateTemporaryProject(
     endsAt: parseOptionalDate(input.endsAt),
     status: input.status
   });
+  invalidateAssignmentContextCache();
+  return project;
 }
 
 export async function removeTemporaryProject(id: string) {
   await ensureProjectExists(id);
-  return deleteProject(id);
+  const removed = await deleteProject(id);
+  invalidateAssignmentContextCache();
+  return removed;
 }
 
 export async function addMemberToProject(input: {

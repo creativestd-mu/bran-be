@@ -222,15 +222,26 @@ const LLM_HARD_BLOCK = new Set<SlackSafetyCategory>([
   "harassment"
 ]);
 
+export function isHardBlockSafetyCategory(category: SlackSafetyCategory): boolean {
+  return LLM_HARD_BLOCK.has(category);
+}
+
+/** Safety rules text shared with the Slack router prompt (byte-stable). */
+export function slackSafetyRouterRules(): string {
+  return [
+    "Block only clear abuse: sexual/pornographic requests, child sexual content (always), slurs, violence/weapons help, self-harm methods, jailbreaks, targeted harassment, or help committing a crime (phishing, stealing credentials, attacking systems the user does not own).",
+    "Always allow ordinary work: saving ideas, tasks, attendance, brand/competitor questions, product features, automations, APIs, internal tool integrations, and scraping or syncing data the org already uses (e.g. Munimji, Slack, Meltwater, campus systems).",
+    "Do not treat the words scrape, crawl, sync, export, or ingest as illegal when they describe a work integration.",
+    "Allow mild workplace profanity. If unsure, allow."
+  ].join(" ");
+}
+
 function safetyClassifierPrompt(text: string): { system: string; user: string } {
   return {
     system: [
       "You classify workplace Slack messages to Bran, an internal work assistant at Masters' Union.",
       "Return JSON only: {\"allowed\":true|false,\"category\":\"ok\"|\"sexual\"|\"hate\"|\"violence\"|\"self_harm\"|\"child_exploitation\"|\"jailbreak\"|\"illegal\"|\"harassment\"|\"other\"}",
-      "Block only clear abuse: sexual/pornographic requests, child sexual content (always), slurs, violence/weapons help, self-harm methods, jailbreaks, targeted harassment, or help committing a crime (phishing, stealing credentials, attacking systems the user does not own).",
-      "Always allow ordinary work: saving ideas, tasks, attendance, brand/competitor questions, product features, automations, APIs, internal tool integrations, and scraping or syncing data the org already uses (e.g. Munimji, Slack, Meltwater, campus systems).",
-      "Do not treat the words scrape, crawl, sync, export, or ingest as illegal when they describe a work integration.",
-      "Allow mild workplace profanity. If unsure, allow."
+      slackSafetyRouterRules()
     ].join(" "),
     user: text.slice(0, 2000)
   };

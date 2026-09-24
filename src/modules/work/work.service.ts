@@ -45,13 +45,20 @@ import {
 } from "../voice-recording/voice-recording.repository";
 import { previewWorkText, type WorkIngestSourceType } from "./work.constants";
 import { hasSimilarOpenWorkUnit } from "./work.dedup";
+import {
+  getCachedAssignmentContext,
+  setCachedAssignmentContext
+} from "./work.assignment-cache";
 import { loadGmailWorkIngestCandidates } from "./work.sources";
 import {
+  clearSlackPlaceholder,
   getSlackBotUserId,
   getSlackUserInfo,
   listChannelMemberIds,
   postSlackMessage,
-  respondToSlackResponseUrl
+  postSlackPlaceholder,
+  respondToSlackResponseUrl,
+  updateSlackMessage
 } from "../attendance/attendance.slack";
 import {
   fetchSlackThreadContextText,
@@ -334,7 +341,9 @@ async function resolveProjectIdForUser(
   return projectId;
 }
 
-async function buildAssignmentContext(userId: string) {
+type AssignmentContext = Awaited<ReturnType<typeof loadAssignmentContext>>;
+
+async function loadAssignmentContext(userId: string) {
   const [availableProjects, availableUsers, availablePods, availableVerticals, preferenceMap] =
     await Promise.all([
       listAllProjectSummaries(),
@@ -372,6 +381,16 @@ async function buildAssignmentContext(userId: string) {
     }
   };
 }
+
+async function buildAssignmentContext(userId: string) {
+  const cached = getCachedAssignmentContext<AssignmentContext>(userId);
+  if (cached) return cached;
+  const value = await loadAssignmentContext(userId);
+  setCachedAssignmentContext(userId, value);
+  return value;
+}
+
+export { invalidateAssignmentContextCache } from "./work.assignment-cache";
 
 export async function createWorkUnitsFromRecording(
   userId: string,
@@ -791,6 +810,8 @@ export async function processSlackDirectedWorkCreateMessage(input: {
   eventType?: string;
   /** Skip looksLike* gate when user confirmed via Did-you-mean / auto-intent. */
   force?: boolean;
+  /** Skip duplicate safety check when caller already cleared the text. */
+  skipSafety?: boolean;
 }): Promise<{ handled: boolean; reason?: string; created?: number }> {
   if (input.botId) return { handled: false, reason: "ignored_bot" };
   if (input.subtype && input.subtype !== "thread_broadcast") {
@@ -817,42 +838,73 @@ export async function processSlackDirectedWorkCreateMessage(input: {
     return { handled: true, reason: "deduped" };
   }
 
-  const safety = await guardSlackDirectedText({
-    channelId: input.channelId,
-    userId: input.userId,
-    text,
-    ts: input.ts,
-    threadTs: input.threadTs
-  });
-  if (safety.blocked) {
-    return { handled: true, reason: safety.reason };
+  if (!input.skipSafety) {
+    const safety = await guardSlackDirectedText({
+      channelId: input.channelId,
+      userId: input.userId,
+      text,
+      ts: input.ts,
+      threadTs: input.threadTs
+    });
+    if (safety.blocked) {
+      return { handled: true, reason: safety.reason };
+    }
   }
 
+  const replyOpts = { threadTs: input.threadTs ?? input.ts };
+  let placeholderTs: string | undefined;
+  const replyOrUpdate = async (reply: string, blocks?: unknown[]) => {
+    if (placeholderTs) {
+      try {
+        await updateSlackMessage(input.channelId, placeholderTs, reply, blocks);
+        placeholderTs = undefined;
+        return;
+      } catch (error) {
+        console.warn("[work.slack-create] placeholder update failed; posting new reply", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    await postSlackMessage(input.channelId, reply, { ...replyOpts, blocks });
+  };
+  const clearPlaceholder = async () => {
+    await clearSlackPlaceholder(input.channelId, placeholderTs);
+    placeholderTs = undefined;
+  };
+
   if (!isWorkExtractionAiConfigured()) {
-    await postSlackMessage(
-      input.channelId,
-      "Work extraction isn’t configured right now, so I can’t create work units from this yet.",
-      { threadTs: input.threadTs ?? input.ts }
+    await replyOrUpdate(
+      "Work extraction isn’t configured right now, so I can’t create work units from this yet."
     );
     return { handled: true, reason: "ai_not_configured" };
   }
 
   const branUserId = await resolveBranUserIdForSlackUser(input.userId);
   if (!branUserId) {
-    await postSlackMessage(
-      input.channelId,
-      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can create tasks from Slack.",
-      { threadTs: input.threadTs ?? input.ts }
+    await replyOrUpdate(
+      "I couldn’t match your Slack account to a Bran user. Once your Slack email matches a Bran account, I can create tasks from Slack."
     );
     return { handled: true, reason: "unmapped_user" };
   }
 
   const massAssign = looksLikeChannelMassAssignQuery(text);
   if (massAssign && isDm) {
+    await clearPlaceholder();
     return processSlackUnsupportedDirectedQuery({
       ...input,
       reason: "mass_assign_dm"
     });
+  }
+
+  if (!placeholderTs) {
+    try {
+      const posted = await postSlackPlaceholder(input.channelId, "On it…", replyOpts);
+      placeholderTs = posted.ts;
+    } catch (error) {
+      console.warn("[work.slack-create] placeholder failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   let createText = text;
@@ -864,7 +916,6 @@ export async function processSlackDirectedWorkCreateMessage(input: {
   }
 
   const botUserId = await getSlackBotUserId();
-  const replyOpts = { threadTs: input.threadTs ?? input.ts };
 
   if (massAssign) {
     const memberIds = await listChannelMemberIds(input.channelId);
@@ -877,15 +928,14 @@ export async function processSlackDirectedWorkCreateMessage(input: {
     const uniqueAssignees = [...new Set(assigneeIds)];
 
     if (uniqueAssignees.length === 0) {
-      await postSlackMessage(
-        input.channelId,
-        "I couldn’t map anyone in this channel to an active Bran user, so I didn’t create tasks.",
-        replyOpts
+      await replyOrUpdate(
+        "I couldn’t map anyone in this channel to an active Bran user, so I didn’t create tasks."
       );
       return { handled: true, reason: "no_mapped_members", created: 0 };
     }
 
     if (uniqueAssignees.length > MASS_ASSIGN_MAX_MEMBERS) {
+      await clearPlaceholder();
       return processSlackUnsupportedDirectedQuery({
         ...input,
         reason: "mass_assign_over_cap"
@@ -914,7 +964,7 @@ export async function processSlackDirectedWorkCreateMessage(input: {
         ? `I tried to assign this to ${uniqueAssignees.length} channel members mapped in Bran, but didn’t create new work units (they may already exist, or it didn’t look like a concrete task).`
         : `Created ${count} work unit${count === 1 ? "" : "s"} for ${uniqueAssignees.length} channel member${uniqueAssignees.length === 1 ? "" : "s"}:\n${titles}`;
 
-    await postSlackMessage(input.channelId, reply, replyOpts);
+    await replyOrUpdate(reply);
     console.log("[work.slack-create] mass-assign", {
       slackUserId: input.userId,
       branUserId,
@@ -960,7 +1010,7 @@ export async function processSlackDirectedWorkCreateMessage(input: {
         : "I didn’t find any new work units to create from that (they may already exist, or it didn’t look like a task). Try “add task: …” or say who it’s for."
       : `${result.usedFallback ? "Created 1 work unit (from your message):\n" : `Created ${count} work unit${count === 1 ? "" : "s"}:\n`}${titles}`;
 
-  await postSlackMessage(input.channelId, reply, replyOpts);
+  await replyOrUpdate(reply);
   console.log("[work.slack-create] created", {
     slackUserId: input.userId,
     branUserId,
@@ -993,6 +1043,7 @@ export async function processSlackTaskListMessage(input: {
   threadTs?: string;
   channelType?: string;
   force?: boolean;
+  listRange?: { from: string; to: string; label: string } | null;
 }): Promise<{ handled: boolean; reason?: string }> {
   if (input.botId) return { handled: false, reason: "ignored_bot" };
   if (input.subtype && input.subtype !== "thread_broadcast") {
@@ -1047,7 +1098,10 @@ export async function processSlackTaskListMessage(input: {
     subject.kind === "tagged" ? subject.slackUserIds[0] : input.userId;
   const viewingOther = targetSlackUserId.toUpperCase() !== input.userId.toUpperCase();
 
-  const query = await resolveSlackTaskListQuery(text, new Date(), { force: input.force });
+  const query = await resolveSlackTaskListQuery(text, new Date(), {
+    force: input.force,
+    listRange: input.listRange
+  });
   if (!query) return { handled: false, reason: "not_task_list" };
 
   const branUserId = await resolveBranUserIdForSlackUser(targetSlackUserId);
@@ -1463,14 +1517,42 @@ export async function processSlackVoiceWorkMessage(input: {
     return { handled: false, reason: "bran_user_unlinked" };
   }
 
+  let placeholderTs: string | undefined;
+  try {
+    const posted = await postSlackPlaceholder(
+      input.channelId,
+      "Transcribing your voice note…",
+      { threadTs: input.ts }
+    );
+    placeholderTs = posted.ts;
+  } catch (error) {
+    console.warn("[work.slack-voice] placeholder failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  const clearPlaceholder = async () => {
+    await clearSlackPlaceholder(input.channelId, placeholderTs);
+    placeholderTs = undefined;
+  };
+
   const audio = await downloadSlackAudio(attachments[0]);
   if (!audio) {
     try {
-      await postSlackMessage(
-        input.channelId,
-        "I couldn’t download that voice note (unsupported format or over 25 MB). Try again with a shorter clip.",
-        { threadTs: input.ts }
-      );
+      if (placeholderTs) {
+        await updateSlackMessage(
+          input.channelId,
+          placeholderTs,
+          "I couldn’t download that voice note (unsupported format or over 25 MB). Try again with a shorter clip."
+        );
+        placeholderTs = undefined;
+      } else {
+        await postSlackMessage(
+          input.channelId,
+          "I couldn’t download that voice note (unsupported format or over 25 MB). Try again with a shorter clip.",
+          { threadTs: input.ts }
+        );
+      }
     } catch (error) {
       console.error("[work.slack-voice] failed to post download error:", error);
     }
@@ -1492,11 +1574,20 @@ export async function processSlackVoiceWorkMessage(input: {
   } catch (error) {
     console.error("[work.slack-voice] transcription failed:", error);
     try {
-      await postSlackMessage(
-        input.channelId,
-        "Sorry — I couldn’t transcribe that voice note. Please try again in a moment.",
-        { threadTs: input.ts }
-      );
+      if (placeholderTs) {
+        await updateSlackMessage(
+          input.channelId,
+          placeholderTs,
+          "Sorry — I couldn’t transcribe that voice note. Please try again in a moment."
+        );
+        placeholderTs = undefined;
+      } else {
+        await postSlackMessage(
+          input.channelId,
+          "Sorry — I couldn’t transcribe that voice note. Please try again in a moment.",
+          { threadTs: input.ts }
+        );
+      }
     } catch (postError) {
       console.error("[work.slack-voice] failed to post transcription error:", postError);
     }
@@ -1505,16 +1596,27 @@ export async function processSlackVoiceWorkMessage(input: {
 
   if (!transcript) {
     try {
-      await postSlackMessage(
-        input.channelId,
-        "I got the audio but couldn’t extract any speech. Try speaking a bit clearer or longer.",
-        { threadTs: input.ts }
-      );
+      if (placeholderTs) {
+        await updateSlackMessage(
+          input.channelId,
+          placeholderTs,
+          "I got the audio but couldn’t extract any speech. Try speaking a bit clearer or longer."
+        );
+        placeholderTs = undefined;
+      } else {
+        await postSlackMessage(
+          input.channelId,
+          "I got the audio but couldn’t extract any speech. Try speaking a bit clearer or longer.",
+          { threadTs: input.ts }
+        );
+      }
     } catch (error) {
       console.error("[work.slack-voice] failed to post empty transcript notice:", error);
     }
     return { handled: false, reason: "empty_transcript" };
   }
+
+  await clearPlaceholder();
 
   const safetyText = [input.text, transcript].filter((part) => part?.trim()).join("\n");
   const safety = await guardSlackDirectedText({

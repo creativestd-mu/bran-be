@@ -198,9 +198,13 @@ export function parseDeadlineToIso(value: string | null | undefined): string | n
 
 type LlmCallOptions = {
   provider?: WorkAiProvider;
+  model?: string;
   maxTokens?: number;
   temperature?: number;
   purpose?: string;
+  providerOrder?: string[];
+  reasoningEffort?: "low" | "medium" | "high";
+  timeoutMs?: number;
 };
 
 /** App-wide AI_PROVIDER (Gemini by default) — not the DeepSeek work-extraction route. */
@@ -214,54 +218,87 @@ function getGeneralAiProvider(): WorkAiProvider {
   return getAiProvider();
 }
 
-async function callOpenRouter(
+export async function callOpenRouter(
   systemPrompt: string,
   userPrompt: string,
   model: string,
-  options?: { maxTokens?: number; temperature?: number }
+  options?: {
+    maxTokens?: number;
+    temperature?: number;
+    providerOrder?: string[];
+    reasoningEffort?: "low" | "medium" | "high";
+    timeoutMs?: number;
+  }
 ): Promise<string> {
   if (!env.openrouterApiKey) {
     throw new Error("OPENROUTER_API_KEY is not configured");
   }
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.openrouterApiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": env.appUrl || "https://bran.app",
-      "X-Title": "Bran"
-    },
-    body: JSON.stringify({
-      model,
-      temperature: options?.temperature ?? 0.2,
-      max_tokens: options?.maxTokens ?? 8192,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ]
-    })
-  });
+  const controller = options?.timeoutMs ? new AbortController() : null;
+  const timer =
+    controller && options?.timeoutMs
+      ? setTimeout(() => controller.abort(), options.timeoutMs)
+      : null;
 
-  const body = (await response.json()) as {
-    error?: { message?: string };
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+  const bodyPayload: Record<string, unknown> = {
+    model,
+    temperature: options?.temperature ?? 0.2,
+    max_tokens: options?.maxTokens ?? 8192,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt }
+    ]
   };
-
-  if (!response.ok) {
-    throw new HttpError(
-      response.status >= 400 && response.status < 600 ? response.status : 502,
-      body.error?.message || `OpenRouter returned status ${response.status}`
-    );
+  if (options?.providerOrder && options.providerOrder.length > 0) {
+    bodyPayload.provider = {
+      order: options.providerOrder,
+      allow_fallbacks: true
+    };
+  }
+  if (options?.reasoningEffort) {
+    bodyPayload.reasoning = { effort: options.reasoningEffort, exclude: true };
   }
 
-  const content = body.choices?.[0]?.message?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.map((part) => (typeof part === "string" ? part : part.text || "")).join("");
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.openrouterApiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": env.appUrl || "https://bran.app",
+        "X-Title": "Bran"
+      },
+      body: JSON.stringify(bodyPayload),
+      signal: controller?.signal
+    });
+
+    const body = (await response.json()) as {
+      error?: { message?: string };
+      choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+    };
+
+    if (!response.ok) {
+      throw new HttpError(
+        response.status >= 400 && response.status < 600 ? response.status : 502,
+        body.error?.message || `OpenRouter returned status ${response.status}`
+      );
+    }
+
+    const content = body.choices?.[0]?.message?.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content.map((part) => (typeof part === "string" ? part : part.text || "")).join("");
+    }
+    return "";
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`OpenRouter request timed out after ${options?.timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  return "";
 }
 
 async function callLlm(
@@ -270,7 +307,7 @@ async function callLlm(
   options?: LlmCallOptions
 ): Promise<string> {
   const provider = options?.provider ?? getAiProvider();
-  const model = getAiModel(provider);
+  const model = options?.model ?? getAiModel(provider);
   const maxTokens = options?.maxTokens ?? 8192;
   const temperature = options?.temperature ?? 0.2;
   console.log("[work.extraction] calling LLM", {
@@ -278,12 +315,20 @@ async function callLlm(
     provider,
     model,
     maxTokens,
+    providerOrder: options?.providerOrder ?? null,
+    timeoutMs: options?.timeoutMs ?? null,
     promptChars: userPrompt.length
   });
 
   try {
     if (provider === "openrouter") {
-      return await callOpenRouter(systemPrompt, userPrompt, model, { maxTokens, temperature });
+      return await callOpenRouter(systemPrompt, userPrompt, model, {
+        maxTokens,
+        temperature,
+        providerOrder: options?.providerOrder,
+        reasoningEffort: options?.reasoningEffort,
+        timeoutMs: options?.timeoutMs
+      });
     }
 
     if (provider === "gemini") {
@@ -312,7 +357,49 @@ async function callLlm(
   }
 }
 
-export async function callWorkLlm(systemPrompt: string, userPrompt: string): Promise<string> {
+const SLACK_FAST_LLM_TIMEOUT_MS = 8000;
+
+/** Slack hot paths: Groq via OpenRouter with a timeout, then the default provider on failure. */
+async function callSlackFastLlm(
+  systemPrompt: string,
+  userPrompt: string,
+  purpose: string
+): Promise<string> {
+  if (env.slackRouterEnabled && env.openrouterApiKey) {
+    const started = Date.now();
+    try {
+      const result = await callLlm(systemPrompt, userPrompt, {
+        provider: "openrouter",
+        model: env.slackExtractionModel,
+        providerOrder: env.openrouterProviderOrder,
+        reasoningEffort: "low",
+        timeoutMs: SLACK_FAST_LLM_TIMEOUT_MS,
+        purpose
+      });
+      console.log("[work.extraction] latencyMs", {
+        purpose,
+        latencyMs: Date.now() - started,
+        model: env.slackExtractionModel
+      });
+      return result;
+    } catch (error) {
+      console.warn("[work.extraction] OpenRouter/Groq call failed; falling back", {
+        purpose,
+        ...describeLlmError(error)
+      });
+    }
+  }
+  return callLlm(systemPrompt, userPrompt, { purpose });
+}
+
+export async function callWorkLlm(
+  systemPrompt: string,
+  userPrompt: string,
+  options?: { slackFast?: boolean }
+): Promise<string> {
+  if (options?.slackFast) {
+    return callSlackFastLlm(systemPrompt, userPrompt, "slack_fast");
+  }
   return callLlm(systemPrompt, userPrompt);
 }
 
@@ -519,7 +606,12 @@ export async function extractWorkUnitsFromText(
     verticalCount: availableVerticals.length
   });
 
-  let raw = await callLlm(systemPrompt, userPrompt);
+  const extract = (system: string) =>
+    options.kind === "slack"
+      ? callSlackFastLlm(system, userPrompt, "extract_slack")
+      : callLlm(system, userPrompt);
+
+  let raw = await extract(systemPrompt);
   console.log("[work.extraction] LLM raw response", {
     kind: options.kind,
     rawChars: raw.length,
@@ -539,9 +631,8 @@ export async function extractWorkUnitsFromText(
       kind: options.kind,
       error: firstError instanceof Error ? firstError.message : String(firstError)
     });
-    raw = await callLlm(
-      `${systemPrompt} Reply with one compact JSON object only. Keep titles short. Omit sourceExcerpt if needed.`,
-      userPrompt
+    raw = await extract(
+      `${systemPrompt} Reply with one compact JSON object only. Keep titles short. Omit sourceExcerpt if needed.`
     );
     const units = await parseExtractedWorkUnits(raw, now);
     console.log("[work.extraction] parsed after retry", {

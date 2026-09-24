@@ -19,7 +19,7 @@ export type SlackTaskDateRange = {
 export type SlackTaskListQuery = {
   isTaskList: boolean;
   range: SlackTaskDateRange;
-  source: "heuristic" | "llm" | "default";
+  source: "heuristic" | "llm" | "default" | "provided";
 };
 
 type CalendarDay = { year: number; month: number; day: number };
@@ -721,7 +721,7 @@ async function parseTaskListDateRangeWithLlm(
     `Current date-time: ${now.toISOString()} (${weekday}, ${formatDayLabel(today)}, Asia/Kolkata)\n\n` +
     `Slack DM:\n"""${text}"""`;
 
-  const raw = await callWorkLlm(systemPrompt, userPrompt);
+  const raw = await callWorkLlm(systemPrompt, userPrompt, { slackFast: true });
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return null;
 
@@ -754,26 +754,55 @@ async function parseTaskListDateRangeWithLlm(
   return rangeForDays(ordered.start, end, formatRangeLabel(ordered.start, end, hint));
 }
 
+const TASK_LIST_LLM_TIMEOUT_MS = 2500;
+
 export async function resolveSlackTaskListQuery(
   text: string,
   now: Date = new Date(),
-  options?: { force?: boolean }
+  options?: {
+    force?: boolean;
+    listRange?: { from: string; to: string; label: string } | null;
+  }
 ): Promise<SlackTaskListQuery | null> {
   if (!options?.force && !looksLikeTaskListQuery(text)) return null;
 
   const cleaned = stripSlackUserMentions(text);
   const heuristic = parseTaskListDateRangeHeuristic(cleaned, now);
+  if (heuristic) return { isTaskList: true, range: heuristic, source: "heuristic" };
+
+  // Router dates are only a fallback: small models get week math wrong ("next week").
+  if (options?.listRange) {
+    const fromDay = isValidYmd(options.listRange.from);
+    const toDay = isValidYmd(options.listRange.to);
+    if (fromDay && toDay) {
+      const ordered =
+        Date.UTC(fromDay.year, fromDay.month - 1, fromDay.day) <=
+        Date.UTC(toDay.year, toDay.month - 1, toDay.day)
+          ? { start: fromDay, end: toDay }
+          : { start: toDay, end: fromDay };
+      const hint = options.listRange.label.trim() || undefined;
+      return {
+        isTaskList: true,
+        range: rangeForDays(ordered.start, ordered.end, formatRangeLabel(ordered.start, ordered.end, hint)),
+        source: "provided"
+      };
+    }
+  }
 
   try {
-    const llm = await parseTaskListDateRangeWithLlm(cleaned, now);
+    const llm = await Promise.race([
+      parseTaskListDateRangeWithLlm(cleaned, now),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), TASK_LIST_LLM_TIMEOUT_MS);
+      })
+    ]);
     if (llm) return { isTaskList: true, range: llm, source: "llm" };
   } catch (error) {
-    console.warn("[work.slack-tasks] date parse LLM failed, using heuristic", {
+    console.warn("[work.slack-tasks] date parse LLM failed, using today", {
       error: error instanceof Error ? error.message : String(error)
     });
   }
 
-  if (heuristic) return { isTaskList: true, range: heuristic, source: "heuristic" };
   return { isTaskList: true, range: todayRange(now), source: "default" };
 }
 

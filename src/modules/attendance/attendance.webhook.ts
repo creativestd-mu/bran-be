@@ -30,6 +30,7 @@ import {
 } from "../meetings/meetings.booking.slack";
 import { processSlackPodMessage } from "../pods/pods.slack";
 import { processSlackSafetyGuard } from "../slack-safety/slack-safety.slack";
+import { slackSafetyRefusalText } from "../slack-safety/slack-safety";
 import { processSlackSentimentMessage } from "../sentiment/sentiment.slack";
 import {
   openReviewCreateModal,
@@ -74,7 +75,12 @@ import {
   INTENT_CLARIFY_BLOCK_ID,
   INTENT_CLARIFY_CALLBACK_ID
 } from "../slack-intents/slack-intents.actions";
-import { isSlackIntentId, type SlackIntentId } from "../slack-intents/slack-intents.catalog";
+import {
+  getSlackIntent,
+  isSlackIntentId,
+  slackIntentLabel,
+  type SlackIntentId
+} from "../slack-intents/slack-intents.catalog";
 import { runSlackIntent } from "../slack-intents/slack-intents.dispatch";
 import {
   filterHitsForChannel,
@@ -83,13 +89,19 @@ import {
 } from "../slack-intents/slack-intents.resolve";
 import {
   buildDidYouMeanBlocks,
-  formatCompoundConfirmText
+  formatCompoundConfirmText,
+  formatDidYouMeanFallbackText,
+  padTop3IntentCandidates
 } from "../slack-intents/slack-intents.reply";
 import {
   createSlackIntentSuggestion,
   setSlackIntentSuggestionReplyTs
 } from "../slack-intents/slack-intents.repository";
 import { resolveBranUserIdForSlackUser } from "../work/work.slack";
+import {
+  routeSlackMessage,
+  shouldBlockRouterResult
+} from "../slack-router/slack-router";
 
 async function processSlackInteractiveQuery(input: {
   channelId: string;
@@ -102,17 +114,48 @@ async function processSlackInteractiveQuery(input: {
   channelType?: string;
   eventType?: string;
 }): Promise<{ handled: boolean; reason?: string }> {
-  const safety = await processSlackSafetyGuard(input);
+  const started = Date.now();
+  const timing = {
+    ackMs: 0,
+    routedMs: 0,
+    firstReplyMs: 0,
+    path: "legacy" as "regex" | "router" | "cache" | "legacy",
+    intent: null as string | null,
+    cacheHit: false
+  };
+  const markFirstReply = () => {
+    if (!timing.firstReplyMs) timing.firstReplyMs = Date.now() - started;
+  };
+  const logTiming = () => {
+    console.log("[slack-timing]", {
+      ack: timing.ackMs,
+      routed: timing.routedMs,
+      firstReply: timing.firstReplyMs || Date.now() - started,
+      total: Date.now() - started,
+      path: timing.path,
+      intent: timing.intent,
+      cacheHit: timing.cacheHit
+    });
+  };
+
+  const safety = await processSlackSafetyGuard({
+    ...input,
+    useLlm: env.slackRouterEnabled ? false : undefined
+  });
+  timing.ackMs = Date.now() - started;
   if (safety.handled) {
+    timing.path = env.slackRouterEnabled ? "regex" : "legacy";
+    markFirstReply();
+    logTiming();
     return safety;
   }
 
   const text = input.text?.trim() ?? "";
   if (!text) {
+    logTiming();
     return { handled: false, reason: "empty_text" };
   }
 
-  const started = Date.now();
   const isDm = isSlackDmChannel(input.channelId, input.channelType);
   const resolved = resolveDeterministicSlackIntents(text);
   const hits = filterHitsForChannel(resolved.hits, isDm);
@@ -160,7 +203,11 @@ async function processSlackInteractiveQuery(input: {
             })
           }
         );
+        markFirstReply();
         await setSlackIntentSuggestionReplyTs(suggestion.id, posted.ts);
+        timing.path = "regex";
+        timing.routedMs = Date.now() - started;
+        timing.intent = compoundIntents.join("+");
         logSlackIntentRoute({
           channelId: input.channelId,
           ts: input.ts,
@@ -168,6 +215,7 @@ async function processSlackInteractiveQuery(input: {
           intents: compoundIntents,
           durationMs: Date.now() - started
         });
+        logTiming();
         return { handled: true, reason: "compound_confirm" };
       } catch (error) {
         console.error("[slack-intents] compound confirm failed:", error);
@@ -182,8 +230,13 @@ async function processSlackInteractiveQuery(input: {
         ? resolved.intent
         : hits[0]?.intent;
     if (!intent) {
+      logTiming();
       return { handled: false, reason: "empty_resolve" };
     }
+
+    timing.path = "regex";
+    timing.intent = intent;
+    timing.routedMs = Date.now() - started;
 
     logSlackIntentRoute({
       channelId: input.channelId,
@@ -193,8 +246,8 @@ async function processSlackInteractiveQuery(input: {
       durationMs: Date.now() - started
     });
 
-    // Task create still runs in work followups (mass-assign + extraction pipeline).
-    if (intent === "add_task") {
+    if (!env.slackRouterEnabled && intent === "add_task") {
+      logTiming();
       return { handled: false, reason: "defer_create" };
     }
 
@@ -208,42 +261,193 @@ async function processSlackInteractiveQuery(input: {
         subtype: input.subtype,
         threadTs: input.threadTs,
         channelType: input.channelType,
-        eventType: input.eventType
+        eventType: input.eventType,
+        skipSafety: env.slackRouterEnabled
       });
+      markFirstReply();
+      logTiming();
       if (result.handled) return result;
+      // Create already ran (and deduped by ts) — don't re-route into a second extraction.
+      if (env.slackRouterEnabled && intent === "add_task") return result;
     }
   }
 
-  // Fallback: prior sequential chain for anything the resolver missed.
+  // Every channel message reaches here; only DMs / @Bran pay for a router call.
+  const addressed =
+    env.slackRouterEnabled &&
+    (await isSlackMessageAddressedToBran({
+      channelId: input.channelId,
+      text,
+      channelType: input.channelType,
+      eventType: input.eventType
+    }));
+
+  if (addressed) {
+    const { result: routed, cacheHit } = await routeSlackMessage(text, { isDm });
+
+    timing.cacheHit = cacheHit;
+    timing.path = cacheHit ? "cache" : "router";
+    timing.routedMs = Date.now() - started;
+
+    if (!routed) {
+      timing.intent = "none";
+      logTiming();
+      return { handled: false, reason: "router_miss" };
+    }
+
+    if (shouldBlockRouterResult(routed)) {
+      await postSlackMessage(input.channelId, slackSafetyRefusalText(routed.category), {
+        threadTs: input.threadTs ?? input.ts
+      });
+      markFirstReply();
+      timing.intent = "blocked";
+      logTiming();
+      return { handled: true, reason: `blocked_${routed.category}` };
+    }
+
+    if (routed.intent !== "none" && routed.confidence >= 0.75 && isSlackIntentId(routed.intent)) {
+      timing.intent = routed.intent;
+      const result = await runSlackIntent(routed.intent, {
+        channelId: input.channelId,
+        userId: input.userId,
+        text,
+        ts: input.ts,
+        botId: input.botId,
+        subtype: input.subtype,
+        threadTs: input.threadTs,
+        channelType: input.channelType,
+        eventType: input.eventType,
+        skipSafety: true,
+        listRange: routed.listRange
+      });
+      markFirstReply();
+      logTiming();
+      if (result.handled) return result;
+      return { handled: false, reason: "router_dispatch_miss" };
+    }
+
+    if (
+      routed.intent !== "none" &&
+      routed.confidence >= 0.4 &&
+      routed.confidence < 0.75 &&
+      isSlackIntentId(routed.intent)
+    ) {
+      timing.intent = routed.intent;
+      try {
+        const branUserId = await resolveBranUserIdForSlackUser(input.userId);
+        const seed = [
+          {
+            intent: routed.intent,
+            label: slackIntentLabel(routed.intent),
+            score: routed.confidence,
+            source: "catalog" as const
+          },
+          ...routed.alternatives
+            .filter((id) => id !== routed.intent)
+            .filter((id) => isDm || !getSlackIntent(id)?.dmOnly)
+            .map((id) => ({
+              intent: id,
+              label: slackIntentLabel(id),
+              score: Math.max(0, routed.confidence - 0.1),
+              source: "catalog" as const
+            }))
+        ];
+        const candidates = padTop3IntentCandidates(seed, { isDm, limit: 3 });
+        const suggestion = await createSlackIntentSuggestion({
+          slackUserId: input.userId,
+          branUserId,
+          channelId: input.channelId,
+          channelType: input.channelType ?? null,
+          threadTs: input.threadTs ?? null,
+          messageTs: input.ts,
+          originalText: text,
+          eventType: input.eventType ?? null,
+          isDm,
+          candidates: candidates.map((c) => ({
+            intent: c.intent,
+            label: c.label,
+            score: c.score
+          }))
+        });
+        const dymText = formatDidYouMeanFallbackText(candidates);
+        const blocks = buildDidYouMeanBlocks({
+          suggestionId: suggestion.id,
+          candidates
+        });
+        const posted = await postSlackMessage(input.channelId, dymText, {
+          threadTs: input.threadTs ?? input.ts,
+          blocks
+        });
+        markFirstReply();
+        await setSlackIntentSuggestionReplyTs(suggestion.id, posted.ts);
+        logTiming();
+        return { handled: true, reason: "router_did_you_mean" };
+      } catch (error) {
+        console.error("[slack-router] did-you-mean failed:", error);
+      }
+    }
+
+    timing.intent = routed.intent;
+    logTiming();
+    return { handled: false, reason: "router_none" };
+  }
+
+  // Legacy fallback: sequential chain when SLACK_ROUTER_ENABLED=false.
+  timing.path = "legacy";
+  timing.routedMs = Date.now() - started;
   const competitor = await processSlackCompetitorMessage(input);
   if (competitor.handled) {
+    timing.intent = "competitors";
+    markFirstReply();
+    logTiming();
     return competitor;
   }
   const pods = await processSlackPodMessage(input);
   if (pods.handled) {
+    timing.intent = "pods";
+    markFirstReply();
+    logTiming();
     return pods;
   }
   const sentiment = await processSlackSentimentMessage(input);
   if (sentiment.handled) {
+    timing.intent = "sentiment";
+    markFirstReply();
+    logTiming();
     return sentiment;
   }
   const review = await processSlackReviewMessage(input);
   if (review.handled) {
+    timing.intent = "review";
+    markFirstReply();
+    logTiming();
     return review;
   }
   const idea = await processSlackIdeaMessage(input);
   if (idea.handled) {
+    timing.intent = "ideas";
+    markFirstReply();
+    logTiming();
     return idea;
   }
   const calendar = await processSlackCalendarMessage(input);
   if (calendar.handled) {
+    timing.intent = "calendar";
+    markFirstReply();
+    logTiming();
     return calendar;
   }
   // Create dumps ("add these tasks…") must not be stolen by the checklist handler.
   if (looksLikeSlackDmTaskCreate(input.text ?? "")) {
+    timing.intent = "add_task";
+    logTiming();
     return { handled: false, reason: "defer_create" };
   }
-  return processSlackTaskListMessage(input);
+  const listed = await processSlackTaskListMessage(input);
+  timing.intent = "list_tasks";
+  markFirstReply();
+  logTiming();
+  return listed;
 }
 
 /**

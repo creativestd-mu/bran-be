@@ -247,5 +247,19 @@ export const env = {
   slackIntentConfirmedFastPath: parsePositiveNumber(
     process.env.SLACK_INTENT_CONFIRMED_FAST_PATH,
     0.9
-  )
+  ),
+  /**
+   * Fast Slack path: heuristic safety + regex, else one Groq-via-OpenRouter router call.
+   * Set false to restore the legacy safety LLM + embedding matcher + sequential handlers.
+   */
+  slackRouterEnabled: (process.env.SLACK_ROUTER_ENABLED ?? "true").toLowerCase() !== "false",
+  /** Small/fast model for Slack intent+safety router (OpenRouter, preferably Groq). */
+  slackRouterModel: process.env.SLACK_ROUTER_MODEL ?? "openai/gpt-oss-20b",
+  /** Stronger model for add-task extraction when the Slack router path is enabled. */
+  slackExtractionModel: process.env.SLACK_EXTRACTION_MODEL ?? "openai/gpt-oss-120b",
+  /** OpenRouter provider preference order (default Groq, with allow_fallbacks). */
+  openrouterProviderOrder: (() => {
+    const parsed = parseCsv(process.env.OPENROUTER_PROVIDER_ORDER ?? "Groq");
+    return parsed.length > 0 ? parsed : ["Groq"];
+  })()
 };

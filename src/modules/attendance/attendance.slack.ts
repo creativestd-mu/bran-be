@@ -65,6 +65,9 @@ export type SlackUserProfile = {
   };
 };
 
+const SLACK_USER_INFO_TTL_MS = 60 * 60 * 1000;
+const slackUserInfoCache = new Map<string, { value: SlackUserProfile; expiresAt: number }>();
+
 export type SlackMessage = {
   type?: string;
   user?: string;
@@ -139,12 +142,19 @@ export async function listChannelMemberIds(channelId?: string): Promise<string[]
 }
 
 export async function getSlackUserInfo(userId: string): Promise<SlackUserProfile> {
+  const nowMs = Date.now();
+  const cached = slackUserInfoCache.get(userId);
+  if (cached && cached.expiresAt > nowMs) {
+    return cached.value;
+  }
+
   const data = await slackApi<{ ok: boolean; user?: SlackUserProfile }>("users.info", {
     user: userId
   });
   if (!data.user) {
     throw new HttpError(404, `Slack user not found: ${userId}`);
   }
+  slackUserInfoCache.set(userId, { value: data.user, expiresAt: nowMs + SLACK_USER_INFO_TTL_MS });
   return data.user;
 }
 
@@ -226,6 +236,15 @@ export async function postSlackMessage(
   return { channel: data.channel ?? channel, ts: data.ts };
 }
 
+/** Instant "working on it" feedback before a slow path finishes. */
+export async function postSlackPlaceholder(
+  channel: string,
+  text = "On it…",
+  options?: { threadTs?: string }
+): Promise<{ channel: string; ts: string }> {
+  return postSlackMessage(channel, text, options);
+}
+
 export async function updateSlackMessage(
   channel: string,
   ts: string,
@@ -238,6 +257,22 @@ export async function updateSlackMessage(
     text,
     blocks: blocks ? JSON.stringify(blocks) : undefined
   });
+}
+
+export async function deleteSlackMessage(channel: string, ts: string): Promise<void> {
+  await slackApi("chat.delete", { channel, ts });
+}
+
+/** Remove a placeholder once the real reply was posted separately; never throws. */
+export async function clearSlackPlaceholder(channel: string, ts: string | undefined): Promise<void> {
+  if (!ts) return;
+  try {
+    await deleteSlackMessage(channel, ts);
+  } catch (error) {
+    console.warn("[slack] placeholder delete failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 export async function respondToSlackResponseUrl(

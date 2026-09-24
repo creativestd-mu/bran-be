@@ -132,7 +132,7 @@ export async function processSlackUnsupportedDirectedQuery(input: {
     return { handled: true, reason: `unsupported_${reason}` };
   }
 
-  if (env.slackIntentSuggestEnabled) {
+  if (env.slackIntentSuggestEnabled && !env.slackRouterEnabled) {
     try {
       const decision = await matchSlackIntent({ text, isDm });
       const top3 = padTop3IntentCandidates(decision.top3, { isDm, limit: 3 });

@@ -1,5 +1,11 @@
 import { isSlackIntentId, type SlackIntentId } from "./slack-intents.catalog";
 
+export type SlackTaskListRangeInput = {
+  from: string;
+  to: string;
+  label: string;
+};
+
 export type SlackIntentDispatchInput = {
   channelId: string;
   userId: string;
@@ -10,6 +16,10 @@ export type SlackIntentDispatchInput = {
   threadTs?: string;
   channelType?: string;
   eventType?: string;
+  /** Pre-parsed list_tasks date range from regex/router. */
+  listRange?: SlackTaskListRangeInput | null;
+  /** Skip duplicate safety LLM when heuristic/router already cleared the text. */
+  skipSafety?: boolean;
 };
 
 /**
@@ -24,7 +34,7 @@ export async function runSlackIntent(
     return { handled: false, reason: "unknown_intent" };
   }
 
-  const forced = { ...input, force: true as const };
+  const forced = { ...input, force: true as const, listRange: input.listRange ?? null };
 
   switch (intent) {
     case "add_task": {

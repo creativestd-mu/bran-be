@@ -4,8 +4,10 @@ import {
   respondToSlackResponseUrl,
   updateSlackMessage
 } from "../attendance/attendance.slack";
+import { env } from "../../config/env";
 import { resolveBranUserIdForSlackUser } from "../work/work.slack";
 import { updateUnsupportedSlackQueryClarification } from "../slack-unsupported/slack-unsupported.repository";
+import { routeSlackMessage } from "../slack-router/slack-router";
 import { runSlackIntent } from "./slack-intents.dispatch";
 import { learnSlackIntent } from "./slack-intents.learn";
 import { matchSlackIntent } from "./slack-intents.matcher";
@@ -133,7 +135,8 @@ export async function processSlackDidYouMeanAction(input: {
     ts: suggestion.messageTs,
     threadTs: suggestion.threadTs ?? undefined,
     channelType: suggestion.channelType ?? undefined,
-    eventType: suggestion.eventType ?? undefined
+    eventType: suggestion.eventType ?? undefined,
+    skipSafety: env.slackRouterEnabled
   };
 
   if (parsed.kind === "all") {
@@ -296,6 +299,30 @@ export async function processSlackIntentClarifySubmit(input: {
   const deterministic = resolveDeterministicSlackIntents(matchText);
   if (deterministic.mode === "single" && isSlackIntentId(deterministic.intent)) {
     intentToRun = deterministic.intent;
+  } else if (env.slackRouterEnabled) {
+    try {
+      const { result } = await routeSlackMessage(matchText, { isDm });
+      if (
+        result &&
+        result.intent !== "none" &&
+        result.confidence >= 0.75 &&
+        isSlackIntentId(result.intent)
+      ) {
+        intentToRun = result.intent;
+      } else {
+        const combined = await routeSlackMessage(combinedText, { isDm });
+        if (
+          combined.result &&
+          combined.result.intent !== "none" &&
+          combined.result.confidence >= 0.75 &&
+          isSlackIntentId(combined.result.intent)
+        ) {
+          intentToRun = combined.result.intent;
+        }
+      }
+    } catch (error) {
+      console.warn("[slack-intents] clarify router failed:", error);
+    }
   } else {
     try {
       const decision = await matchSlackIntent({ text: matchText, isDm });
@@ -335,7 +362,8 @@ export async function processSlackIntentClarifySubmit(input: {
       ts: suggestion.messageTs,
       threadTs: suggestion.threadTs ?? undefined,
       channelType: suggestion.channelType ?? undefined,
-      eventType: suggestion.eventType ?? undefined
+      eventType: suggestion.eventType ?? undefined,
+      skipSafety: env.slackRouterEnabled
     });
 
     if (result.handled) {

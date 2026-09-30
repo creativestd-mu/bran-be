@@ -25,7 +25,7 @@
         "repository": "dfi-carousel-backend",
         "tag": "bran-__IMAGE_TAG__"
       },
-      "run_command": "npm run start:production",
+      "run_command": "npm run start:railway",
       "instance_size_slug": "apps-s-1vcpu-1gb",
       "instance_count": 1,
       "http_port": 3000,
@@ -47,21 +47,6 @@
         "http_path": "/",
         "port": 3000
       }
-    }
-  ],
-  "jobs": [
-    {
-      "name": "database-migrate",
-      "image": {
-        "registry_type": "DOCR",
-        "registry": "mu-pitch-studio",
-        "repository": "dfi-carousel-backend",
-        "tag": "bran-__IMAGE_TAG__"
-      },
-      "run_command": "npm run prisma:migrate:deploy",
-      "kind": "PRE_DEPLOY",
-      "instance_size_slug": "apps-s-1vcpu-0.5gb",
-      "instance_count": 1
     }
   ],
   "ingress": {

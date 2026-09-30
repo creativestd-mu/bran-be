@@ -12,8 +12,10 @@ describe("slack-intents.catalog", () => {
       "add_task",
       "calendar",
       "competitors",
+      "connect_slack",
       "ideas",
       "list_tasks",
+      "pending_replies",
       "pods",
       "review",
       "sentiment"
@@ -29,8 +31,10 @@ describe("slack-intents.catalog", () => {
     }
   });
 
-  it("marks ideas as DM-only", () => {
+  it("marks private intents as DM-only", () => {
     expect(getSlackIntent("ideas")?.dmOnly).toBe(true);
+    expect(getSlackIntent("pending_replies")?.dmOnly).toBe(true);
+    expect(getSlackIntent("connect_slack")?.dmOnly).toBe(true);
     expect(getSlackIntent("add_task")?.dmOnly).toBeUndefined();
   });
 

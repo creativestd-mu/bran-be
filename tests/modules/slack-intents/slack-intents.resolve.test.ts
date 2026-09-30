@@ -64,6 +64,18 @@ describe("calendar vs task create collision", () => {
 });
 
 describe("deterministic resolver compounds", () => {
+  it("routes Slack authorization requests to the private connect flow", () => {
+    const resolved = resolveDeterministicSlackIntents("connect my Slack account");
+    expect(resolved.mode).toBe("single");
+    if (resolved.mode === "single") expect(resolved.intent).toBe("connect_slack");
+  });
+
+  it("routes reply follow-up questions to the private reply tracker", () => {
+    const resolved = resolveDeterministicSlackIntents("who do I need to reply to on Slack and Gmail?");
+    expect(resolved.mode).toBe("single");
+    if (resolved.mode === "single") expect(resolved.intent).toBe("pending_replies");
+  });
+
   it("flags genuine multi-intent messages as compound when joined with and/also", () => {
     const resolved = resolveDeterministicSlackIntents(
       "show sentiment this week and list my tasks"

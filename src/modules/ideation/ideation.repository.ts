@@ -7,6 +7,12 @@ type CreateIdeaParams = {
   tags?: string[] | undefined;
 };
 
+type UpdateIdeaParams = {
+  title?: string;
+  description?: string;
+  tags?: string[];
+};
+
 function serialiseTags(tags?: string[]): string | null {
   if (!tags || tags.length === 0) return null;
   return JSON.stringify(tags);
@@ -60,6 +66,65 @@ export async function listIdeasByAuthor(authorId: string, options?: { take?: num
     skip: options?.skip ?? 0
   });
   return ideas.map((idea) => ({ ...idea, tagsList: parseTags(idea.tags) }));
+}
+
+export async function updateIdeaByAuthor(
+  ideaId: string,
+  authorId: string,
+  params: UpdateIdeaParams
+) {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.idea.findFirst({
+      where: { id: ideaId, authorId },
+      select: { id: true }
+    });
+    if (!existing) return null;
+
+    // Matches are derived from idea content. Remove both directions so edited
+    // text cannot leave stale recommendations behind.
+    await tx.ideaMatch.deleteMany({
+      where: { OR: [{ ideaId }, { candidateIdeaId: ideaId }] }
+    });
+
+    const idea = await tx.idea.update({
+      where: { id: ideaId },
+      data: {
+        ...(params.title !== undefined ? { title: params.title } : {}),
+        ...(params.description !== undefined ? { description: params.description } : {}),
+        ...(params.tags !== undefined ? { tags: serialiseTags(params.tags) } : {})
+      },
+      include: {
+        author: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            designation: true,
+            avatarUrl: true
+          }
+        }
+      }
+    });
+
+    return { ...idea, tagsList: parseTags(idea.tags) };
+  });
+}
+
+export async function deleteIdeaByAuthor(ideaId: string, authorId: string) {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.idea.findFirst({
+      where: { id: ideaId, authorId },
+      select: { id: true }
+    });
+    if (!existing) return false;
+
+    // candidateIdea uses NoAction, so remove derived matches explicitly.
+    await tx.ideaMatch.deleteMany({
+      where: { OR: [{ ideaId }, { candidateIdeaId: ideaId }] }
+    });
+    await tx.idea.delete({ where: { id: ideaId } });
+    return true;
+  });
 }
 
 export async function upsertIdeaMatch(params: {

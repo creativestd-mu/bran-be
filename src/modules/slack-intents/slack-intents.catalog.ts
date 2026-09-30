@@ -6,7 +6,9 @@ export const SLACK_INTENT_IDS = [
   "pods",
   "ideas",
   "calendar",
-  "review"
+  "review",
+  "connect_slack",
+  "pending_replies"
 ] as const;
 
 export type SlackIntentId = (typeof SLACK_INTENT_IDS)[number];
@@ -116,6 +118,30 @@ export const SLACK_INTENT_CATALOG: SlackIntentDefinition[] = [
       "list my reviews",
       "reviews waiting for me",
       "review status"
+    ]
+  },
+  {
+    id: "connect_slack",
+    label: "Connect Slack",
+    description: "Privately authorize the requester's Slack account for personal reply tracking (DM only).",
+    dmOnly: true,
+    examples: [
+      "connect my Slack",
+      "link my Slack account",
+      "authorize Slack",
+      "reconnect my Slack to Bran"
+    ]
+  },
+  {
+    id: "pending_replies",
+    label: "Replies Waiting on Me",
+    description: "Privately show Slack DMs/threads and Gmail threads waiting for the requester to reply.",
+    dmOnly: true,
+    examples: [
+      "who do I need to reply to",
+      "what messages are waiting on me",
+      "show my unanswered Slack and Gmail messages",
+      "which emails should I respond to"
     ]
   }
 ];

@@ -97,6 +97,15 @@ for (const [key, value] of Object.entries(railway)) {
   }
 }
 
+// The protected DigitalOcean env file is the canonical override for runtime
+// credentials. This keeps new secrets out of the repository and prevents a
+// later spec-based deploy from dropping values added through the App UI.
+for (const [key, value] of Object.entries(digitalOcean)) {
+  if (runtimeKeys.has(key) && !excluded.has(key) && value !== "") {
+    values[key] = String(value);
+  }
+}
+
 for (const key of [
   "DATABASE_URL",
   "S3_ENDPOINT",
@@ -120,6 +129,7 @@ values.APP_URL =
   "https://bran.cohesivity.app";
 values.GOOGLE_OAUTH_REDIRECT_URI = `${appUrl}/oauth/google/calendar/callback`;
 values.GOOGLE_GMAIL_OAUTH_REDIRECT_URI = `${appUrl}/oauth/google/gmail/callback`;
+values.SLACK_OAUTH_REDIRECT_URI = `${appUrl}/oauth/slack/callback`;
 values.AI_PROVIDER = argument("--ai-provider", "openrouter");
 
 if (values.AI_PROVIDER === "openrouter") {
@@ -138,6 +148,7 @@ if (hasFlag("--disable-schedulers")) {
     "MELTWATER_EARNED_CRON_ENABLED",
     "PODS_SOCIAL_CRON_ENABLED",
     "REVIEW_REMINDERS_CRON_ENABLED",
+    "SLACK_REPLY_SYNC_CRON_ENABLED",
     "TASK_REMINDER_CRON_ENABLED",
     "WORK_INGEST_CRON_ENABLED"
   ]) {

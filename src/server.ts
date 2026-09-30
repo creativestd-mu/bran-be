@@ -11,6 +11,7 @@ import { startCompetitorContentCron } from "./modules/competitor-content/competi
 import { startPodsSocialCron } from "./modules/pods/pods.cron";
 import { startReviewReminderCron } from "./modules/review/review.cron";
 import { startTaskReminderCron } from "./modules/work/work.task-reminder.cron";
+import { startSlackReplySyncCron } from "./modules/slack-replies/slack-replies.cron";
 
 app.listen(env.port, () => {
   console.log(`Server running on http://localhost:${env.port}`);
@@ -25,4 +26,5 @@ app.listen(env.port, () => {
   startPodsSocialCron();
   startReviewReminderCron();
   startTaskReminderCron();
+  startSlackReplySyncCron();
 });

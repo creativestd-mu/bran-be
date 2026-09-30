@@ -28,6 +28,7 @@ import { transcriptionKeywordsRouter } from "./modules/transcription-keywords/tr
 import { handleCalendarOAuthCallback } from "./modules/meetings/meetings.service";
 import { recallWebhookHandler } from "./modules/meetings/meetings.webhook";
 import { handleGmailOAuthCallback } from "./modules/gmail/gmail.service";
+import { handleSlackReplyOAuthCallback } from "./modules/slack-replies/slack-replies.service";
 import { apiRouter } from "./routes";
 
 /** Bump when shipping route-surface changes so deploys are easy to verify. */
@@ -78,6 +79,10 @@ app.get("/oauth/google/calendar/callback", (req, res) => {
 
 app.get("/oauth/google/gmail/callback", (req, res) => {
   void handleGmailOAuthCallback(req, res);
+});
+
+app.get("/oauth/slack/callback", (req, res) => {
+  void handleSlackReplyOAuthCallback(req, res);
 });
 
 app.use(helmet());

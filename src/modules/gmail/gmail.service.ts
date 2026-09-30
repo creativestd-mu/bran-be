@@ -23,7 +23,6 @@ import {
   verifyGmailOAuthState
 } from "./gmail-oauth.client";
 import {
-  deleteGmailConnection,
   findGmailConnectionByUserId,
   formatGmailMessageResponse,
   listGmailMessagesForUser,
@@ -32,6 +31,7 @@ import {
   upsertGmailConnection,
   upsertGmailMessage
 } from "./gmail.repository";
+import { rebuildGmailPendingReplies } from "../pending-replies/pending-replies.gmail";
 
 function safeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -154,7 +154,10 @@ export async function disconnectGmail(userId: string) {
     console.warn("[gmail] Token revoke skipped:", safeErrorMessage(error));
   }
 
-  await deleteGmailConnection(userId);
+  await prisma.$transaction([
+    prisma.pendingReply.deleteMany({ where: { userId, source: "GMAIL" } }),
+    prisma.gmailConnection.delete({ where: { userId } })
+  ]);
   return { disconnected: true };
 }
 
@@ -256,6 +259,7 @@ async function syncGmailConnection(input: {
       status: "CONNECTED",
       errorMessage: null
     });
+    await rebuildGmailPendingReplies(connection.userId);
 
     return synced;
   } catch (error) {

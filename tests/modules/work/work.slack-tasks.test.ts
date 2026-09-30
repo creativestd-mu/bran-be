@@ -1,6 +1,8 @@
 import {
   buildDirectedSlackCreateFallback,
+  buildDirectedSlackCreateExtractionText,
   classifyWorkUnitsForTaskList,
+  directedSlackCreateNeedsThreadContext,
   encodeSlackTaskListMeta,
   formatSlackTaskListBlocks,
   formatSlackTaskListMessage,
@@ -479,5 +481,24 @@ describe("buildDirectedSlackCreateFallback", () => {
 
   it("returns null for empty text", () => {
     expect(buildDirectedSlackCreateFallback("  ")).toBeNull();
+  });
+});
+
+describe("directed Slack create thread context", () => {
+  it("does not reuse a thread for a self-contained task command", () => {
+    expect(directedSlackCreateNeedsThreadContext("add task: Test BRAN a")).toBe(false);
+    expect(directedSlackCreateNeedsThreadContext("create a task to review the launch deck")).toBe(
+      false
+    );
+  });
+
+  it("uses labeled reference context only for contextual commands", () => {
+    expect(directedSlackCreateNeedsThreadContext("add this as a task for me")).toBe(true);
+    expect(
+      buildDirectedSlackCreateExtractionText(
+        "add this as a task for me",
+        "Earlier message that contains the referenced deliverable"
+      )
+    ).toContain("REFERENCE CONTEXT (context only; do not create separate work units");
   });
 });

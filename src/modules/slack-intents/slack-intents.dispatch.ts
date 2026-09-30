@@ -71,6 +71,18 @@ export async function runSlackIntent(
       const { processSlackReviewMessage } = await import("../review/review.slack.js");
       return processSlackReviewMessage(forced);
     }
+    case "connect_slack": {
+      const { processSlackConnectMessage } = await import(
+        "../slack-replies/slack-replies.connect.slack.js"
+      );
+      return processSlackConnectMessage(forced);
+    }
+    case "pending_replies": {
+      const { processSlackPendingRepliesMessage } = await import(
+        "../pending-replies/pending-replies.slack.js"
+      );
+      return processSlackPendingRepliesMessage(forced);
+    }
     default:
       return { handled: false, reason: "unknown_intent" };
   }

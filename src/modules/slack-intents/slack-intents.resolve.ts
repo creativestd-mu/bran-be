@@ -6,6 +6,8 @@ import {
 } from "../meetings/meetings.booking.slack";
 import { looksLikePodQuery } from "../pods/pods.slack";
 import { looksLikeReviewQuery } from "../review/review.slack";
+import { looksLikePendingRepliesQuery } from "../pending-replies/pending-replies.slack";
+import { looksLikeSlackConnectQuery } from "../slack-replies/slack-replies.connect.slack";
 import { looksLikeSentimentQuery } from "../sentiment/sentiment.slack";
 import {
   looksLikeCreateWorkQuery,
@@ -58,6 +60,8 @@ const SINGLE_WINNER_PRIORITY: DeterministicIntentId[] = [
   "list_tasks",
   "calendar",
   "review",
+  "connect_slack",
+  "pending_replies",
   "ideas",
   "competitors",
   "sentiment",
@@ -70,6 +74,8 @@ const INTENT_PRIORITY: DeterministicIntentId[] = [
   "ideas",
   "calendar",
   "review",
+  "connect_slack",
+  "pending_replies",
   "competitors",
   "sentiment",
   "pods",
@@ -108,16 +114,18 @@ export function collectDeterministicIntentHits(text: string): DeterministicInten
   const listTasks = looksLikeTaskListQuery(routingText);
   const bookEnvelope = hasTopLevelBookCallInstruction(routingText);
   const agenda = looksLikeCalendarAgendaQuery(routingText);
+  const pendingReplies = looksLikePendingRepliesQuery(routingText);
+  const connectSlack = looksLikeSlackConnectQuery(routingText);
 
   // Explicit task create wins alone — bullets saying "set up a call" are task bodies.
-  if (createEnvelope || looksLikeCreateWorkQuery(routingText)) {
+  if (!pendingReplies && (createEnvelope || looksLikeCreateWorkQuery(routingText))) {
     hits.push({
       intent: "add_task",
       precision: createEnvelope ? "envelope" : "strong",
       label: labelFor("add_task")
     });
     if (createEnvelope) return hits;
-  } else if (looksLikeSlackDmTaskCreate(routingText) && !listTasks) {
+  } else if (!pendingReplies && looksLikeSlackDmTaskCreate(routingText) && !listTasks) {
     hits.push({
       intent: "add_task",
       precision: "weak",
@@ -154,6 +162,22 @@ export function collectDeterministicIntentHits(text: string): DeterministicInten
       intent: "review",
       precision: "strong",
       label: labelFor("review")
+    });
+  }
+
+  if (connectSlack) {
+    hits.push({
+      intent: "connect_slack",
+      precision: "envelope",
+      label: labelFor("connect_slack")
+    });
+  }
+
+  if (pendingReplies) {
+    hits.push({
+      intent: "pending_replies",
+      precision: "strong",
+      label: labelFor("pending_replies")
     });
   }
 

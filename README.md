@@ -128,6 +128,11 @@ Slack task create + unsupported asks:
   - `GET /api/unsupported-slack-queries` / `GET /:lang/v1/unsupported-slack-queries` (admin / CoS)
   - `PATCH …/:id/status` with `{ "status": "REVIEWED" | "DISMISSED" | "NEW" }`
 
+Private reply tracking:
+- In a DM to Bran, ask `who do I need to reply to?` to see recent Slack DMs/threads and Gmail threads whose latest message came from someone else.
+- Results and materialized pending items are always scoped to the requesting Bran user; the reply list has no frontend/list API and is never shown in a channel.
+- Gmail participates when that user has Gmail connected. A user can DM Bran `connect my Slack` to receive a private, 15-minute Slack OAuth link (the authenticated API fallback is `POST /:lang/v1/slack/connect`); tokens are encrypted at rest.
+
 Slack calendar booking (requires Calendar connected with write/freebusy scopes — reconnect Calendar after deploy):
 - `@Bran book a call with Dhananjay` / `schedule a meeting with @Name about X`
   - Offers a few free weekday slots 12:00–19:00 IST; click a button to book

@@ -74,10 +74,12 @@ import {
   toReminderTaskListItems
 } from "./work.task-reminder";
 import {
+  buildDirectedSlackCreateExtractionText,
+  buildDirectedSlackCreateFallback,
   classifyWorkUnitsForTaskList,
   collectSlackUserMentions,
+  directedSlackCreateNeedsThreadContext,
   formatSlackTaskListBlocks,
-  buildDirectedSlackCreateFallback,
   looksLikeChannelMassAssignQuery,
   looksLikeOverdueTaskQuery,
   looksLikeSlackDmTaskCreate,
@@ -513,6 +515,8 @@ async function ingestWorkFromText(input: {
   throwOnExtractError: boolean;
   /** When LLM returns nothing (or errors), synthesize one unit from the message. */
   fallbackOnEmpty?: boolean;
+  /** Use the user's direct request for fallback, not any appended reference context. */
+  fallbackText?: string;
 }) {
   if (input.useLedger && input.sourceType && input.sourceId) {
     const existing = await findWorkUnitSource(input.sourceType, input.sourceId);
@@ -567,7 +571,7 @@ async function ingestWorkFromText(input: {
     });
 
     if (input.fallbackOnEmpty) {
-      const fallback = buildDirectedSlackCreateFallback(input.text);
+      const fallback = buildDirectedSlackCreateFallback(input.fallbackText ?? input.text);
       if (fallback) {
         extracted = [fallback];
         usedFallback = true;
@@ -600,7 +604,7 @@ async function ingestWorkFromText(input: {
   }
 
   if (extracted.length === 0 && input.fallbackOnEmpty) {
-    const fallback = buildDirectedSlackCreateFallback(input.text);
+    const fallback = buildDirectedSlackCreateFallback(input.fallbackText ?? input.text);
     if (fallback) {
       extracted = [fallback];
       usedFallback = true;
@@ -914,10 +918,14 @@ export async function processSlackDirectedWorkCreateMessage(input: {
   }
 
   let createText = text;
-  if (input.threadTs && input.threadTs !== input.ts) {
+  if (
+    input.threadTs &&
+    input.threadTs !== input.ts &&
+    directedSlackCreateNeedsThreadContext(text)
+  ) {
     const threadContext = await fetchSlackThreadContextText(input.channelId, input.threadTs);
     if (threadContext.trim()) {
-      createText = `${threadContext}\n\n---\nRequest: ${text}`;
+      createText = buildDirectedSlackCreateExtractionText(text, threadContext);
     }
   }
 
@@ -1004,8 +1012,21 @@ export async function processSlackDirectedWorkCreateMessage(input: {
     preferredAssigneeUserId,
     useLedger: true,
     throwOnExtractError: false,
-    fallbackOnEmpty: true
+    fallbackOnEmpty: true,
+    fallbackText: text
   });
+
+  // The background Slack scanner deduplicates by thread, while directed task
+  // commands deduplicate by message. Settle the thread key too so it cannot
+  // later re-extract the first command from this conversation.
+  if (!isDm && result.skipReason !== "extract_error") {
+    await recordWorkUnitSource({
+      sourceType: "SLACK",
+      sourceId: `${input.channelId}:${input.threadTs ?? input.ts}`,
+      status: result.workUnits.length > 0 ? "PROCESSED" : "SKIPPED",
+      workUnitCount: result.workUnits.length
+    });
+  }
 
   const count = result.workUnits.length;
   const titles = formatSlackVoiceCreatedUnits(result.workUnits, branUserId);

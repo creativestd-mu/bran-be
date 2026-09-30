@@ -149,12 +149,6 @@ async function main() {
   });
   console.log(`  ${head.name} (${head.id})`);
 
-  // Keep Sudipto deactivated if present
-  await prisma.user.updateMany({
-    where: { email: "sudipto.adhicary@mastersunion.org" },
-    data: { isActive: false, managerUserId: null }
-  });
-
   console.log("\nOnboarding team members...");
 
   for (const member of TEAM_MEMBERS) {

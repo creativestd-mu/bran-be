@@ -39,6 +39,7 @@ import { prereadRouter } from "../../../modules/preread/preread.routes";
 import { reviewRouter } from "../../../modules/review/review.routes";
 import { unsupportedSlackRouter } from "../../../modules/slack-unsupported/slack-unsupported.routes";
 import { transcriptionKeywordsRouter } from "../../../modules/transcription-keywords/transcription-keywords.routes";
+import { slackRepliesRouter } from "../../../modules/slack-replies/slack-replies.routes";
 
 const v1Router = Router();
 
@@ -71,6 +72,7 @@ v1Router.use("/utilities", utilitiesRouter);
 v1Router.use("/inventory", inventoryRouter);
 v1Router.use("/meetings", meetingsRouter);
 v1Router.use("/gmail", gmailRouter);
+v1Router.use("/slack", slackRepliesRouter);
 v1Router.use("/events", eventsRouter);
 v1Router.use("/attendance", attendanceRouter);
 v1Router.use("/graph", graphRouter);

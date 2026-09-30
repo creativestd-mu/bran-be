@@ -1,11 +1,15 @@
 import {
   createIdeaAndRecommendations,
+  deleteMyIdea,
   listMyRecommendations,
-  rankCollaboratorCandidates
+  rankCollaboratorCandidates,
+  updateMyIdea
 } from "../../../src/modules/ideation/ideation.service";
 import {
   createIdea,
+  deleteIdeaByAuthor,
   listRecommendationsForUser,
+  updateIdeaByAuthor,
   upsertIdeaMatch
 } from "../../../src/modules/ideation/ideation.repository";
 import { semanticSearchIdeas, embedAndUpsertIdea } from "../../../src/modules/ai/ai.embeddings";
@@ -13,8 +17,10 @@ import { notifyIdeaCollaboratorMatch } from "../../../src/modules/notifications/
 
 jest.mock("../../../src/modules/ideation/ideation.repository", () => ({
   createIdea: jest.fn(),
+  deleteIdeaByAuthor: jest.fn(),
   listIdeasByAuthor: jest.fn(),
   listRecommendationsForUser: jest.fn(),
+  updateIdeaByAuthor: jest.fn(),
   upsertIdeaMatch: jest.fn(),
   deserializeTagsForApi: (value: string | null | undefined) => {
     if (!value) return [];
@@ -31,11 +37,21 @@ jest.mock("../../../src/modules/ai/ai.embeddings", () => ({
   semanticSearchIdeas: jest.fn()
 }));
 
+jest.mock("../../../src/modules/ai/ai.qdrant", () => ({
+  deleteVectors: jest.fn()
+}));
+
 jest.mock("../../../src/modules/notifications/notifications.service", () => ({
   notifyIdeaCollaboratorMatch: jest.fn()
 }));
 
 const createIdeaMock = createIdea as jest.MockedFunction<typeof createIdea>;
+const deleteIdeaByAuthorMock = deleteIdeaByAuthor as jest.MockedFunction<
+  typeof deleteIdeaByAuthor
+>;
+const updateIdeaByAuthorMock = updateIdeaByAuthor as jest.MockedFunction<
+  typeof updateIdeaByAuthor
+>;
 const upsertIdeaMatchMock = upsertIdeaMatch as jest.MockedFunction<typeof upsertIdeaMatch>;
 const semanticSearchIdeasMock = semanticSearchIdeas as jest.MockedFunction<typeof semanticSearchIdeas>;
 const embedAndUpsertIdeaMock = embedAndUpsertIdea as jest.MockedFunction<typeof embedAndUpsertIdea>;
@@ -187,5 +203,53 @@ describe("ideation.service", () => {
         matchedUser: expect.objectContaining({ id: "u-2", name: "Ben" })
       })
     ]);
+  });
+
+  it("updates only an idea owned by the requesting user", async () => {
+    const now = new Date();
+    semanticSearchIdeasMock.mockResolvedValue([]);
+    updateIdeaByAuthorMock.mockResolvedValue({
+      id: "idea-1",
+      authorId: "u-1",
+      title: "Updated idea",
+      description: "Updated description",
+      tags: JSON.stringify(["updated"]),
+      createdAt: now,
+      updatedAt: now,
+      tagsList: ["updated"],
+      author: {
+        id: "u-1",
+        name: "Ada",
+        email: "ada@bran.app",
+        designation: "PM",
+        avatarUrl: null
+      }
+    });
+
+    const result = await updateMyIdea({
+      userId: "u-1",
+      ideaId: "idea-1",
+      title: "Updated idea"
+    });
+
+    expect(updateIdeaByAuthorMock).toHaveBeenCalledWith("idea-1", "u-1", {
+      title: "Updated idea"
+    });
+    expect(result.title).toBe("Updated idea");
+    expect(embedAndUpsertIdeaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "idea-1", title: "Updated idea" })
+    );
+  });
+
+  it("rejects edits and deletes when the idea is not owned by the user", async () => {
+    updateIdeaByAuthorMock.mockResolvedValue(null);
+    deleteIdeaByAuthorMock.mockResolvedValue(false);
+
+    await expect(
+      updateMyIdea({ userId: "u-2", ideaId: "idea-1", title: "Not mine" })
+    ).rejects.toMatchObject({ statusCode: 404 });
+    await expect(deleteMyIdea({ userId: "u-2", ideaId: "idea-1" })).rejects.toMatchObject({
+      statusCode: 404
+    });
   });
 });

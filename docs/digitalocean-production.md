@@ -35,6 +35,11 @@ doctl apps update d1253564-720b-49ab-991b-540c2b222881 \
   --wait
 ```
 
+The API uses `npm run start:railway`, which runs `prisma migrate deploy`
+before starting the server. Do not add a separate App Platform pre-deploy
+migration job; DigitalOcean has repeatedly stalled those jobs with an internal
+platform error.
+
 Use `--disable-schedulers` only if another environment still owns in-process crons.
 Never run both deployments with in-process schedulers enabled.
 
@@ -46,6 +51,7 @@ Daily pending-task Slack DMs run at 10:00 IST (`TASK_REMINDER_*`). Manual trigge
 - Slack events: `https://bran-be-6jtht.ondigitalocean.app/api/slack/events`
 - Slack commands: `https://bran-be-6jtht.ondigitalocean.app/api/slack/commands`
 - Slack interactions: `https://bran-be-6jtht.ondigitalocean.app/api/slack/interactions`
+- Slack user OAuth: `https://bran-be-6jtht.ondigitalocean.app/oauth/slack/callback`
 - Recall webhook: `https://bran-be-6jtht.ondigitalocean.app/webhooks/recall`
 - Google Calendar OAuth: `https://bran-be-6jtht.ondigitalocean.app/oauth/google/calendar/callback`
 - Google Gmail OAuth: `https://bran-be-6jtht.ondigitalocean.app/oauth/google/gmail/callback`

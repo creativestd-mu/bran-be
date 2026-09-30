@@ -102,6 +102,7 @@ import {
   routeSlackMessage,
   shouldBlockRouterResult
 } from "../slack-router/slack-router";
+import { maybeSendReplyConnectionReminder } from "../pending-replies/pending-replies.connection-reminder";
 
 async function processSlackInteractiveQuery(input: {
   channelId: string;
@@ -229,9 +230,9 @@ async function processSlackInteractiveQuery(input: {
       resolved.mode === "single"
         ? resolved.intent
         : hits[0]?.intent;
-    if (!intent) {
+    if (!intent || !hits.some((hit) => hit.intent === intent)) {
       logTiming();
-      return { handled: false, reason: "empty_resolve" };
+      return { handled: false, reason: "dm_only_intent" };
     }
 
     timing.path = "regex";
@@ -305,7 +306,12 @@ async function processSlackInteractiveQuery(input: {
       return { handled: true, reason: `blocked_${routed.category}` };
     }
 
-    if (routed.intent !== "none" && routed.confidence >= 0.75 && isSlackIntentId(routed.intent)) {
+    if (
+      routed.intent !== "none" &&
+      routed.confidence >= 0.75 &&
+      isSlackIntentId(routed.intent) &&
+      (isDm || !getSlackIntent(routed.intent)?.dmOnly)
+    ) {
       timing.intent = routed.intent;
       const result = await runSlackIntent(routed.intent, {
         channelId: input.channelId,
@@ -723,6 +729,14 @@ export async function slackEventsHandler(
             });
           });
         })
+        .then(() => {
+          if (!isDm || event.bot_id) return;
+          return maybeSendReplyConnectionReminder({
+            channelId: event.channel!,
+            slackUserId: event.user!,
+            text: event.text ?? ""
+          });
+        })
         .catch((error) => {
           console.error("Slack voice confirm / task list / attendance processing failed:", error);
         });
@@ -765,6 +779,11 @@ export async function slackEventsHandler(
             });
           });
         })
+        .then(() => maybeSendReplyConnectionReminder({
+          channelId: event.channel!,
+          slackUserId: event.user!,
+          text: event.text ?? ""
+        }))
         .catch((error) => {
           console.error("Slack sentiment / task list / attendance processing failed:", error);
         });

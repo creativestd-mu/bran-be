@@ -1,11 +1,15 @@
 import { env } from "../../config/env";
+import { HttpError } from "../../utils/httpError";
 import { notifyIdeaCollaboratorMatch } from "../notifications/notifications.service";
 import { embedAndUpsertIdea, semanticSearchIdeas } from "../ai/ai.embeddings";
+import { deleteVectors } from "../ai/ai.qdrant";
 import {
   createIdea,
+  deleteIdeaByAuthor,
   deserializeTagsForApi,
   listIdeasByAuthor,
   listRecommendationsForUser,
+  updateIdeaByAuthor,
   upsertIdeaMatch
 } from "./ideation.repository";
 
@@ -78,6 +82,65 @@ export function rankCollaboratorCandidates(
     .slice(0, maxRecommendations);
 }
 
+async function refreshIdeaRecommendations(idea: Awaited<ReturnType<typeof createIdea>>) {
+  await embedAndUpsertIdea({
+    id: idea.id,
+    authorId: idea.authorId,
+    authorName: idea.author.name,
+    title: idea.title,
+    description: idea.description,
+    tags: idea.tagsList,
+    createdAt: idea.createdAt
+  });
+
+  const matches = await semanticSearchIdeas(
+    {
+      title: idea.title,
+      description: idea.description,
+      tags: idea.tagsList,
+      authorName: idea.author.name,
+      createdAt: idea.createdAt
+    },
+    env.ideaMatchTopK
+  );
+
+  const ranked = rankCollaboratorCandidates(idea.authorId, idea.id, matches);
+  const notifyThreshold = env.ideaNotifyThreshold;
+  const notifiedAt = new Date();
+
+  for (const candidate of ranked) {
+    await upsertIdeaMatch({
+      ideaId: idea.id,
+      candidateIdeaId: candidate.candidateIdeaId,
+      matchedUserId: candidate.matchedUserId,
+      score: candidate.score,
+      status: candidate.score >= notifyThreshold ? "NOTIFIED" : "SUGGESTED",
+      notifiedAt: candidate.score >= notifyThreshold ? notifiedAt : undefined
+    });
+
+    if (candidate.score < notifyThreshold) continue;
+
+    await notifyIdeaCollaboratorMatch({
+      sourceIdea: {
+        id: idea.id,
+        title: idea.title,
+        description: idea.description,
+        authorId: idea.authorId
+      },
+      matchedIdea: {
+        id: candidate.candidateIdeaId
+      },
+      sourceUser: {
+        id: idea.author.id,
+        name: idea.author.name,
+        email: idea.author.email
+      },
+      matchedUserId: candidate.matchedUserId,
+      similarityScore: candidate.score
+    });
+  }
+}
+
 export async function createIdeaAndRecommendations(params: {
   userId: string;
   title: string;
@@ -92,63 +155,7 @@ export async function createIdeaAndRecommendations(params: {
   });
 
   try {
-    await embedAndUpsertIdea({
-      id: created.id,
-      authorId: created.authorId,
-      authorName: created.author.name,
-      title: created.title,
-      description: created.description,
-      tags: created.tagsList,
-      createdAt: created.createdAt
-    });
-
-    const topK = env.ideaMatchTopK;
-    const matches = await semanticSearchIdeas(
-      {
-        title: created.title,
-        description: created.description,
-        tags: created.tagsList,
-        authorName: created.author.name,
-        createdAt: created.createdAt
-      },
-      topK
-    );
-
-    const ranked = rankCollaboratorCandidates(created.authorId, created.id, matches);
-    const notifyThreshold = env.ideaNotifyThreshold;
-    const notifiedAt = new Date();
-
-    for (const candidate of ranked) {
-      await upsertIdeaMatch({
-        ideaId: created.id,
-        candidateIdeaId: candidate.candidateIdeaId,
-        matchedUserId: candidate.matchedUserId,
-        score: candidate.score,
-        status: candidate.score >= notifyThreshold ? "NOTIFIED" : "SUGGESTED",
-        notifiedAt: candidate.score >= notifyThreshold ? notifiedAt : undefined
-      });
-
-      if (candidate.score < notifyThreshold) continue;
-
-      await notifyIdeaCollaboratorMatch({
-        sourceIdea: {
-          id: created.id,
-          title: created.title,
-          description: created.description,
-          authorId: created.authorId
-        },
-        matchedIdea: {
-          id: candidate.candidateIdeaId
-        },
-        sourceUser: {
-          id: created.author.id,
-          name: created.author.name,
-          email: created.author.email
-        },
-        matchedUserId: candidate.matchedUserId,
-        similarityScore: candidate.score
-      });
-    }
+    await refreshIdeaRecommendations(created);
   } catch (error) {
     // Keep idea creation resilient even when external vector infrastructure is unavailable.
     console.error("[ideation] failed to generate recommendations", error);
@@ -161,6 +168,53 @@ export async function createIdeaAndRecommendations(params: {
     tags: created.tagsList,
     createdAt: created.createdAt
   };
+}
+
+export async function updateMyIdea(params: {
+  userId: string;
+  ideaId: string;
+  title?: string;
+  description?: string;
+  tags?: string[];
+}) {
+  const updated = await updateIdeaByAuthor(params.ideaId, params.userId, {
+    ...(params.title !== undefined ? { title: params.title } : {}),
+    ...(params.description !== undefined ? { description: params.description } : {}),
+    ...(params.tags !== undefined ? { tags: params.tags } : {})
+  });
+  if (!updated) {
+    // Do not reveal whether another user's private idea exists.
+    throw new HttpError(404, "Idea not found");
+  }
+
+  try {
+    await refreshIdeaRecommendations(updated);
+  } catch (error) {
+    console.error("[ideation] failed to refresh edited idea recommendations", error);
+  }
+
+  return {
+    id: updated.id,
+    title: updated.title,
+    description: updated.description,
+    tags: updated.tagsList,
+    createdAt: updated.createdAt,
+    updatedAt: updated.updatedAt
+  };
+}
+
+export async function deleteMyIdea(params: { userId: string; ideaId: string }) {
+  const deleted = await deleteIdeaByAuthor(params.ideaId, params.userId);
+  if (!deleted) {
+    throw new HttpError(404, "Idea not found");
+  }
+
+  try {
+    await deleteVectors("ideas", [params.ideaId]);
+  } catch (error) {
+    // The DB deletion is authoritative; vector cleanup is best effort.
+    console.error("[ideation] failed to delete idea embedding", error);
+  }
 }
 
 /** Persist an idea for the author only — no shared embeddings or collaborator pings. */

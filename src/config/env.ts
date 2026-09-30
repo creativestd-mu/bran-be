@@ -197,6 +197,24 @@ export const env = {
   // Attendance / ETA tracker (Slack)
   slackBotToken: cleanEnvSecret(process.env.SLACK_BOT_TOKEN),
   slackSigningSecret: cleanEnvSecret(process.env.SLACK_SIGNING_SECRET),
+  slackClientId: cleanEnvSecret(process.env.SLACK_CLIENT_ID),
+  slackClientSecret: cleanEnvSecret(process.env.SLACK_CLIENT_SECRET),
+  slackOAuthRedirectUri:
+    process.env.SLACK_OAUTH_REDIRECT_URI ?? "http://localhost:3000/oauth/slack/callback",
+  slackUserScopes: parseCsv(
+    process.env.SLACK_USER_SCOPES ??
+      "channels:history,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read,users:read.email"
+  ),
+  slackReplySyncCronEnabled:
+    (process.env.SLACK_REPLY_SYNC_CRON_ENABLED ?? "true").toLowerCase() !== "false",
+  slackReplySyncIntervalMs: Number(
+    process.env.SLACK_REPLY_SYNC_INTERVAL_MS ?? 5 * 60 * 1000
+  ),
+  slackReplySyncDays: Number(process.env.SLACK_REPLY_SYNC_DAYS ?? 7),
+  slackReplySyncMaxConversations: Number(
+    process.env.SLACK_REPLY_SYNC_MAX_CONVERSATIONS ?? 100
+  ),
+  slackReplySyncMaxMessages: Number(process.env.SLACK_REPLY_SYNC_MAX_MESSAGES ?? 100),
   slackChannelName: process.env.SLACK_CHANNEL_NAME ?? "cs-day-off",
   slackChannelId: process.env.SLACK_CHANNEL_ID ?? "",
   cronSecret: process.env.CRON_SECRET ?? "",

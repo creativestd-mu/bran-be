@@ -453,7 +453,7 @@ function buildExtractionSystemPrompt(options: {
 
   const slackMentionHint =
     options.kind === "slack"
-      ? "In Slack threads, a person named with @ (e.g. @Dhananjay) is usually the assignee for that task — set assigneeName to their exact team-member name. "
+      ? "In Slack threads, a person named with @ (e.g. @Dhananjay) is usually the assignee for that task — set assigneeName to their exact team-member name. If the input contains CURRENT REQUEST and REFERENCE CONTEXT sections, extract tasks ONLY from CURRENT REQUEST; use REFERENCE CONTEXT only to resolve what the request refers to. "
       : "";
 
   return (

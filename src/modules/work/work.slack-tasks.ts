@@ -337,6 +337,32 @@ export function buildDirectedSlackCreateFallback(
   };
 }
 
+const THREAD_CONTEXT_REFERENCE_RE =
+  /\b(this|that|it|above|previous|earlier|quoted|thread|message|conversation|attachment)\b/i;
+
+/**
+ * Explicit task commands normally stand alone. Loading the whole thread for
+ * "add task: New thing" makes the extractor see earlier task commands again.
+ * Only fetch thread context when the current request actually refers back to it.
+ */
+export function directedSlackCreateNeedsThreadContext(text: string): boolean {
+  return THREAD_CONTEXT_REFERENCE_RE.test(stripSlackUserMentions(text));
+}
+
+export function buildDirectedSlackCreateExtractionText(
+  requestText: string,
+  threadContext: string
+): string {
+  if (!threadContext.trim()) return requestText;
+  return [
+    "CURRENT REQUEST (extract work units only from this section):",
+    requestText,
+    "",
+    "REFERENCE CONTEXT (context only; do not create separate work units from this section):",
+    threadContext
+  ].join("\n");
+}
+
 function isReservedTaskListName(value: string): boolean {
   const first = value.trim().toLowerCase().split(/\s+/)[0] ?? "";
   if (!first || /^\d/.test(first)) return true;

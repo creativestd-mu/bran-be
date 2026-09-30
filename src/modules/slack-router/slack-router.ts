@@ -70,7 +70,7 @@ function buildRouterSystemPrompt(): string {
   return [
     "You route workplace Slack messages to Bran, an internal work assistant at Masters' Union.",
     "Return STRICT JSON only with shape:",
-    '{"safe":boolean,"category":"ok"|"sexual"|"hate"|"violence"|"self_harm"|"child_exploitation"|"jailbreak"|"illegal"|"harassment"|"other","intent":"add_task"|"list_tasks"|"sentiment"|"competitors"|"pods"|"ideas"|"calendar"|"review"|"none","confidence":0..1,"alternatives":string[],"listRange":{"from":"YYYY-MM-DD","to":"YYYY-MM-DD","label":string}|null}',
+    '{"safe":boolean,"category":"ok"|"sexual"|"hate"|"violence"|"self_harm"|"child_exploitation"|"jailbreak"|"illegal"|"harassment"|"other","intent":"add_task"|"list_tasks"|"sentiment"|"competitors"|"pods"|"ideas"|"calendar"|"review"|"connect_slack"|"pending_replies"|"none","confidence":0..1,"alternatives":string[],"listRange":{"from":"YYYY-MM-DD","to":"YYYY-MM-DD","label":string}|null}',
     "Safety rules:",
     slackSafetyRouterRules(),
     "Set safe=false and the matching category only for clear abuse. If unsure, safe=true and category=ok.",

@@ -87,6 +87,8 @@ describe("slack-intents.reply", () => {
   it("excludes DM-only intents when padding for channels", () => {
     const padded = padTop3IntentCandidates([], { isDm: false });
     expect(padded.every((c) => c.intent !== "ideas")).toBe(true);
+    expect(padded.every((c) => c.intent !== "pending_replies")).toBe(true);
+    expect(padded.every((c) => c.intent !== "connect_slack")).toBe(true);
     expect(padded).toHaveLength(3);
   });
 

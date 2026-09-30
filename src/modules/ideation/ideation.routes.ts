@@ -1,12 +1,15 @@
 import { Router } from "express";
 
+import { param } from "../../utils/param";
 import { requirePermission } from "../auth/auth.guard";
 import { authenticate } from "../auth/auth.middleware";
-import { createIdeaSchema, listIdeasQuerySchema } from "./ideation.schemas";
+import { createIdeaSchema, listIdeasQuerySchema, updateIdeaSchema } from "./ideation.schemas";
 import {
   createIdeaAndRecommendations,
+  deleteMyIdea,
   listMyIdeas,
-  listMyRecommendations
+  listMyRecommendations,
+  updateMyIdea
 } from "./ideation.service";
 
 const ideationRouter = Router();
@@ -41,6 +44,40 @@ ideationRouter.get("/ideas/me", requirePermission("manage_ideation"), async (req
     next(error);
   }
 });
+
+ideationRouter.patch(
+  "/ideas/:ideaId",
+  requirePermission("manage_ideation"),
+  async (req, res, next) => {
+    try {
+      const payload = updateIdeaSchema.parse(req.body);
+      const idea = await updateMyIdea({
+        userId: req.user!.userId,
+        ideaId: param(req.params.ideaId),
+        ...payload
+      });
+      res.status(200).json({ success: true, data: idea });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+ideationRouter.delete(
+  "/ideas/:ideaId",
+  requirePermission("manage_ideation"),
+  async (req, res, next) => {
+    try {
+      await deleteMyIdea({
+        userId: req.user!.userId,
+        ideaId: param(req.params.ideaId)
+      });
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 ideationRouter.get(
   "/recommendations/me",

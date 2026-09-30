@@ -7,6 +7,7 @@ import { formatPendingRepliesForUser } from "./pending-replies.service";
 export function looksLikePendingRepliesQuery(text: string): boolean {
   const normalized = text.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, " ").trim();
   return (
+    /^(?:show\s+)?my\s*repl(?:y|ies)$/.test(normalized) ||
     /\b(who|what)\b.{0,35}\b(reply|respond|follow up|follow-up)\b/.test(normalized) ||
     /\b(reply|respond)\b.{0,20}\b(pending|waiting|owe|need|have to|should)\b/.test(normalized) ||
     /\b(pending|unanswered)\b.{0,15}\b(messages?|replies|emails?)\b/.test(normalized) ||

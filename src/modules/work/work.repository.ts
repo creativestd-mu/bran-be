@@ -253,6 +253,10 @@ export async function deleteWorkUnit(id: string) {
   return prisma.workUnit.delete({ where: { id } });
 }
 
+export async function deleteWorkUnitsByAudioRecordingId(audioRecordingId: string) {
+  return prisma.workUnit.deleteMany({ where: { audioRecordingId } });
+}
+
 export async function findWorkUnitsByUserAndDateRange(userId: string, from: Date, to: Date) {
   return prisma.workUnit.findMany({
     where: {
@@ -383,4 +387,3 @@ export async function findOpenWorkUnitsForReminder(userId: string, take: number)
     take
   });
 }
-

@@ -34,4 +34,17 @@ describe("ideation slack detection", () => {
     expect(text).toContain("only you can see these");
     expect(text).toContain("Founder night");
   });
+
+  it("keeps long idea lists compact", () => {
+    const text = formatMyIdeasSlackMessage(
+      Array.from({ length: 7 }, (_, index) => ({
+        title: `Idea ${index + 1}`,
+        description: "A ".repeat(100),
+        createdAt: "2026-08-15T10:00:00.000Z"
+      }))
+    );
+    expect(text).toContain("2 more ideas not shown");
+    expect(text).not.toContain("*6. Idea 6*");
+    expect(text).toContain("…");
+  });
 });

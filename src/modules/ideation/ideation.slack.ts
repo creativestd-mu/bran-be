@@ -1,3 +1,4 @@
+import { env } from "../../config/env";
 import { postSlackMessage } from "../attendance/attendance.slack";
 import { stripSlackUserMentions } from "../work/work.slack-tasks";
 import { isSlackDmChannel } from "../work/work.slack-voice";
@@ -80,20 +81,37 @@ export function formatMyIdeasSlackMessage(
     ].join("\n");
   }
 
+  const shown = ideas.slice(0, 5);
   const lines = ["*Your ideas* _(only you can see these)_", ""];
-  ideas.forEach((idea, index) => {
+  shown.forEach((idea, index) => {
     const when = new Intl.DateTimeFormat("en-IN", {
       timeZone: "Asia/Kolkata",
       day: "2-digit",
       month: "short"
     }).format(new Date(idea.createdAt));
-    const snippet = idea.description.replace(/\s+/g, " ").trim().slice(0, 160);
-    lines.push(`${index + 1}. *${idea.title}* · ${when}`);
+    const compactDescription = idea.description.replace(/\s+/g, " ").trim();
+    const snippet = compactDescription.length > 120
+      ? `${compactDescription.slice(0, 117).replace(/\s+\S*$/, "")}…`
+      : compactDescription;
+    lines.push(`*${index + 1}. ${truncateIdeaText(idea.title, 90)}*  ·  ${when}`);
     if (snippet && snippet !== idea.title) {
       lines.push(`   ${snippet}`);
     }
+    lines.push("");
   });
-  return lines.join("\n");
+  if (ideas.length > shown.length) {
+    lines.push(`_${ideas.length - shown.length} more idea${ideas.length - shown.length === 1 ? "" : "s"} not shown._`);
+  }
+  const appUrl = env.appUrl.replace(/\/$/, "");
+  if (appUrl) {
+    lines.push(`<${appUrl}/ideation|View all ideas in Bran>`);
+  }
+  return lines.join("\n").trim();
+}
+
+function truncateIdeaText(value: string, max: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length <= max ? compact : `${compact.slice(0, max - 1).replace(/\s+\S*$/, "")}…`;
 }
 
 export async function createIdeaFromSlackText(

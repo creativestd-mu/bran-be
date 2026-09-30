@@ -8,6 +8,10 @@ import {
   saveStoredFile
 } from "../../lib/file-storage";
 import { HttpError } from "../../utils/httpError";
+import {
+  notifyPeerReviewRequested,
+  notifyPeerReviewResponded
+} from "../notifications/notifications.service";
 import { DEFAULT_REVIEW_REMINDER_TIMES, MAX_REVIEW_FILE_BYTES } from "./review.constants";
 import type {
   CreateReviewInput,
@@ -113,6 +117,21 @@ export async function createReview(
     contentType
   });
 
+  try {
+    await notifyPeerReviewRequested({
+      reviewId: review.id,
+      requestedToId: review.requestedToId,
+      requestedBy: {
+        id: review.requestedBy.id,
+        name: review.requestedBy.name
+      },
+      context: review.context,
+      createdAt: review.createdAt
+    });
+  } catch (error) {
+    console.error("[review] Failed to create recipient notification:", error);
+  }
+
   if (env.reviewRemindersEnabled && attendanceDmAllowed(review.requestedTo.email)) {
     try {
       const dm = await notifyReviewerOnSlack(review);
@@ -184,6 +203,22 @@ export async function respondToReviewRequest(
     responseComment: input.comment,
     respondedAt: new Date()
   });
+
+  try {
+    await notifyPeerReviewResponded({
+      reviewId: updated.id,
+      requestedById: updated.requestedById,
+      requestedTo: {
+        id: updated.requestedTo.id,
+        name: updated.requestedTo.name
+      },
+      status: input.decision,
+      responseComment: updated.responseComment ?? input.comment,
+      respondedAt: updated.respondedAt ?? new Date()
+    });
+  } catch (error) {
+    console.error("[review] Failed to create requester notification:", error);
+  }
 
   try {
     await updateReviewSlackCard(updated);
@@ -290,20 +325,14 @@ export async function createReviewFromSlack(input: {
   }
 
   const fileUrl = input.fileUrl?.trim() || "";
-  if (!fileUrl) {
-    return { ok: false, field: "file", message: "Add a file link." };
-  }
-  try {
-    // eslint-disable-next-line no-new
-    new URL(fileUrl);
-  } catch {
+  if (fileUrl && !URL.canParse(fileUrl)) {
     return { ok: false, field: "file", message: "Enter a valid URL (https://…)." };
   }
 
   const review = await createReview(requesterId, {
     requestedToId: recipientId,
     context,
-    fileUrl
+    fileUrl: fileUrl || undefined
   });
 
   return { ok: true, review };

@@ -1079,12 +1079,6 @@ export function parseSlackTaskListMeta(blockId: string | undefined): SlackTaskLi
   };
 }
 
-function checkboxLabel(item: SlackTaskListItem): string {
-  const due = item.overdue ? `overdue · ${formatDue(item.dueAt)}` : `due ${formatDue(item.dueAt)}`;
-  const raw = `${item.title} — ${due}`;
-  return raw.length <= 75 ? raw : `${raw.slice(0, 72)}...`;
-}
-
 function branWorkListUrl(appUrl?: string): string {
   const base = (appUrl || "https://bran.cohesivity.app").replace(/\/$/, "");
   return `${base}/work`;
@@ -1168,20 +1162,22 @@ export function formatSlackTaskListBlocks(input: {
   } else if (interactive) {
     for (const item of pendingShown) {
       blocks.push({
-        type: "actions",
+        type: "section",
         block_id: `wu:${item.id}`,
-        elements: [
-          {
-            type: "checkboxes",
-            action_id: SLACK_WORK_COMPLETE_ACTION,
-            options: [
-              {
-                text: { type: "plain_text", text: checkboxLabel(item), emoji: true },
-                value: item.id
-              }
-            ]
-          }
-        ]
+        text: {
+          type: "mrkdwn",
+          text: `*${escapeSlackMrkdwn(item.title)}*\n_${item.overdue ? "Overdue" : "Due"} ${formatDue(item.dueAt)}_`
+        },
+        accessory: {
+          type: "checkboxes",
+          action_id: SLACK_WORK_COMPLETE_ACTION,
+          options: [
+            {
+              text: { type: "plain_text", text: "Done", emoji: true },
+              value: item.id
+            }
+          ]
+        }
       });
     }
     if (pendingTotal > pendingShown.length) {

@@ -73,6 +73,71 @@ function buildAttendanceLink(date?: string): string {
   return date ? `${base}?date=${encodeURIComponent(date)}` : base;
 }
 
+function buildReviewLink(reviewId: string): string {
+  if (!env.appUrl) return `/reviews?id=${encodeURIComponent(reviewId)}`;
+  return `${env.appUrl.replace(/\/$/, "")}/reviews?id=${encodeURIComponent(reviewId)}`;
+}
+
+export type NotifyPeerReviewRequestedInput = {
+  reviewId: string;
+  requestedToId: string;
+  requestedBy: { id: string; name: string };
+  context: string;
+  createdAt: Date;
+};
+
+export async function notifyPeerReviewRequested(
+  input: NotifyPeerReviewRequestedInput
+) {
+  const link = buildReviewLink(input.reviewId);
+  return createNotification({
+    userId: input.requestedToId,
+    kind: "REVIEW_REQUESTED",
+    title: `Review requested by ${input.requestedBy.name}`,
+    body: input.context,
+    data: {
+      reviewId: input.reviewId,
+      status: "pending",
+      context: input.context,
+      requestedBy: input.requestedBy,
+      createdAt: input.createdAt,
+      link
+    },
+    dedupeKey: `review-requested:${input.reviewId}`
+  });
+}
+
+export type NotifyPeerReviewRespondedInput = {
+  reviewId: string;
+  requestedById: string;
+  requestedTo: { id: string; name: string };
+  status: "accepted" | "rejected";
+  responseComment: string;
+  respondedAt: Date;
+};
+
+export async function notifyPeerReviewResponded(
+  input: NotifyPeerReviewRespondedInput
+) {
+  const link = buildReviewLink(input.reviewId);
+  const label = input.status === "accepted" ? "approved" : "rejected";
+  return createNotification({
+    userId: input.requestedById,
+    kind: "REVIEW_RESPONDED",
+    title: `Review request ${label} by ${input.requestedTo.name}`,
+    body: input.responseComment,
+    data: {
+      reviewId: input.reviewId,
+      status: input.status,
+      responseComment: input.responseComment,
+      requestedTo: input.requestedTo,
+      respondedAt: input.respondedAt,
+      link
+    },
+    dedupeKey: `review-responded:${input.reviewId}:${input.status}`
+  });
+}
+
 function buildNotificationCopy(input: NotifyNextStepInput) {
   const { content, fromNode, toNode, approvedOutput } = input;
   const title = `${fromNode.name} approved — ${toNode.name} is ready to start`;

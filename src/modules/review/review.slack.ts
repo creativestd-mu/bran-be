@@ -673,19 +673,20 @@ export function buildReviewCreateModal(input: {
       {
         type: "input",
         block_id: REVIEW_CREATE_USER_BLOCK_ID,
-        label: { type: "plain_text", text: "Request review from", emoji: true },
+        label: { type: "plain_text", text: "Request review from *", emoji: true },
         element: userElement
       },
       {
         type: "input",
         block_id: REVIEW_CREATE_CONTEXT_BLOCK_ID,
-        label: { type: "plain_text", text: "Context", emoji: true },
+        label: { type: "plain_text", text: "Context *", emoji: true },
         element: contextElement
       },
       {
         type: "input",
         block_id: REVIEW_CREATE_FILE_BLOCK_ID,
-        label: { type: "plain_text", text: "File link", emoji: true },
+        optional: true,
+        label: { type: "plain_text", text: "File link (optional)", emoji: true },
         element: {
           type: "plain_text_input",
           action_id: REVIEW_CREATE_FILE_ACTION_ID,

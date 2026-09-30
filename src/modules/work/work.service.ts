@@ -27,6 +27,7 @@ import {
 import {
   createWorkUnit as createWorkUnitInDb,
   deleteWorkUnit as deleteWorkUnitInDb,
+  deleteWorkUnitsByAudioRecordingId,
   findOverdueStepsForUser,
   findWorkStepById,
   findWorkStepsByUserAndDeadlineRange,
@@ -2412,6 +2413,9 @@ export async function regenerateWorkUnitsFromRecording(
   if (!recording) {
     throw new HttpError(404, "Voice recording not found");
   }
+  if (recording.userId !== userId) {
+    throw new HttpError(404, "Voice recording not found");
+  }
 
   const nextTranscript = (transcript ?? recording.transcript)?.trim() ?? "";
   if (!nextTranscript) {
@@ -2421,6 +2425,11 @@ export async function regenerateWorkUnitsFromRecording(
   if (nextTranscript !== (recording.transcript ?? "").trim()) {
     await updateVoiceRecording(recordingId, { transcript: nextTranscript });
   }
+
+  // Replace the prior generated set in one database operation. The client used
+  // to delete every unit with a separate HTTP request before regenerating,
+  // which made this flow noticeably slower for longer recordings.
+  await deleteWorkUnitsByAudioRecordingId(recordingId);
 
   const result = await createWorkUnitsFromRecording(userId, recording, nextTranscript, {
     ...(await prisma.meeting

@@ -5,6 +5,8 @@ describe("pending reply Slack query detection", () => {
     "who do I need to reply to?",
     "what messages are waiting on me",
     "show my unanswered messages",
+    "my replies",
+    "myreplies",
     "which emails should I respond to",
     "who's waiting on me"
   ])("recognizes %s", (text) => {

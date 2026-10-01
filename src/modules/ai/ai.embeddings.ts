@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 import { env } from "../../config/env";
+import { prisma } from "../../lib/prisma";
 import { generateEmbedding } from "./ai.gemini-embeddings";
 import { callOpenRouter } from "./ai.openrouter";
 import { upsertVectors, queryVectors } from "./ai.qdrant";
@@ -92,7 +93,12 @@ export async function semanticSearchTasks(
     filter.userId = { $eq: filters.userId };
   }
 
-  const results = await queryVectors("tasks", vector, topK, Object.keys(filter).length > 0 ? filter : undefined);
+  const results = await queryVectors(
+    "tasks",
+    vector,
+    topK,
+    Object.keys(filter).length > 0 ? filter : undefined
+  );
   return results.matches ?? [];
 }
 
@@ -222,7 +228,22 @@ export async function semanticSearchWorkUnits(
   }
 
   const results = await queryVectors("work-units", vector, topK, filter);
-  return results.matches ?? [];
+  const matches = results.matches ?? [];
+  if (matches.length === 0) return matches;
+
+  // Qdrant metadata can lag behind a privacy toggle. Re-check the source of
+  // truth before returning semantic context so stale vectors cannot leak task
+  // titles owned by tasksPrivate members.
+  const visibleUnits = await prisma.workUnit.findMany({
+    where: {
+      id: { in: matches.map((match) => String(match.id)) },
+      isPrivate: false,
+      user: { tasksPrivate: false }
+    },
+    select: { id: true }
+  });
+  const visibleIds = new Set(visibleUnits.map((unit) => unit.id));
+  return matches.filter((match) => visibleIds.has(String(match.id)));
 }
 
 // Sentinel "never expires" marker for closed/historical periods so a single
@@ -464,7 +485,11 @@ Task Statistics:
 - Completed: ${context.stats.completed}
 - In Progress: ${context.stats.inProgress}
 - Pending: ${context.stats.pending}
-- By Platform: ${Object.entries(context.stats.byPlatform).map(([k, v]) => `${k}: ${v}`).join(", ") || "N/A"}`
+- By Platform: ${
+        Object.entries(context.stats.byPlatform)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(", ") || "N/A"
+      }`
     : "";
 
   const adhocStatsSection = context.adhocStats
@@ -652,6 +677,7 @@ function getIsoWeek(date: Date): string {
   d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
   const week1 = new Date(d.getFullYear(), 0, 4);
   const weekNum =
-    1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+    1 +
+    Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
   return `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
 }

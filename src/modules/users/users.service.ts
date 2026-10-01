@@ -118,7 +118,9 @@ async function validateUserHierarchyUpdates(members: UserHierarchyMemberInput[])
   if (managerUserIds.length > 0) {
     const managers = await findAllUserManagerLinks();
     const existingUserIds = new Set(managers.map((user) => user.id));
-    const missingManagerIds = managerUserIds.filter((managerUserId) => !existingUserIds.has(managerUserId));
+    const missingManagerIds = managerUserIds.filter(
+      (managerUserId) => !existingUserIds.has(managerUserId)
+    );
 
     if (missingManagerIds.length > 0) {
       throw new HttpError(404, `Manager user(s) not found: ${missingManagerIds.join(", ")}`);
@@ -163,7 +165,10 @@ async function validateUserHierarchyUpdates(members: UserHierarchyMemberInput[])
   }
 }
 
-async function ensureManagerCanBeAssigned(userId: string | undefined, managerUserId?: string | null) {
+async function ensureManagerCanBeAssigned(
+  userId: string | undefined,
+  managerUserId?: string | null
+) {
   if (managerUserId === undefined || managerUserId === null) return;
 
   if (userId && managerUserId === userId) {
@@ -183,7 +188,10 @@ async function ensureManagerCanBeAssigned(userId: string | undefined, managerUse
       throw new HttpError(400, "Invalid manager hierarchy: circular reporting chain detected");
     }
     if (visited.has(currentManagerUserId)) {
-      throw new HttpError(400, "Invalid existing manager hierarchy: circular reporting chain detected");
+      throw new HttpError(
+        400,
+        "Invalid existing manager hierarchy: circular reporting chain detected"
+      );
     }
 
     visited.add(currentManagerUserId);
@@ -284,8 +292,7 @@ export async function reparentUser(
 
   await ensureManagerCanBeAssigned(userId, managerUserId);
 
-  const reportIds =
-    reportMode === "reattach_to_previous" ? await findDirectReportIds(userId) : [];
+  const reportIds = reportMode === "reattach_to_previous" ? await findDirectReportIds(userId) : [];
 
   for (const reportId of reportIds) {
     if (previousManagerId === reportId) {
@@ -349,6 +356,18 @@ export async function updateUserProfile(
 
   const hasProfileUpdates = Object.values(profileData).some((value) => value !== undefined);
   if (!hasProfileUpdates) {
+    return getUserById(id);
+  }
+
+  if (profileData.tasksPrivate === true) {
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id }, data: profileData });
+      await tx.workUnit.updateMany({
+        where: { userId: id },
+        data: { isPrivate: true }
+      });
+    });
+    invalidateAssignmentContextCache();
     return getUserById(id);
   }
 

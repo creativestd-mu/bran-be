@@ -15,7 +15,13 @@ import {
   resolveStatusAndClosedAt,
   workDeadlineAtEndOfDay
 } from "./work.due-fields";
-import { extractWorkUnitsFromText, extractWorkUnitsFromTranscript, getWorkExtractionAiInfo, isWorkExtractionAiConfigured, type WorkExtractionTextKind } from "./work.extraction";
+import {
+  extractWorkUnitsFromText,
+  extractWorkUnitsFromTranscript,
+  getWorkExtractionAiInfo,
+  isWorkExtractionAiConfigured,
+  type WorkExtractionTextKind
+} from "./work.extraction";
 import { resolveProjectIdFromExtraction } from "./work.project-matching";
 import {
   learnAssignmentPreference,
@@ -47,10 +53,7 @@ import {
 } from "../voice-recording/voice-recording.repository";
 import { previewWorkText, type WorkIngestSourceType } from "./work.constants";
 import { hasSimilarOpenWorkUnit } from "./work.dedup";
-import {
-  getCachedAssignmentContext,
-  setCachedAssignmentContext
-} from "./work.assignment-cache";
+import { getCachedAssignmentContext, setCachedAssignmentContext } from "./work.assignment-cache";
 import { loadGmailWorkIngestCandidates } from "./work.sources";
 import {
   clearSlackPlaceholder,
@@ -181,7 +184,9 @@ function parseRangeTo(value?: string): Date | undefined {
 
 function canViewAll(roleName: string): boolean {
   const role = roleName.trim().toLowerCase();
-  return role === "admin" || role === "manager" || role === "superadmin" || role === "chief_of_staff";
+  return (
+    role === "admin" || role === "manager" || role === "superadmin" || role === "chief_of_staff"
+  );
 }
 
 /** Only superadmin may inspect members marked tasksPrivate. */
@@ -202,8 +207,9 @@ function canAccessWorkUnit(
   roleName: string
 ): boolean {
   if (unit.userId === viewerUserId) return true;
-  // Member-level privacy: only the owner (and privacy admins) may see their units.
-  if (unit.ownerTasksPrivate && !canBypassTasksPrivate(roleName)) return false;
+  // Member-level privacy overrides per-unit privacy and creator access: only the
+  // owner and superadmin may see any unit owned by a tasksPrivate member.
+  if (unit.ownerTasksPrivate) return canBypassTasksPrivate(roleName);
   if (unit.createdById === viewerUserId) return true;
   if (unit.isPrivate) return false;
   return canViewAll(roleName);
@@ -373,9 +379,7 @@ async function loadAssignmentContext(userId: string) {
     ]);
 
   const directReportIds = new Set(
-    availableUsers
-      .filter((user) => user.managerUserId === userId)
-      .map((user) => user.id)
+    availableUsers.filter((user) => user.managerUserId === userId).map((user) => user.id)
   );
 
   return {
@@ -672,7 +676,11 @@ async function ingestWorkFromText(input: {
 
 async function ingestWorkFromCandidate(candidate: WorkIngestCandidate) {
   const kind: WorkExtractionTextKind =
-    candidate.sourceType === "GMAIL" ? "email" : candidate.sourceType === "SLACK" ? "slack" : "transcript";
+    candidate.sourceType === "GMAIL"
+      ? "email"
+      : candidate.sourceType === "SLACK"
+        ? "slack"
+        : "transcript";
 
   return ingestWorkFromText({
     defaultOwnerUserId: candidate.ownerUserId,
@@ -731,7 +739,11 @@ export async function processSlackWorkMessage(input: {
   };
 
   if (!isWorkExtractionAiConfigured()) {
-    console.warn("[work.slack-event] skip", { reason: "ai_not_configured", ...eventMeta, ...getWorkExtractionAiInfo() });
+    console.warn("[work.slack-event] skip", {
+      reason: "ai_not_configured",
+      ...eventMeta,
+      ...getWorkExtractionAiInfo()
+    });
     return { handled: false, reason: "ai_not_configured" };
   }
 
@@ -1122,8 +1134,7 @@ export async function processSlackTaskListMessage(input: {
     return { handled: true, reason: "multiple_tagged" };
   }
 
-  const targetSlackUserId =
-    subject.kind === "tagged" ? subject.slackUserIds[0] : input.userId;
+  const targetSlackUserId = subject.kind === "tagged" ? subject.slackUserIds[0] : input.userId;
   const viewingOther = targetSlackUserId.toUpperCase() !== input.userId.toUpperCase();
 
   const query = await resolveSlackTaskListQuery(text, new Date(), {
@@ -1255,7 +1266,8 @@ export async function completeWorkUnitFromSlack(
       deadline: step.deadline ? step.deadline.toISOString() : null,
       done: true,
       assigneeId: (step as { assigneeId?: string | null }).assigneeId ?? null,
-      assigneeSpokenName: (step as { assigneeSpokenName?: string | null }).assigneeSpokenName ?? null,
+      assigneeSpokenName:
+        (step as { assigneeSpokenName?: string | null }).assigneeSpokenName ?? null,
       sourceExcerpt: (step as { sourceExcerpt?: string | null }).sourceExcerpt ?? null
     }))
   });
@@ -1391,10 +1403,11 @@ export async function processSlackWorkChecklistAction(input: {
           : undefined
     });
     // Keep the original heading/label from the posted message when we can.
-    const headingBlock = input.messageBlocks?.find((block) => parseSlackTaskListMeta(block.block_id));
+    const headingBlock = input.messageBlocks?.find((block) =>
+      parseSlackTaskListMeta(block.block_id)
+    );
     const headingText =
-      headingBlock &&
-      typeof (headingBlock as { text?: { text?: string } }).text?.text === "string"
+      headingBlock && typeof (headingBlock as { text?: { text?: string } }).text?.text === "string"
         ? (headingBlock as { text: { text: string } }).text.text
         : null;
     if (headingText && blocks[0] && typeof blocks[0] === "object") {
@@ -1580,11 +1593,9 @@ export async function processSlackVoiceWorkMessage(input: {
 
   let placeholderTs: string | undefined;
   try {
-    const posted = await postSlackPlaceholder(
-      input.channelId,
-      "Transcribing your voice note…",
-      { threadTs: input.ts }
-    );
+    const posted = await postSlackPlaceholder(input.channelId, "Transcribing your voice note…", {
+      threadTs: input.ts
+    });
     placeholderTs = posted.ts;
   } catch (error) {
     console.warn("[work.slack-voice] placeholder failed", {
@@ -1691,10 +1702,7 @@ export async function processSlackVoiceWorkMessage(input: {
     return { handled: true, reason: safety.reason };
   }
 
-  if (
-    isDm &&
-    (looksLikeAddIdeaQuery(input.text ?? "") || looksLikeAddIdeaQuery(transcript))
-  ) {
+  if (isDm && (looksLikeAddIdeaQuery(input.text ?? "") || looksLikeAddIdeaQuery(transcript))) {
     try {
       const caption = (input.text ?? "").trim();
       const source = ideaFieldsFromText(caption) ? caption : `idea: ${transcript}`;
@@ -2067,11 +2075,7 @@ export async function listWorkUnits(options: {
   const filterUserId = isPrivileged ? options.targetUserId : options.viewerUserId;
 
   // Person filter on a tasksPrivate member: empty for non-bypass viewers.
-  if (
-    filterUserId &&
-    filterUserId !== options.viewerUserId &&
-    !canBypassPrivacy
-  ) {
+  if (filterUserId && filterUserId !== options.viewerUserId && !canBypassPrivacy) {
     const target = await prisma.user.findUnique({
       where: { id: filterUserId },
       select: { tasksPrivate: true }
@@ -2090,9 +2094,11 @@ export async function listWorkUnits(options: {
     from: parseRangeFrom(options.from),
     to: parseRangeTo(options.to),
     // Privileged "everyone": hide others' private units. Person filter: include that person's private units.
-    isPrivateVisibleForUserId: isPrivileged
-      ? (options.targetUserId ?? options.viewerUserId)
-      : undefined,
+    isPrivateVisibleForUserId: canBypassPrivacy
+      ? undefined
+      : isPrivileged
+        ? (options.targetUserId ?? options.viewerUserId)
+        : undefined,
     hideTasksPrivateExceptUserId: canBypassPrivacy ? undefined : options.viewerUserId,
     page,
     pageSize
@@ -2153,8 +2159,7 @@ export async function updateWorkUnit(
   if (mappedSteps) {
     mappedSteps = mappedSteps.map((step) => {
       const oldStep = oldStepsByDescription.get(normalizeStepDescription(step.description));
-      const assigneeSpokenName =
-        step.assigneeSpokenName ?? oldStep?.assigneeSpokenName ?? null;
+      const assigneeSpokenName = step.assigneeSpokenName ?? oldStep?.assigneeSpokenName ?? null;
       const sourceExcerpt = step.sourceExcerpt ?? oldStep?.sourceExcerpt ?? null;
 
       if (
@@ -2437,9 +2442,7 @@ export async function regenerateWorkUnitsFromRecording(
         where: { voiceRecordingId: recordingId },
         select: { id: true }
       })
-      .then((meeting) =>
-        meeting ? { sourceType: "MEETING" as const, sourceId: meeting.id } : {}
-      ))
+      .then((meeting) => (meeting ? { sourceType: "MEETING" as const, sourceId: meeting.id } : {})))
   });
 
   return {

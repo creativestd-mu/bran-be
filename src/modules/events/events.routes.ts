@@ -31,7 +31,7 @@ eventsRouter.use(authenticate);
 eventsRouter.get("/", async (req, res, next) => {
   try {
     const query = listOrgEventsQuerySchema.parse(req.query);
-    const data = await listEvents(query);
+    const data = await listEvents(query, req.user!.roleName);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
@@ -75,7 +75,7 @@ eventsRouter.post("/", async (req, res, next) => {
 /** GET /events/:id — detail + full timeline */
 eventsRouter.get("/:id", async (req, res, next) => {
   try {
-    const data = await getEventDetail(param(req.params.id));
+    const data = await getEventDetail(param(req.params.id), req.user!.roleName);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

@@ -201,11 +201,16 @@ export async function loadUnattachedSourceCandidates(options?: {
 
   if (!filter || filter === "WORK_UNIT") {
     const workUnits = await prisma.workUnit.findMany({
-      where: { createdAt: { gte: since } },
+      // Events are shared across the organization. Never copy task content from
+      // a member whose tasks are private into this shared surface.
+      where: {
+        createdAt: { gte: since },
+        user: { tasksPrivate: false }
+      },
       orderBy: { createdAt: "desc" },
       take: maxCandidates,
       include: {
-        user: { select: { id: true, name: true, email: true } },
+        user: { select: { id: true, name: true, email: true, tasksPrivate: true } },
         createdBy: { select: { id: true, name: true, email: true } }
       }
     });
@@ -286,11 +291,11 @@ export async function resolveSourceCandidate(
       const unit = await prisma.workUnit.findUnique({
         where: { id: sourceId },
         include: {
-          user: { select: { name: true, email: true } },
+          user: { select: { name: true, email: true, tasksPrivate: true } },
           createdBy: { select: { id: true, name: true, email: true } }
         }
       });
-      if (!unit) return null;
+      if (!unit || unit.user.tasksPrivate) return null;
       return {
         sourceType,
         sourceId: unit.id,

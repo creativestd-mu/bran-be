@@ -1,7 +1,4 @@
-import {
-  assertCanModify,
-  assertCanView
-} from "../../../src/modules/work/work.service";
+import { assertCanModify, assertCanView } from "../../../src/modules/work/work.service";
 import { HttpError } from "../../../src/utils/httpError";
 
 describe("work unit closed lock helpers", () => {
@@ -21,18 +18,12 @@ describe("work unit closed lock helpers", () => {
   });
 
   it("blocks viewing other users units", () => {
-    expect(() =>
-      assertCanView({ userId: ownerId, isPrivate: true }, otherId)
-    ).toThrow(HttpError);
-    expect(() =>
-      assertCanView({ userId: ownerId, isPrivate: false }, otherId)
-    ).toThrow(HttpError);
+    expect(() => assertCanView({ userId: ownerId, isPrivate: true }, otherId)).toThrow(HttpError);
+    expect(() => assertCanView({ userId: ownerId, isPrivate: false }, otherId)).toThrow(HttpError);
   });
 
   it("allows owner to view their own unit", () => {
-    expect(() =>
-      assertCanView({ userId: ownerId, isPrivate: false }, ownerId)
-    ).not.toThrow();
+    expect(() => assertCanView({ userId: ownerId, isPrivate: false }, ownerId)).not.toThrow();
   });
 
   it("hides tasksPrivate member units from everyone except owner and superadmin", () => {
@@ -59,7 +50,7 @@ describe("work unit closed lock helpers", () => {
     ).toThrow(HttpError);
     expect(() =>
       assertCanView(
-        { userId: ownerId, isPrivate: false, ownerTasksPrivate: true },
+        { userId: ownerId, isPrivate: true, ownerTasksPrivate: true },
         otherId,
         "superadmin"
       )

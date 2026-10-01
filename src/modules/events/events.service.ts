@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "crypto";
 
 import { HttpError } from "../../utils/httpError";
+import { prisma } from "../../lib/prisma";
 import {
   DEFAULT_DETECT_LOOKBACK_DAYS,
   DEFAULT_DETECT_MAX_CANDIDATES,
@@ -46,24 +47,56 @@ function parseOptionalDate(value?: string | null): Date | null | undefined {
   return date;
 }
 
-export async function listEvents(query: {
-  status?: OrgEventStatus;
-  kind?: "MANUAL" | "AUTO";
-  limit?: number;
-}) {
+async function eventIdsContainingPrivateTasks(eventIds: string[]): Promise<Set<string>> {
+  if (eventIds.length === 0) return new Set();
+  const updates = await prisma.orgEventUpdate.findMany({
+    where: { eventId: { in: eventIds }, sourceType: "WORK_UNIT" },
+    select: { eventId: true, sourceId: true }
+  });
+  if (updates.length === 0) return new Set();
+
+  const privateUnits = await prisma.workUnit.findMany({
+    where: {
+      id: { in: updates.map((update) => update.sourceId) },
+      user: { tasksPrivate: true }
+    },
+    select: { id: true }
+  });
+  const privateUnitIds = new Set(privateUnits.map((unit) => unit.id));
+  return new Set(
+    updates.filter((update) => privateUnitIds.has(update.sourceId)).map((update) => update.eventId)
+  );
+}
+
+export async function listEvents(
+  query: {
+    status?: OrgEventStatus;
+    kind?: "MANUAL" | "AUTO";
+    limit?: number;
+  },
+  roleName?: string
+) {
   const rows = await listOrgEvents(query);
+  const hiddenEventIds =
+    roleName === "superadmin"
+      ? new Set<string>()
+      : await eventIdsContainingPrivateTasks(rows.map((row) => row.id));
+  const visibleRows = rows.filter((row) => !hiddenEventIds.has(row.id));
   return {
-    events: rows.map(serializeOrgEvent),
+    events: visibleRows.map(serializeOrgEvent),
     summary: {
-      total: rows.length,
-      manual: rows.filter((row) => row.kind === "MANUAL").length,
-      auto: rows.filter((row) => row.kind === "AUTO").length,
-      active: rows.filter((row) => row.status === "active").length
+      total: visibleRows.length,
+      manual: visibleRows.filter((row) => row.kind === "MANUAL").length,
+      auto: visibleRows.filter((row) => row.kind === "AUTO").length,
+      active: visibleRows.filter((row) => row.status === "active").length
     }
   };
 }
 
-export async function getEventDetail(id: string) {
+export async function getEventDetail(id: string, roleName?: string) {
+  if (roleName !== "superadmin" && (await eventIdsContainingPrivateTasks([id])).has(id)) {
+    throw new HttpError(404, "Event not found");
+  }
   let event = await findOrgEventById(id);
   if (!event) {
     throw new HttpError(404, "Event not found");
@@ -123,7 +156,9 @@ export async function patchEvent(
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
-    ...(input.startsAt !== undefined ? { startsAt: parseOptionalDate(input.startsAt) ?? null } : {}),
+    ...(input.startsAt !== undefined
+      ? { startsAt: parseOptionalDate(input.startsAt) ?? null }
+      : {}),
     ...(input.endsAt !== undefined ? { endsAt: parseOptionalDate(input.endsAt) ?? null } : {})
   });
   return serializeOrgEvent(updated);
@@ -303,9 +338,10 @@ export async function detectEventsFromSources(options?: {
     if (similar) {
       eventId = similar.id;
     } else {
-      const latest = clusterCandidates.reduce((max, item) =>
-        item.occurredAt > max ? item.occurredAt : max
-      , clusterCandidates[0].occurredAt);
+      const latest = clusterCandidates.reduce(
+        (max, item) => (item.occurredAt > max ? item.occurredAt : max),
+        clusterCandidates[0].occurredAt
+      );
       const { startsAt, endsAt } = eventDateRangeFromCandidates(clusterCandidates);
 
       const event = await createOrgEvent({

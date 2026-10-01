@@ -133,10 +133,8 @@ export async function loadGraphWorkUnits(options: {
   to?: Date;
   limit?: number;
 }) {
-  const canViewAll =
-    options.roleName === "admin" ||
-    options.roleName === "manager" ||
-    options.roleName === "superadmin";
+  const isSuperadmin = options.roleName === "superadmin";
+  const canViewAll = options.roleName === "admin" || options.roleName === "manager" || isSuperadmin;
 
   const dateFilter =
     options.from || options.to
@@ -149,17 +147,26 @@ export async function loadGraphWorkUnits(options: {
   return prisma.workUnit.findMany({
     where: {
       AND: [
-        canViewAll
-          ? {
-              OR: [
-                { isPrivate: false },
-                { userId: options.viewerUserId },
-                { createdById: options.viewerUserId }
-              ]
-            }
-          : {
-              OR: [{ userId: options.viewerUserId }, { createdById: options.viewerUserId }]
-            },
+        isSuperadmin
+          ? {}
+          : canViewAll
+            ? {
+                AND: [
+                  {
+                    OR: [
+                      { isPrivate: false },
+                      { userId: options.viewerUserId },
+                      { createdById: options.viewerUserId }
+                    ]
+                  },
+                  {
+                    OR: [{ user: { tasksPrivate: false } }, { userId: options.viewerUserId }]
+                  }
+                ]
+              }
+            : {
+                OR: [{ userId: options.viewerUserId }, { createdById: options.viewerUserId }]
+              },
         ...(dateFilter ? [{ createdAt: dateFilter }] : [])
       ]
     },
@@ -188,11 +195,7 @@ function truncateUpdateBody(body: string, max = ESCALATION_UPDATE_BODY_CHARS): s
   return `${body.slice(0, max)}…`;
 }
 
-export async function loadGraphEscalations(options: {
-  from?: Date;
-  to?: Date;
-  limit?: number;
-}) {
+export async function loadGraphEscalations(options: { from?: Date; to?: Date; limit?: number }) {
   const dateFilter =
     options.from || options.to
       ? {
@@ -245,11 +248,7 @@ export async function loadGraphEscalations(options: {
         take: 20
       }
     },
-    orderBy: [
-      { status: "asc" },
-      { latestUpdateAt: "desc" },
-      { createdAt: "desc" }
-    ],
+    orderBy: [{ status: "asc" }, { latestUpdateAt: "desc" }, { createdAt: "desc" }],
     take: options.limit ?? DEFAULT_LIMIT_ESCALATIONS
   });
 
